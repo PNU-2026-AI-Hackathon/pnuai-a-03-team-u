@@ -1,5 +1,5 @@
 # =============================================================================
-# PNU-Pathfinder .gitignore
+# .gitignore
 # Stack: React + Vite (frontend) / Spring Boot (backend) / FastAPI (AI service)
 #        Python crawler / PostgreSQL + Redis / Cursor AI + Claude Code
 # =============================================================================
