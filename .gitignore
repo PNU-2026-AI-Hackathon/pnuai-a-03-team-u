@@ -1,0 +1,328 @@
+# =============================================================================
+# .gitignore
+# Stack: React + Vite (frontend) / Spring Boot (backend) / FastAPI (AI service)
+#        Python crawler / PostgreSQL + Redis / Cursor AI + Claude Code
+# =============================================================================
+
+
+# =============================================================================
+# 0. SECRETS — never commit (Claude API key, DB password, etc.)
+# =============================================================================
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+service-account*.json
+application-local.yml
+application-local.yaml
+application-local.properties
+
+
+# =============================================================================
+# 1. IDE / Editor
+# =============================================================================
+
+# JetBrains (IntelliJ, PyCharm, WebStorm)
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+
+# Cursor AI
+.cursor/
+.cursorignore
+
+# Claude Code
+.claude/
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+
+# =============================================================================
+# 2. OS
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+*.icloud
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+
+# =============================================================================
+# 3. Frontend — React + Vite + Node
+# =============================================================================
+node_modules/
+bower_components/
+dist/
+dist-ssr/
+.vite/
+*.local
+.npm
+.yarn-integrity
+.pnp.*
+.next/
+.nuxt/
+.turbo/
+
+# Build outputs
+build/
+.output/
+
+# Coverage
+coverage/
+*.lcov
+
+# ESLint / Prettier caches
+.eslintcache
+.stylelintcache
+
+# Tailwind cache
+.tailwindcss-cache
+
+
+# =============================================================================
+# 4. Backend — Java + Spring Boot + Gradle / Maven
+# =============================================================================
+
+# Compiled
+*.class
+hs_err_pid*
+replay_pid*
+
+# Logs
+*.log
+logs/
+
+# Spring Boot
+HELP.md
+spring-boot-*.txt
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# Maven
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar
+target/
+
+# Packaged outputs
+*.jar
+*.war
+*.nar
+*.ear
+!gradle-wrapper.jar
+!maven-wrapper.jar
+
+
+# =============================================================================
+# 5. AI Service / Python (FastAPI, LangChain, crawler)
+# =============================================================================
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+pyrightconfig.json
+
+# Linters
+.ruff_cache/
+
+# Jupyter / IPython
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Tool configs
+poetry.toml
+.pdm.toml
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Cython
+cython_debug/
+
+
+# =============================================================================
+# 6. Project-specific — data caches, embeddings, crawler artifacts
+# =============================================================================
+
+# Crawled data (regeneratable)
+crawled_data/
+raw_data/
+
+# Embedding / model caches
+embeddings_cache/
+*.pkl
+*.npy
+*.npz
+chroma_db/
+.langchain.db
+
+# DB dumps / fixtures (regeneratable)
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.db-journal
+db.sqlite3
+dump.sql
+*.dump
+
+# Resume / PDF outputs (generated)
+generated_resumes/
+output_pdfs/
+
+
+# =============================================================================
+# 7. Logs / Temp / Misc
+# =============================================================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+*.back
+**/*.backup.*
+**/*.back.*
+
+# Design assets (commit only the final exports, not the working files)
+*.psd
+*.sketch
+*.fig
+
+# Archives (usually shouldn't be in repo)
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
