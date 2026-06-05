@@ -14,7 +14,7 @@ docs/*     ← 문서 작성 (예: docs/readme-update)
 
 - `main`, `develop`에 직접 push 금지 — **PR 필수**
 - `feature/*` → `develop` → `main` 순서로 merge
-- 본인 PR은 본인이 merge 불가 (최소 1명 리뷰 후 merge)
+- 본인 PR은 본인이 직접 merge 가능
 
 ## 커밋 메시지 컨벤션
 
@@ -28,17 +28,23 @@ test:     테스트 코드
 chore:    빌드 설정, 패키지 수정
 ```
 
+**형식**
+```
+ldw/feat: 사용자 로그인 기능 구현
+```
+
 **예시**
 ```
-feat: 사용자 로그인 기능 구현
-fix: 토큰 만료 오류 수정
-docs: README 설치 방법 추가
+ldw/feat: 사용자 로그인 기능 구현
+ldw/fix: 토큰 만료 오류 수정
+ldw/docs: README 설치 방법 추가
 ```
 
 ## PR 규칙
 
 - PR 제목: `[feat] 로그인 기능 구현` 형태
 - PR 본문에 **변경사항 / 테스트 방법** 포함
+- 리뷰어 지정 선택사항
 
 ## Issue 라벨
 
