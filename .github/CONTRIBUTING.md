@@ -14,7 +14,7 @@ docs/*     ← 문서 작성 (예: docs/readme-update)
 
 - `main`, `develop`에 직접 push 금지 — **PR 필수**
 - `feature/*` → `develop` → `main` 순서로 merge
-- 본인 PR은 본인이 merge 불가 (최소 1명 리뷰 후 merge)
+- 본인 PR은 본인이 직접 merge 가능
 
 ## 커밋 메시지 컨벤션
 
@@ -44,7 +44,7 @@ ldw/docs: README 설치 방법 추가
 
 - PR 제목: `[feat] 로그인 기능 구현` 형태
 - PR 본문에 **변경사항 / 테스트 방법** 포함
-- 리뷰어 최소 1명 지정
+- 리뷰어 지정 선택사항
 
 ## Issue 라벨
 
