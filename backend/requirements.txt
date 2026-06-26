@@ -1,0 +1,35 @@
+# 웹 프레임워크
+fastapi
+uvicorn[standard]
+
+# DB / ORM
+sqlalchemy
+psycopg2-binary
+alembic
+pgvector
+
+# 인증 / 보안
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# AI / RAG (LangChain)
+langchain
+langchain-openai
+langchain-community
+langchain-postgres
+anthropic
+
+# 크롤러
+apscheduler
+beautifulsoup4
+requests
+playwright
+
+# OCR (성적표 이미지 처리)
+pytesseract
+pillow
+
+# 환경설정 / 검증
+pydantic-settings
+python-dotenv
