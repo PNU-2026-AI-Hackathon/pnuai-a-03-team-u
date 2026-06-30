@@ -15,5 +15,9 @@ class Settings(BaseSettings):
     PNU_LOGIN_ID: str | None = None
     PNU_LOGIN_PW: str | None = None
 
+    # 학교 포털 비밀번호 등 민감정보 암호화에 사용하는 Fernet 키.
+    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 로 생성.
+    CREDENTIAL_ENCRYPTION_KEY: str | None = None
+
 
 settings = Settings()
