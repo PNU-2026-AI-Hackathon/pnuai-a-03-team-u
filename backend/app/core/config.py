@@ -12,5 +12,8 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
 
+    PNU_LOGIN_ID: str | None = None
+    PNU_LOGIN_PW: str | None = None
+
 
 settings = Settings()
