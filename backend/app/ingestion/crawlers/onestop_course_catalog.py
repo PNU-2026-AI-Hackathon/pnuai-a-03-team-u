@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import secrets
@@ -102,6 +103,30 @@ PRECAUTION_COLUMNS = [
     "offering_department",
     "message",
     "raw_response",
+]
+
+SNAPSHOT_COMPARE_COLUMNS = [
+    "school",
+    "year",
+    "semester",
+    "subject_category_code",
+    "offering_department_code",
+    "offering_department",
+    "target_grade",
+    "course_code",
+    "section",
+    "course_name",
+    "category",
+    "credits",
+    "total_hours",
+    "timetable_raw",
+    "professor",
+    "capacity",
+    "enrolled_count",
+    "foreign_language_lecture",
+    "is_remote",
+    "class_type",
+    "remark",
 ]
 
 
@@ -435,6 +460,74 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _snapshot_manifest_path(output_dir: Path, year: int, semester: str) -> Path:
+    return output_dir / f"{year}_{semester}_snapshot_manifest.json"
+
+
+def _row_sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row.get("school", "")),
+        str(row.get("year", "")),
+        str(row.get("semester", "")),
+        str(row.get("course_code", "")),
+        str(row.get("section", "")),
+        str(row.get("subject_category_code", "")),
+    )
+
+
+def calculate_snapshot_checksum(rows: list[dict[str, Any]]) -> str:
+    comparable_rows = []
+    for row in sorted(rows, key=_row_sort_key):
+        comparable_rows.append(
+            {column: str(row.get(column, "")) for column in SNAPSHOT_COMPARE_COLUMNS}
+        )
+    payload = json.dumps(comparable_rows, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def build_snapshot_manifest(
+    output_dir: Path,
+    year: int,
+    semester: str,
+    rows: list[dict[str, Any]],
+    counts_by_subject_category: dict[str, int],
+    crawled_at: str,
+) -> dict[str, Any]:
+    manifest_path = _snapshot_manifest_path(output_dir, year, semester)
+    previous_manifest = read_json(manifest_path)
+    checksum = calculate_snapshot_checksum(rows)
+    previous_checksum = (
+        previous_manifest.get("snapshot_checksum") if previous_manifest else None
+    )
+    if previous_checksum is None:
+        snapshot_status = "new_snapshot"
+    elif previous_checksum == checksum:
+        snapshot_status = "unchanged"
+    else:
+        snapshot_status = "changed"
+
+    return {
+        "school": "부산대학교",
+        "year": str(year),
+        "semester": semester,
+        "source_type": "onestop_json",
+        "source_name": COURSE_CATALOG_PAGE,
+        "crawled_at": crawled_at,
+        "row_count": len(rows),
+        "counts_by_subject_category": counts_by_subject_category,
+        "snapshot_checksum": checksum,
+        "previous_snapshot_checksum": previous_checksum or "",
+        "snapshot_status": snapshot_status,
+        "compare_columns": SNAPSHOT_COMPARE_COLUMNS,
+    }
+
+
 def crawl_course_catalog(
     year: int,
     semester: str,
@@ -444,7 +537,10 @@ def crawl_course_catalog(
     include_precautions: bool = False,
     precaution_limit: int | None = None,
     request_delay_seconds: float = 0.0,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    skip_write_if_unchanged: bool = False,
+) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]
+]:
     semester_code = TERM_CODES.get(semester, semester)
     session, session_info = create_session()
     crawled_at = datetime.now(UTC).isoformat()
@@ -525,12 +621,31 @@ def crawl_course_catalog(
             include_precautions = False
 
     unique_rows = deduplicate_rows(normalized_rows)
-    write_csv(output_dir / f"{year}_{semester}_course_catalog.csv", unique_rows)
-    if precaution_rows:
+    counts_by_subject_category = {
+        result["subject_category_code"]: len(result["rows"])
+        for result in raw_category_results
+    }
+    manifest = build_snapshot_manifest(
+        output_dir=output_dir,
+        year=year,
+        semester=semester,
+        rows=unique_rows,
+        counts_by_subject_category=counts_by_subject_category,
+        crawled_at=crawled_at,
+    )
+
+    should_write_csv = not (
+        skip_write_if_unchanged and manifest["snapshot_status"] == "unchanged"
+    )
+    if should_write_csv:
+        write_csv(output_dir / f"{year}_{semester}_course_catalog.csv", unique_rows)
+    if precaution_rows and should_write_csv:
         write_precaution_csv(
             output_dir / f"{year}_{semester}_course_precautions.csv", precaution_rows
         )
-    return raw_category_results, unique_rows, precaution_rows
+    manifest["csv_written"] = should_write_csv
+    write_json(_snapshot_manifest_path(output_dir, year, semester), manifest)
+    return raw_category_results, unique_rows, precaution_rows, manifest
 
 
 def parse_args() -> argparse.Namespace:
@@ -570,12 +685,20 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional delay between precaution requests.",
     )
+    parser.add_argument(
+        "--skip-write-if-unchanged",
+        action="store_true",
+        help=(
+            "Compare the current normalized rows with the previous term manifest "
+            "and skip rewriting the normalized CSV when the checksum is unchanged."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    raw_results, normalized_rows, precaution_rows = crawl_course_catalog(
+    raw_results, normalized_rows, precaution_rows, manifest = crawl_course_catalog(
         year=args.year,
         semester=args.semester,
         subject_categories=args.subject_categories,
@@ -584,6 +707,7 @@ def main() -> None:
         include_precautions=args.include_precautions,
         precaution_limit=args.precaution_limit,
         request_delay_seconds=args.request_delay_seconds,
+        skip_write_if_unchanged=args.skip_write_if_unchanged,
     )
     counts = {
         result["subject_category_code"]: len(result["rows"]) for result in raw_results
@@ -596,6 +720,9 @@ def main() -> None:
                 "counts_by_subject_category": counts,
                 "normalized_count": len(normalized_rows),
                 "precaution_count": len(precaution_rows),
+                "snapshot_status": manifest["snapshot_status"],
+                "snapshot_checksum": manifest["snapshot_checksum"],
+                "csv_written": manifest["csv_written"],
                 "output_dir": str(args.output_dir),
             },
             ensure_ascii=False,

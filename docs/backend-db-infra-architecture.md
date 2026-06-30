@@ -502,18 +502,174 @@ The response shape should include:
 - Remaining credits by category
 - Warnings for unresolved overlap or unmatched records
 
+### One-Stop-First Graduation Audit Strategy
+
+The MVP should use the student's One-Stop graduation expected information as the first source of truth for current graduation status.
+
+Reason:
+
+- One-Stop already applies student-specific recognition results such as transfer credits, completed credits, expected credits, and department-specific graduation requirement status.
+- Transfer students and students with recognized external credits may not have clean PNU `course_code` mappings for every completed course.
+- Rebuilding the full graduation judgment engine for every department before MVP would be too slow and less reliable than using the official student-facing status table as the baseline.
+
+Recommended priority:
+
+```text
+1. One-Stop student graduation expected information
+   - 교과목구분별 이수구분
+   - 필수교과목 이수여부
+   - 교양선택 이수여부
+   - 전공 이수여부
+   - 졸업요건 이수여부
+
+2. Department graduation requirement documents
+   - explain why a status is incomplete
+   - identify special recommendation constraints
+   - capture choose-one groups, track-specific rules, teacher-course rules, and department-specific non-credit requirements
+
+3. Course catalog and timetable data
+   - recommend currently or historically offered courses that can satisfy the missing area
+   - filter by semester, availability, timetable, and offering department
+```
+
+The app should not simply mirror One-Stop. One-Stop provides the official status table; Plan-U should turn that status into explanations, missing-credit summaries, and next-action recommendations.
+
+Example:
+
+```text
+One-Stop:
+- 전공필수 N
+- 전공필수학점미달
+- 표준외국어능력시험 N
+
+Plan-U:
+- 전공필수 15학점 부족
+- 현재 수강신청/취득예정 학점을 반영하면 남은 전공필수 학점은 N학점
+- 다음 학기 개설 가능성이 높은 전공필수 후보 목록
+- 표준외국어능력시험 제출 필요, 관련 학과 안내 링크
+```
+
+Recommended tables for One-Stop-derived status:
+
+```text
+student_graduation_category_statuses
+- id
+- user_id
+- audit_id
+- program_type
+- academic_program_id
+- category              # 교양선택/전공필수/전공선택/일반선택/etc.
+- required_credits
+- earned_credits
+- registered_credits
+- expected_credits
+- completed_status      # Y/N/unknown
+- failure_reason
+- source_system         # pnu_onestop
+- source_table_name
+- raw_metadata          # JSONB
+```
+
+```text
+student_graduation_requirement_items
+- id
+- user_id
+- audit_id
+- program_type
+- academic_program_id
+- requirement_area      # 필수교과목/교양선택/전공/졸업요건
+- required_course_name
+- required_credits
+- completed_course_name
+- completed_grade
+- completed_credits
+- completed_status
+- note
+- source_system
+- source_table_name
+- raw_metadata          # JSONB
+```
+
+Course-code matching should be a recommendation and explanation aid, not a hard dependency for the MVP graduation status calculation.
+
+### Department Rule Overrides
+
+Department documents should be structured only where they add value beyond the One-Stop status table.
+
+Default behavior:
+
+```text
+No department-specific rule override
+-> use One-Stop category status as baseline
+-> recommend course candidates by missing category
+-> mark recommendation as "department-specific recognition should be confirmed"
+```
+
+Override behavior:
+
+```text
+Department-specific rule exists
+-> apply choose-one groups, max recognition counts, track rules, admission-type rules, or semester-specific constraints
+-> filter recommendation candidates before presenting them to the student
+```
+
+This keeps the MVP realistic. Most departments can start with the default One-Stop-based flow, while departments with clear special rules can be added incrementally.
+
+Recommended override tables:
+
+```text
+requirement_rule_overrides
+- id
+- requirement_set_id
+- academic_program_id
+- rule_type             # choose_one/max_select/track/admission_type/teacher_course/non_credit_requirement
+- category
+- applies_to_admission_type
+- applies_to_curriculum_year
+- applies_to_year_level
+- applies_to_semester
+- min_select_count
+- max_select_count
+- rule_metadata         # JSONB
+- source_url
+- review_status         # parsed/needs_review/approved
+```
+
+```text
+requirement_rule_override_items
+- id
+- override_id
+- course_id
+- raw_course_name
+- credits
+- item_metadata         # JSONB
+```
+
+Nursing example:
+
+```text
+rule_type: choose_one
+category: 전공선택
+applies_to_year_level: 3
+applies_to_semester: 1
+min_select_count: 1
+max_select_count: 1
+items: 근거기반실무, 건강교육, 보건의료정책
+```
+
 ## Data Ingestion Direction
 
 ### MVP
 
-- Graduation requirements are entered as curated seed data first.
+- Student-specific graduation status is collected from One-Stop graduation expected information first.
+- Department graduation requirements are added as curated rule overrides only when they affect recommendation or explanation quality.
 - Course catalog and timetable data are imported from CSV.
 - Student completed courses are imported from CSV and can be manually edited.
 - OCR is deferred until the CSV/manual flow is stable.
 
 ### Later Expansion
 
-- Course catalog crawler runs every semester.
+- Course catalog crawler runs by academic term, not on every deployment.
 - Department graduation requirement crawler collects source documents.
 - Graduation requirement parsing produces review candidates, not direct production rules.
 - A human review step approves parsed candidates before they are applied to `requirement_sets` and related rule tables.
@@ -552,6 +708,39 @@ Onestop page
 -> load into courses, course_offerings, course_times, and course_registration_restrictions
 ```
 
+### Course Catalog Crawl Execution Policy
+
+The course catalog crawler should not be treated as an always-on job. The source represents academic-term snapshots, so the default operation policy is:
+
+```text
+Run full crawl when:
+- a new regular semester is published
+- a summer or winter session is published
+- the school announces course changes, cancellations, or correction rounds
+- an operator manually requests a refresh for a specific year/semester
+
+Do not import when:
+- the normalized snapshot checksum is unchanged
+- only crawled_at changed
+- raw JSON was refreshed but normalized course offering fields are identical
+```
+
+Each year/semester crawl writes a snapshot manifest with:
+
+```text
+year
+semester
+row_count
+counts_by_subject_category
+snapshot_checksum
+previous_snapshot_checksum
+snapshot_status        # new_snapshot/changed/unchanged
+csv_written
+compare_columns
+```
+
+The import pipeline should only create or update DB rows when `snapshot_status` is `new_snapshot` or `changed`. If the status is `unchanged`, the run can be kept as an audit check, but it should not overwrite existing `course_offerings`.
+
 The crawler should not bypass normalization. It should produce the same normalized shape as the MVP CSV import path so that manual files and crawled files share one ingestion pipeline.
 
 Initial crawler script:
@@ -567,7 +756,8 @@ python3 backend/app/ingestion/crawlers/onestop_course_catalog.py \
   --year 2026 \
   --semester 1 \
   --subject-categories 1 2 3 4 5 \
-  --output-dir raw_data/crawled_data/onestop_course_catalog/2026_1
+  --output-dir raw_data/crawled_data/onestop_course_catalog/2026_1 \
+  --skip-write-if-unchanged
 ```
 
 The crawler currently:
@@ -578,6 +768,8 @@ The crawler currently:
 - fetches each selected subject category
 - stores raw JSON by category
 - writes a normalized 2026-format course catalog CSV
+- writes a year/semester snapshot manifest
+- can skip rewriting the normalized CSV when the normalized snapshot checksum is unchanged
 - can optionally call the course precaution endpoint with `--include-precautions`
 
 Precaution crawling can create thousands of extra requests, so experiments should use `--precaution-limit` first.
