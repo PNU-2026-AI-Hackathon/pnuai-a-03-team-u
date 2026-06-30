@@ -12,6 +12,13 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.core.config import settings  # noqa: E402
 from app.core.db import Base  # noqa: E402
 
+# Base.metadata에 테이블이 등록되도록 모든 도메인 모델 모듈을 import한다.
+import app.identity.models  # noqa: E402,F401
+import app.academic_profile.models  # noqa: E402,F401
+import app.course_catalog.models  # noqa: E402,F401
+import app.curriculum.models  # noqa: E402,F401
+import app.graduation_engine.models  # noqa: E402,F401
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
