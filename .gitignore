@@ -264,6 +264,7 @@ venv.bak/
 poetry.toml
 .pdm.toml
 __pypackages__/
+.playwright-cli/
 
 # Celery
 celerybeat-schedule

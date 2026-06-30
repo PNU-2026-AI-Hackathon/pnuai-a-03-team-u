@@ -592,6 +592,67 @@ student_graduation_requirement_items
 
 Course-code matching should be a recommendation and explanation aid, not a hard dependency for the MVP graduation status calculation.
 
+### Common Sources vs User-Scoped Sources
+
+Plan-U should separate common university data from personal user data at both file and DB boundaries.
+
+Common sources:
+
+```text
+- course catalog / 수강편람
+- course offerings by year and semester
+- department graduation requirement pages
+- department notices, guides, and RAG documents
+```
+
+Common source local outputs can live under:
+
+```text
+raw_data/crawled_data/
+raw_data/manual_staging/01_graduation_requirements/
+raw_data/manual_staging/02_courses/
+raw_data/parsed_experiments/
+```
+
+These map to shared tables such as `courses`, `course_offerings`, `requirement_sets`, `requirement_rule_overrides`, and RAG document tables.
+
+User-scoped sources:
+
+```text
+- One-Stop 졸업예정정보
+- One-Stop 성적/이수내역
+- 학적부
+- 개인별 졸업요건 이수여부
+```
+
+User-scoped source local outputs must live under an ignored user-specific root:
+
+```text
+raw_data/user_data/{user_scope}/...
+```
+
+These map to user-owned tables such as `graduation_audits`, `student_graduation_category_statuses`, `student_graduation_requirement_items`, and `student_course_records`.
+
+Rules:
+
+```text
+- collect only after explicit user consent
+- never commit raw user-scoped outputs
+- avoid logging student id, name, grades, GPA, or raw table content
+- keep raw HTML/JSON only as long as needed for parsing/debugging
+- store parsed minimum data by user_id and audit_id
+- allow deletion of user-scoped snapshots
+```
+
+Initial user-scoped extraction files:
+
+```text
+backend/app/ingestion/crawlers/graduation_expected_info.py
+backend/app/ingestion/parsers/onestop_graduation_expected_info.py
+```
+
+The crawler should receive an already-authenticated, user-consented One-Stop page and extract the raw graduation expected information tables. The parser should transform those raw tables into `category_statuses` and `requirement_items` candidates. Server-side periodic jobs must not run this user-scoped crawler.
+
 ### Department Rule Overrides
 
 Department documents should be structured only where they add value beyond the One-Stop status table.
