@@ -1,10 +1,12 @@
-# Backend Progress README Rules
+# Backend Progress Rules
 
-`docs/backend-progress/README.md` is the backend status board. Update it whenever a backend PR changes implemented behavior, data flow, models, routes, deployment, or operational assumptions.
+`docs/backend-progress/PROGRESS.md` is the backend status board. Update it whenever a backend PR changes implemented behavior, data flow, models, routes, deployment, or operational assumptions.
+
+In addition, every vibe-coding session should leave a dated log file in this folder (`YYYY-MM-DD.md`, see `TEMPLATE.md`) recording what was implemented, fixed, blocked, and left undone in that session.
 
 ## When To Update
 
-Update this README in the same PR when you:
+Update PROGRESS.md in the same PR when you:
 
 - add, move, or remove backend folders or modules
 - add or change DB models, migrations, or seed data
