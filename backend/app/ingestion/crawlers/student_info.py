@@ -1,8 +1,8 @@
 from playwright.sync_api import Page
 
-from app.data_ingestion.crawlers import menu_codes
-from app.data_ingestion.crawlers.pnu_session import goto_menu
-from app.data_ingestion.crawlers.table_extract import extract_row_items
+from app.ingestion.crawlers import menu_codes
+from app.ingestion.crawlers.pnu_session import goto_menu
+from app.ingestion.crawlers.table_extract import extract_row_items
 
 
 def fetch_student_record(page: Page) -> dict[str, str]:

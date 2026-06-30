@@ -1,7 +1,7 @@
-"""PNU One-Stop 크롤러(app.data_ingestion.crawlers)의 raw 출력을
-도메인 모델(identity/academic_profile/graduation_engine)에 매핑/저장한다.
+"""PNU One-Stop 크롤러(app.ingestion.crawlers)의 raw 출력을
+도메인 모델(users/academics)에 매핑/저장한다.
 
-DB 매핑만 담당하며, 졸업요건 충족여부의 최종 판정은 graduation_engine의
+DB 매핑만 담당하며, 졸업요건 충족 여부의 최종 판정은 domains/academics의
 결정론적 로직이 맡는다 (여기서는 크롤링된 원본을 GraduationAudit
 스냅샷으로 그대로 보관한다).
 """
@@ -10,10 +10,13 @@ import datetime
 
 from sqlalchemy.orm import Session
 
-from app.academic_profile.models import StudentCourseRecord, UserAcademicProgram
 from app.core.security import encrypt_secret
-from app.graduation_engine.models import GraduationAudit
-from app.identity.models import PortalCredential, User
+from app.domains.academics.models import (
+    GraduationAudit,
+    StudentCourseRecord,
+    UserAcademicProgram,
+)
+from app.domains.users.models import PortalCredential, User
 
 _GRADE_TABLE_HEADER = "학년도"
 _GRADE_DATA_COLUMNS = 8  # 학년도, 학기, 성적분류, 교과구분, 교과목명, 학점, 성적등급, 비고
