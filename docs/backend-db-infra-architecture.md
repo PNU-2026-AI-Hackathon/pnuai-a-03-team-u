@@ -20,21 +20,17 @@ Frontend work is owned separately. This architecture focuses on:
 
 ## Architecture Fit Review
 
-The previous high-level folders were directionally correct, but two names were too broad:
+The first backend layout split every future domain into a top-level package. That was directionally correct, but too noisy for MVP development because model files, crawlers, RAG, LLM calls, and graduation logic were spread across many sibling folders before the implementation was large enough to need that much separation.
 
-- `ai` was too vague because Plan-U uses AI in several different ways: RAG search, LLM explanation, and recommendation support.
-- `crawler` was too narrow because the data flow also includes CSV import, parsing, normalization, and later human-reviewed requirement ingestion.
+The revised layout keeps the important boundaries but folds related work into fewer top-level packages:
 
-The revised structure separates these concerns:
+- `domains` owns product data and deterministic business rules.
+- `ingestion` owns external data collection, parsing, and normalization.
+- `ai` owns shared RAG, embedding, LLM, prompt, and recommendation support.
+- `api` owns FastAPI router assembly.
+- `core` owns settings, DB, security, shared dependencies, and common utilities.
 
-- `rag` handles retrieval over academic notices, graduation documents, course guides, campus opportunities, and competition notices.
-- `llm` handles GPT or Claude calls for explanation and recommendation text.
-- `recommendation` handles deterministic candidate generation and ranking inputs.
-- `data_ingestion` handles CSV import, crawling, parsing, and normalization.
-- `curriculum` owns graduation requirement rule data.
-- `graduation_engine` owns graduation audit calculation.
-
-This matches the agreed principle that AI must not decide graduation satisfaction. Deterministic backend logic performs graduation audits, while LLMs explain and prioritize based on validated results.
+This keeps the agreed principle intact: AI must not decide graduation satisfaction. Deterministic domain logic performs graduation audits, while `app/ai` explains, searches, embeds, and drafts recommendation text based on validated data.
 
 ## Backend Structure
 
@@ -42,19 +38,22 @@ This matches the agreed principle that AI must not decide graduation satisfactio
 backend/
   app/
     core/
-    identity/
-    academic_profile/
-    curriculum/
-    graduation_engine/
-    course_catalog/
-    recommendation/
-    rag/
-    llm/
-    data_ingestion/
+    api/
+    domains/
+      users/
+      academics/
+      courses/
+    ingestion/
       csv_importers/
       crawlers/
       parsers/
       normalizers/
+    ai/
+      rag/
+      llm/
+      embeddings/
+      prompts/
+      recommendations/
   migrations/
   scripts/
   seeds/
@@ -66,52 +65,50 @@ backend/
 `core`
 - Settings, database session, security helpers, common exceptions, and shared dependencies.
 
-`identity`
+`api`
+- FastAPI router assembly, versioned API entry points, and health routes.
+
+`domains/users`
 - Email and password authentication for MVP.
 - JWT issuance and user identity APIs.
 - Designed so Google, Kakao, and Naver OAuth can be added later through provider accounts.
+- User consent and portal credential ownership should live here.
 
-`academic_profile`
+`domains/academics`
 - User academic programs: primary major, dual major, minor, interdisciplinary major.
 - Completed course records.
 - Certifications, language scores, competitions, and activities.
 - CSV/manual course record input comes first. OCR can be added later.
-
-`curriculum`
 - Graduation requirement sets by school, department, major, program type, and curriculum year.
 - Requirement categories, required courses, equivalency rules, prerequisite rules, and overlap rules.
-- This module stores and manages rules; it does not calculate audits.
-
-`graduation_engine`
 - Calculates graduation audit results from user course records and curriculum rules.
 - MVP calculates each selected program independently.
 - Later versions can add integrated overlap handling across primary, dual, minor, and interdisciplinary programs.
 
-`course_catalog`
+`domains/courses`
 - Courses, course offerings, sections, professors, capacity, and timetable blocks.
 - MVP data can be imported from CSV.
 - Later crawlers should upsert into the same normalized tables.
 
-`recommendation`
-- Candidate courses for the next semester.
-- Timetable candidate generation.
-- Deterministic filtering should happen here before LLM explanation.
+`ingestion`
+- `csv_importers`: MVP importers for course records and course offerings.
+- `crawlers`: crawlers for course catalog, student portal data, academic notices, campus opportunities, and department requirement sources.
+- `parsers`: text extraction or LLM-assisted parse candidates.
+- `normalizers`: conversion into stable DB-ready records.
 
-`rag`
+`ai/rag`
 - Documents and chunks for academic information, graduation source documents, course guide documents, campus extracurricular opportunities, and internal competitions.
 - Uses pgvector once embeddings are enabled.
 - Used for search and chatbot context, not for final graduation judgment.
 
-`llm`
+`ai/llm`
 - GPT/Claude client wrappers.
 - Prompt templates for explaining audit results and recommendation reasons.
 - Receives de-identified or minimal data.
 
-`data_ingestion`
-- `csv_importers`: MVP importers for course records and course offerings.
-- `crawlers`: later crawlers for course catalog, academic notices, campus opportunities, and department requirement sources.
-- `parsers`: text extraction or LLM-assisted parse candidates.
-- `normalizers`: conversion into stable DB-ready records.
+`ai/recommendations`
+- Recommendation support that depends on validated domain data.
+- Deterministic filtering should stay in `domains`; LLM-facing explanation and ranking support can live here.
 
 ## Authentication Direction
 
@@ -278,6 +275,15 @@ course_offerings
 - year
 - semester
 - section
+- source_type             # manual_xlsx/onestop_json/onestop_excel/admin
+- source_name             # original file name or source URL
+- source_snapshot_date    # date shown by a static source file, nullable
+- crawled_at              # time when live crawler collected this row, nullable for manual files
+- first_seen_at
+- last_seen_at
+- offering_status         # active/cancelled/cancelled_candidate/new_candidate/changed/archived
+- change_status           # unchanged/added/removed/modified/needs_review
+- change_checked_at
 - professor
 - capacity
 - enrolled_count
@@ -296,6 +302,172 @@ course_times
 - start_time
 - end_time
 - classroom
+```
+
+### Course Catalog Import Standard
+
+Course catalog import should use the 2026 undergraduate course offering file as the canonical column format.
+
+Canonical 2026 column mapping:
+
+```text
+주관대학명        -> college
+학과(부)          -> parent_department
+주관학과코드      -> offering_department_code
+주관학과명        -> offering_department
+학년              -> target_grade
+교과목번호        -> course_code
+분반              -> section
+교과목명          -> course_name
+교과목구분        -> category
+학점              -> credits
+이론시간          -> lecture_hours
+실습시간          -> practice_hours
+시간표            -> timetable_raw
+교수명            -> professor
+교양영역명        -> general_education_area
+원어강의          -> foreign_language_lecture
+팀티칭            -> team_teaching
+원격강좌여부      -> is_remote
+```
+
+Older course catalog files should be normalized into the 2026 naming standard through header aliases.
+
+Known aliases:
+
+```text
+대학명            -> 주관대학명
+상위소속(학과)    -> 학과(부)
+교과목코드        -> 교과목번호
+교과구분          -> 교과목구분
+제한인원          -> 수강제한인원
+수강제한인원      -> capacity
+```
+
+The display name for undergraduate departments should preserve both the parent school/department and the concrete major or offering department.
+
+Example:
+
+```text
+parent_department: 정보컴퓨터공학부
+major: 컴퓨터공학전공
+display_department_name: 정보컴퓨터공학부 컴퓨터공학전공
+```
+
+Graduation requirement calculation should still use the concrete requirement set linked to the student's selected program, not only the display name.
+
+Department and program names can change across curriculum years, so graduation requirements should not rely on names as stable identifiers.
+
+Plan-U should use the 2026 department/major classification workbook as the primary academic program master source. This source includes department code, department name, college code, college name, degree type, department status, first recruitment year, and source updated time. The older KEDI standard classification file should not be used as the primary master because it does not describe the 2026 program transition as cleanly.
+
+Onestop course catalog JSON includes `MNG_DEPT_CD`, which should be stored as `offering_department_code` and mapped as an external source key, not as the primary academic program key.
+
+Recommended program identity tables:
+
+```text
+academic_programs
+- id
+- school
+- program_code          # stable internal code used by Plan-U, seeded from 2026 classification 학과코드 when possible
+- source_department_code
+- current_name
+- program_type          # department/major/dual_major/minor/interdisciplinary/linked/free_major
+- college_code
+- current_college
+- degree_type
+- status                # active/renamed/merged/split/closed
+- source_status         # 기존/신설/변경/폐과
+- first_recruitment_year
+- source_updated_at
+- effective_from_year
+- effective_to_year
+```
+
+```text
+academic_program_external_ids
+- id
+- academic_program_id
+- source_system         # onestop/course_catalog/manual
+- external_id           # e.g. MNG_DEPT_CD
+- external_name
+- valid_from_year
+- valid_to_year
+```
+
+```text
+academic_program_aliases
+- id
+- academic_program_id
+- alias_name
+- alias_type            # old_name/display_name/source_name
+- valid_from_year
+- valid_to_year
+```
+
+If a program is renamed but graduation requirements continue, keep the same `academic_program_id` and add a new alias/external-id validity row. If a program is split, merged, or moved to another college with different requirements, create a new `academic_program_id` and link it through a transition table.
+
+Course identity and offering identity should be handled separately:
+
+```text
+course identity:
+- school
+- course_code
+
+offering identity:
+- school
+- course_code
+- year
+- semester
+- section
+```
+
+Timetable parsing should preserve the original timetable text and store parse status.
+
+```text
+course_offerings.timetable_raw
+course_offerings.timetable_parse_status  # parsed/partial/needs_review
+```
+
+Parsed timetable rows should be inserted into `course_times` only when reliable. If parsing fails, keep the raw timetable text and mark the row for review.
+
+Course offerings should keep source and change-tracking metadata because static course catalog files and live Onestop crawler results can represent different points in time.
+
+Recommended status rules:
+
+```text
+manual snapshot has row, latest crawler has row, values same      -> active / unchanged
+manual snapshot has row, latest crawler has row, values changed   -> changed / modified
+manual snapshot has row, latest crawler does not have row         -> cancelled_candidate / removed
+manual snapshot does not have row, latest crawler has row         -> new_candidate / added
+review confirms cancellation                                  -> cancelled / removed
+```
+
+The system should not automatically treat every missing live row as final cancellation. It should first mark it as `cancelled_candidate` because differences may also come from source timing, category filters, endpoint behavior, or temporary Onestop changes.
+
+Course registration restrictions should be modeled separately because one offering can have multiple department, grade, nationality, academic status, or degree-program restrictions.
+
+Recommended table:
+
+```text
+course_registration_restrictions
+- id
+- offering_id
+- school
+- year
+- semester
+- course_code
+- section
+- restriction_type
+- allowed
+- target_department
+- target_grade
+- nationality
+- academic_year
+- completed_semesters
+- academic_status
+- degree_program
+- reason
+- raw_metadata       # JSONB
 ```
 
 ### Graduation Audit Results
@@ -345,6 +517,75 @@ The response shape should include:
 - Department graduation requirement crawler collects source documents.
 - Graduation requirement parsing produces review candidates, not direct production rules.
 - A human review step approves parsed candidates before they are applied to `requirement_sets` and related rule tables.
+
+### Course Catalog Crawler Plan
+
+The planned course catalog crawler source is:
+
+```text
+https://onestop.pusan.ac.kr/page?menuCD=000000000000335
+```
+
+Crawler input selections:
+
+```text
+학년도/학기: target academic year and semester
+대학/대학원: 대학
+과목구분: iterate across available course category values
+```
+
+The crawler should export or collect CSV files for each course category, then normalize and join those category-specific files into the canonical course catalog schema.
+
+Recommended flow:
+
+```text
+Onestop page
+-> select 학년도/학기
+-> select 대학
+-> iterate 과목구분
+-> export CSV per category
+-> store raw CSV under ignored raw_data/crawled_data during local experiments
+-> normalize headers to 2026 canonical names
+-> join/deduplicate by school + course_code + year + semester + section
+-> compare latest live crawl with the static source snapshot
+-> mark active, changed, new_candidate, and cancelled_candidate rows
+-> load into courses, course_offerings, course_times, and course_registration_restrictions
+```
+
+The crawler should not bypass normalization. It should produce the same normalized shape as the MVP CSV import path so that manual files and crawled files share one ingestion pipeline.
+
+Initial crawler script:
+
+```text
+backend/app/ingestion/crawlers/onestop_course_catalog.py
+```
+
+Example command:
+
+```bash
+python3 backend/app/ingestion/crawlers/onestop_course_catalog.py \
+  --year 2026 \
+  --semester 1 \
+  --subject-categories 1 2 3 4 5 \
+  --output-dir raw_data/crawled_data/onestop_course_catalog/2026_1
+```
+
+The crawler currently:
+
+- opens the Onestop course catalog page
+- extracts the page RSA public key and CSRF token
+- mirrors the client-side encrypted AJAX request format
+- fetches each selected subject category
+- stores raw JSON by category
+- writes a normalized 2026-format course catalog CSV
+- can optionally call the course precaution endpoint with `--include-precautions`
+
+Precaution crawling can create thousands of extra requests, so experiments should use `--precaution-limit` first.
+
+Known limitation:
+
+- The Onestop JSON endpoint does not currently return the same college and parent-department columns present in some downloaded Excel files. Those fields remain blank unless later enriched from another source.
+- A downloaded course catalog file is a snapshot, while the live JSON endpoint can include later changes such as added sections, changed professors, changed classrooms, or cancellation rounds. Imports should preserve both `source_snapshot_date` and `crawled_at` so that these differences can be reviewed instead of overwritten silently.
 
 Recommended source tracking:
 
@@ -493,7 +734,6 @@ Deployment concerns to decide before implementation:
 ## Open Decisions
 
 - Which departments and curriculum years are supported in the first seed data set?
-- What exact CSV format will be used for course offerings?
 - What exact CSV format will be used for completed course records?
 - Which pgvector embedding model will be used?
 - Which LLM provider is used first: GPT, Claude, or both behind one interface?
