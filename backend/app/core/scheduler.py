@@ -22,7 +22,10 @@ scheduler = BackgroundScheduler(timezone="Asia/Seoul")
 def _crawl_notice_boards() -> None:
     from app.core.db import SessionLocal
     from app.ingestion.crawlers.notice_board_crawler import crawl_all_notice_boards
-    from app.ingestion.normalizers.activity_normalizer import upsert_all_activities
+    from app.ingestion.normalizers.activity_normalizer import (
+        remove_stale_activities,
+        upsert_all_activities,
+    )
     from app.ingestion.normalizers.dedup_activities import remove_duplicate_activities
 
     logger.info("notice board crawl started")
@@ -42,6 +45,8 @@ def _crawl_notice_boards() -> None:
     try:
         saved = upsert_all_activities(db, rows)
         logger.info("notice board crawl done: total=%d saved=%d", len(rows), len(saved))
+        stale_removed = remove_stale_activities(db, rows)
+        logger.info("stale activities removed: %d", stale_removed)
         removed = remove_duplicate_activities(db)
         logger.info("duplicate activities removed: %d", removed)
     except Exception:

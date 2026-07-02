@@ -12,6 +12,16 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 2
+
+- docs 구조 개편: 날짜별 작업 기록 → 단일 `CHANGELOG.md` + `docs/features/` 기능별 문서
+  - `docs/features/`를 기술 모듈(크롤러/추천엔진) 대신 제품 기능 4가지로 재편: 비교과 활동 추천, 내 정보 페이지(졸업요건 확인), core(로그인/회원가입, 미구현), 성장 로드맵(미구현)
+  - `backend-db-infra-architecture.md` → `docs/architecture.md`로 이름 정리
+- 원본에서 내려간 공지 자동 정리 (`remove_stale_activities`)
+  - 기존엔 upsert만 해서 원본에서 삭제된 공지가 DB에 계속 남는 문제 발견
+  - 전체 삭제 후 재삽입은 매일 전체 재임베딩 비용 + 추천 캐시(FK) 소실 문제로 배제
+  - 출처별로 이번 크롤에서 안 보인 URL만 90일 lookback 안에서 부분 삭제하도록 구현
+
 ## 2026-07-02 (d0won)
 
 - 비교과 활동 임베딩 + 추천 파이프라인 구현 ([#21](https://github.com/PNU-2026-AI-Hackathon/pnuai-a-03-team-u/pull/21))

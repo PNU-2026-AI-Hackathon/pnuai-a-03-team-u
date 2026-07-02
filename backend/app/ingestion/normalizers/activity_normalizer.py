@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections import defaultdict
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.domains.activities.models import Activity
+from app.domains.activities.models import Activity, UserActivityRecommendation
 from app.ingestion.crawlers.notice_board_crawler import NoticeRow
 
 # 제목 키워드 → 카테고리 매핑 (앞에서부터 첫 번째 매칭 사용)
@@ -118,3 +120,39 @@ def upsert_all_activities(db: Session, rows: list[NoticeRow]) -> list[Activity]:
             activities.append(activity)
     db.commit()
     return activities
+
+
+def remove_stale_activities(
+    db: Session, rows: list[NoticeRow], lookback_days: int = 90
+) -> int:
+    """이번 크롤에서 보이지 않은(=원본에서 내려간) Activity를 출처별로 정리한다.
+
+    lookback 기간 안에서만 정리한다: 크롤러가 애초에 그 밖의 오래된 글은
+    다시 방문하지 않으므로, 그런 글까지 "안 보였다"고 지우면 안 된다.
+    id/embedding이 그대로인 Activity는 건드리지 않아 매일 전체 재임베딩되는
+    비용을 피한다.
+    """
+    cutoff = datetime.date.today() - datetime.timedelta(days=lookback_days)
+    seen_urls_by_source: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        seen_urls_by_source[row.source].add(row.url)
+
+    deleted = 0
+    for source, seen_urls in seen_urls_by_source.items():
+        stale = db.scalars(
+            select(Activity).where(
+                Activity.source == source,
+                Activity.posted_date.is_not(None),
+                Activity.posted_date >= cutoff,
+                Activity.source_url.not_in(seen_urls),
+            )
+        ).all()
+        for activity in stale:
+            db.query(UserActivityRecommendation).filter(
+                UserActivityRecommendation.activity_id == activity.id
+            ).delete()
+            db.delete(activity)
+            deleted += 1
+
+    db.commit()
+    return deleted
