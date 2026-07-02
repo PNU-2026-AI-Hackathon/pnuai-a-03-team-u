@@ -9,19 +9,77 @@
 from __future__ import annotations
 
 import datetime
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.embeddings.openai_client import embed_text
+from app.ai.embeddings.openai_client import _get_client, embed_text
 from app.domains.academics.models import UserAcademicProgram
 from app.domains.activities.models import Activity, UserActivityRecommendation
 from app.domains.users.models import User
+
+logger = logging.getLogger(__name__)
 
 _LOOKBACK_DAYS = 90
 _TOP_K = 50
 _NO_CAREER_GOAL_WEIGHT = 1.0
 _HAS_CAREER_GOAL_WEIGHT = 1.2
+
+_EXPANSION_MODEL = "gpt-4o-mini"
+
+# 프로필 텍스트("행정학과 행정직 공무원")만으로는 임베딩이 진로 분야보다
+# "채용/모집"이라는 공지 형식에 끌리는 문제가 있어(오프라인 평가에서 확인),
+# 임베딩 전에 관련 키워드로 확장한다(query expansion).
+_EXPANSION_PROMPT = """대학생의 전공/진로 프로필입니다:
+{profile}
+
+이 학생에게 관련 있는 교내 공지(공모전, 채용, 교육, 특강, 장학금 등)를
+임베딩 검색으로 찾으려 합니다. 검색 품질을 높이도록 이 프로필과 직접 관련된
+구체적 키워드 15~20개를 한국어로 나열하세요. 진로 분야의 시험/자격증/기관명/
+직무명/활동 유형을 포함하되, 모든 전공에 통하는 범용 단어(채용, 모집, 취업 등)는
+제외하세요. 쉼표로 구분해 키워드만 출력하세요."""
+
+# 같은 프로필은 프로세스 내에서 한 번만 확장한다 (자정 배치 중 반복 호출 방지)
+_expansion_cache: dict[str, str] = {}
+
+
+def _expand_profile_text(profile_text: str) -> str:
+    """프로필을 진로 분야 키워드로 확장한다. 실패하면 원문을 그대로 쓴다."""
+    if profile_text in _expansion_cache:
+        return _expansion_cache[profile_text]
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=_EXPANSION_MODEL,
+            messages=[
+                {"role": "user", "content": _EXPANSION_PROMPT.format(profile=profile_text)}
+            ],
+            temperature=0,
+        )
+        keywords = response.choices[0].message.content.strip()
+        expanded = f"{profile_text} {keywords}"
+    except Exception:
+        logger.exception("profile expansion failed, falling back to raw profile")
+        expanded = profile_text
+    _expansion_cache[profile_text] = expanded
+    return expanded
+
+
+def _profile_embedding(profile_text: str) -> list[float]:
+    """원본 프로필과 확장 프로필의 임베딩을 평균해 사용한다.
+
+    확장 임베딩만 쓰면 코퍼스에 해당 분야 공지가 거의 없는 경우(예: 화학)
+    상위권 유사도가 전부 낮아져 순위가 노이즈가 되는 문제가 오프라인 평가에서
+    확인됐다. 원본 임베딩을 절반 섞어 안전망으로 삼는다.
+    """
+    from app.ai.embeddings.openai_client import embed_texts
+
+    expanded = _expand_profile_text(profile_text)
+    if expanded == profile_text:
+        return embed_text(profile_text)
+    original_vec, expanded_vec = embed_texts([profile_text, expanded])
+    return [(o + e) / 2 for o, e in zip(original_vec, expanded_vec)]
 
 
 def _build_profile_text(user: User, majors: list[str]) -> str | None:
@@ -60,7 +118,7 @@ def recommend_for_user(db: Session, user_id: int, top_k: int = _TOP_K) -> list[U
     if profile_text is None:
         return []
 
-    profile_embedding = embed_text(profile_text)
+    profile_embedding = _profile_embedding(profile_text)
     career_weight = _HAS_CAREER_GOAL_WEIGHT if user.career_goal else _NO_CAREER_GOAL_WEIGHT
 
     cutoff = datetime.date.today() - datetime.timedelta(days=_LOOKBACK_DAYS)
