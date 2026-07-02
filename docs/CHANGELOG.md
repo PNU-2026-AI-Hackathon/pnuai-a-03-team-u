@@ -12,6 +12,13 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 4
+
+- 출처 간(cross-source) 중복 공지 정리
+  - pusan_main이 전문 게시판(job, pnucounsel) 공지를 재게시해 추천 top-10에 같은 공지가 두 번 노출되던 문제
+  - dedup 그룹핑 키를 (source, title) → title로 확장, 유지 우선순위에 "임베딩 보유" 추가(매일 밤 재임베딩 순환 방지)
+  - 평가 수치: mean P@10 0.533 → 0.55, mean nDCG@10 0.711 → 0.713
+
 ## 2026-07-02 (d0won) - 3
 
 - 추천 정확도 오프라인 평가 도입 (`app/ai/evaluation/recommendation_eval.py`)
