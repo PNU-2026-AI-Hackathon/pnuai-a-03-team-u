@@ -162,8 +162,9 @@ raw 실험 파일에만 의존하지 않도록, 실제 서비스가 사용하는
 
 ## 아직 하지 않은 것
 
-- 실제 졸업요건 규칙 내용은 채우지 않았다.
-- 전공별 필수학점, 필수과목, 교양 영역 규칙은 별도 테이블/seed로 이어서 넣어야 한다.
+- ~~실제 졸업요건 규칙 내용은 채우지 않았다~~ 2026-07-02~03에 `requirement_sets`/
+  `requirement_categories`/`requirement_courses`/`requirement_text_rules`로 채웠다.
+  진행 상황과 학과별 커버리지는 [graduation-requirements-supabase-seeding.md](../progress/graduation-requirements-supabase-seeding.md) 참고.
 - `department_academic_program_mappings`는 별칭 exact match 기반이다. 상위 학부와 세부전공
   관계가 복잡한 경우 수동 검토 또는 추가 규칙이 필요하다.
 - 회원가입 API가 아직 `academic_program_code`를 직접 받지는 않는다. 현재는 이름 검증을

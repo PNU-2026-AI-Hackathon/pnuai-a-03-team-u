@@ -12,6 +12,50 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-03 (hyunwoocho) #3
+
+- 과목코드-수강편람 카탈로그 대조 검증 (matched 11,500건 전수)
+  - 코드 존재 여부는 100% 정상(구조적으로 보장됨). 학과 소속 정합성은 자동 검사로 1,841건이 의심됐지만 표본 확인 결과 대부분(90%+)은 "학부 요청분이 하위 전공 이름으로 카탈로그에 찍힌" 오탐이었음
+  - **실제 버그 발견 및 수정**: 전기전자공학부 전기공학전공의 매칭 358건 중 8건만 실제 전기공학전공 소속이고 나머지는 무관한 학과 과목이었음. 원인 (1) `match_course()`가 학과명 접두어만 확인해서 "학부 전공"처럼 구체 전공명이 뒤에 붙는 접미어 패턴을 못 잡음 → 부분 문자열 포함 검사로 일반화, (2) 소스 폴더에 반도체융합전공(별도 연계전공) 안내자료가 잘못 섞여 있었음 → 제외 처리. 수정 후 68건이 정확히 재매칭됨
+  - 나노소자첨단제조전공(지난 세션 대학원 오귀속)과 같은 패턴 — "소스 폴더에 새 파일 추가 시 대상 학과와 다른 전공명이 있는지 확인" 원칙을 문서화
+  - 재시딩 결과: `requirement_courses` 14,401→13,837, ambiguous 1,048→792 (접미어 매칭 개선으로 다수 해소). 멱등성 확인
+  - 상세: `docs/progress/graduation-requirements-supabase-seeding.md`
+
+## 2026-07-03 (hyunwoocho) #2
+
+- 남은 26개 미해결 학과(no_parsed_requirements_yet) 전수조사 + 직접 수집
+  - 부산대 학과 홈페이지 원문 형식이 4가지로 완전히 달랐음: 정적 파일 다운로드 / 페이지에 표 내장 / 이미지(약학대학 이수체계도) / AIS 공용 동적 검색 위젯(무용·음악·조형학과)
+  - AIS 동적 위젯의 실제 API를 리버스엔지니어링: `POST /ais/UNIV/{collegeCd}/getDeptInfoMajorList`로 전공코드 조회 후 `POST /curriculum/{siteId}/{fnctNo}/view.do`(`.do` 필수)로 실제 과목표 획득. 이 방식으로 무용학과 3개, 음악학과 4개, 조형학과 3개 전공을 정확히 수집
+  - **위험한 오탐 발견**: 첨단융합학부 나노소자첨단제조전공의 기존 소스가 동명의 대학원 학과(`nanomecha`) 커리큘럼이었음. 짧은 과목코드(7자리)라 우연히 정규식에 안 걸려 seed엔 안 들어갔지만, 검색으로 찾은 소스는 "대학원/특론" 키워드 확인 후 써야 함을 확인. 올바른 학부 소스로 교체
+  - 건축학과(5년제)/화공생명·환경공학부/디자인학과(시각디자인·애니메이션)/첨단융합학부(미래에너지·AI융합계산과학) 등도 정식 원문으로 보강
+  - 교양학부(인문사회/공학/자연과학/의학/예체능계열)+기타모집단위 6개는 조사 결과 "학부대학 자유전공학부"의 계열별 모집단위로, 1학년 탐색 후 2학년에 전공 선택하는 구조라 애초에 자체 교육과정이 없음을 확인 (정상적으로 데이터 없음 처리)
+  - 약학전공/제약학전공/약학부(통합6년제) 3개, 스마트가전공학과(2027 첫 모집)/디자인테크놀로지전공(2026 이관 예정) 2개는 원문을 못 찾거나 아직 공식 발표 전이라 미해결로 남음
+  - 결과: `requirement_categories` 511→550, `requirement_courses` 13,851→14,401, `ready_for_human_review` 118/153→136/153, `no_parsed_requirements_yet` 26→9(그중 6개는 해당없음 확정)
+  - 상세: `docs/progress/graduation-requirements-supabase-seeding.md`
+
+## 2026-07-03 (hyunwoocho)
+
+- 졸업요건 사람 검토 워크플로우 구축 + HWP 추출 방식 교체 + 학과 원문 직접 보강
+  - `export_requirement_course_review_queue.py`(검토 대상 export) + `backend/seeds/requirement_course_corrections.csv`(검토 결과, git 버전관리) + `seed_graduation_requirements.py`가 매번 재시딩 시 corrections를 자동 반영하도록 연결. 재크롤링/재파싱을 다시 돌려도 사람 검토 결과가 유실되지 않음
+  - stale-row prune 로직 추가: `requirement_course_id`가 매칭 결과를 포함한 해시라 매칭 로직 개선 시 해시가 바뀌는데, 재시딩할 때마다 DB를 최신 CSV와 정확히 동기화하도록 함
+  - HWP 추출을 `textutil`/`strings` 폴백에서 `pyhwp`의 `hwp5html`로 교체 (HWP 소스 72개 전부 `extracted_partial`→`extracted`). `requirement_courses` 8,766→13,851, `requirement_categories` 493→511
+  - 정보컴퓨터공학부 컴퓨터공학전공/인공지능전공: 기존 소스가 전부 공지사항이었던 걸 확인하고 학과 홈페이지에서 실제 2026 교육과정표(hwp) 재확보 (0건→1,054/1,042건)
+  - Global Studies Program: 전용 사이트(pnudgs.com)에서 실제 교육과정표를 찾아 전공필수/전공기초 12과목을 `backend/seeds/requirement_course_supplemental.csv`로 수기 반영 (일반 파이프라인이 처리 못하는 rowspan 표/7자리 과목코드 형식이라 예외 처리)
+  - 스마트가전공학과: 2027학년도 첫 신입생 모집 예정인 신설 계약학과로, 교육과정 자체가 아직 없음을 확인 (추측으로 채우지 않음)
+  - 상세 수치와 남은 일: `docs/progress/graduation-requirements-supabase-seeding.md`
+
+## 2026-07-02 (hyunwoocho)
+
+- 졸업요건 판정 엔진 MVP 작성 + 가상 학생 시나리오 검증
+  - `backend/app/domains/academics/graduation_engine.py` 신규 작성 (기존에는 모델만 있고 판정 로직 없었음)
+  - 단일전공/전과/복수전공/부전공 등 7개 가상 학생 시나리오를 Supabase 실데이터에 대고 트랜잭션 rollback으로 검증
+  - 발견한 구조적 한계: `student_course_records`가 어느 `user_academic_programs`에 속하는지 연결이 없어 전과 시 과목이 잘못 합산됨, 복수전공/부전공 요건 데이터가 151개 프로그램 중 1개(EES융합전공)에만 존재, `curriculum_year`가 전부 "2026"뿐이라 입학연도별 요건 미반영
+- 학과별 교육과정 과목코드 추출 정규식 버그 수정 + 재시딩
+  - `COURSE_CODE_RE`가 `Z[A-Z]z?\d{6}` 패턴도 과목코드로 인식해, "효원균형" 교양영역 표의 placeholder 라벨(예: `ZFz000091`)을 실제 과목코드로 잘못 추출하던 버그 수정 (`backend/scripts/build_department_curriculum_courses.py`, `backend/scripts/build_department_curriculum_structured_candidates.py`)
+  - 실제 수강편람 과목코드는 항상 대문자 2~3자 + 숫자 7자리라는 사실을 확인 후 정규식을 `[A-Z]{2,3}\d{7}`로 단순화
+  - 재실행 결과: `requirement_courses` 후보 9,082 -> 8,799행, unmatched 1,216(13.4%) -> 954(10.9%), needs_review=Y 4,451 -> 4,168행으로 감소. Supabase에서 잔여 placeholder 행 262개 직접 삭제
+  - 남은 unmatched(954)의 상당수는 버그가 아니라 2023-2026 수강편람 크롤 범위 밖의 구(舊) 교육과정 과목코드로 확인됨 (`docs/progress/graduation-requirements-supabase-seeding.md` 참고)
+
 ## 2026-07-02 (hyunwoocho)
 
 - 졸업요건 세부 테이블 추가 및 Supabase seed 반영

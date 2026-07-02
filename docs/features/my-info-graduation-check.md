@@ -59,15 +59,36 @@
 python -m scripts.seed_academic_programs
 ```
 
-**아직 비어있음** — FK 연결만 해뒀고 실제 졸업요건 내용(전공별 필수 학점,
-필수과목 목록 등)은 정식 학사요람 데이터가 있어야 채울 수 있어 시드되지 않았다.
-사실과 다른 요건 정보는 학생의 졸업 판단을 오도할 수 있어 확실한 출처 없이
-채우지 않는다.
+2026-07-02에 학과별 파싱 자료 기반으로 `requirement_sets`/`requirement_categories`/
+`requirement_courses`/`requirement_text_rules`에 실제 시드가 들어갔다. 다만 자동 파싱
+결과라 `needs_review`가 붙어있고, 학과/전공별 커버리지가 고르지 않다. 자세한 내용과
+커버리지 수치는 [graduation-requirements-supabase-seeding.md](../progress/graduation-requirements-supabase-seeding.md) 참고.
+
+## 졸업요건 판정 엔진 (`app/domains/academics/graduation_engine.py`)
+
+시드된 요건 데이터를 학생의 `student_course_records`와 대조해 프로그램(주전공/복수전공/
+부전공/연계전공)별 카테고리 충족 여부를 계산하는 MVP. `evaluate_graduation(db, user_id)`가
+진입점이다. FastAPI 라우터로는 아직 노출되지 않았다.
+
+현재 시드 데이터 한계 때문에 판정 범위가 제한적이다 (자세한 근거는 모듈 docstring 참고):
+
+- 학생 이수내역의 `category`가 대분류 텍스트(전공필수/전공선택/교양 등)뿐이라 효원핵심/
+  효원균형/효원창의 같은 세부 교양 영역, 전공 합계 같은 집계 카테고리는 판정 불가로 둔다
+- `curriculum_year`가 시드 데이터에 "2026"만 있어 학생의 실제 입학연도와 다르면 최신
+  연도로 대체 판정하고 warning을 남긴다
+- 복수전공/부전공(`program_type=dual`/`minor`) 요건 데이터는 151개 학사 프로그램 중
+  EES융합전공 1개에만 있어, 대부분의 복수전공/부전공 조합은 "요건 데이터 없음"으로
+  반환된다
+- `student_course_records`가 어느 `user_academic_programs`에 속한 과목인지 연결이
+  없어서, 전과(1학년 A전공 -> B전공) 학생의 과거 과목 학점이 현재 활성 전공의 요건
+  카테고리에 그대로 합산된다 (검증 시나리오로 확인됨, 아직 미해결)
 
 ## 알려진 한계 / TODO
 
 - FastAPI 라우터로 노출되지 않음 (아직 API 엔드포인트 없음, 스크립트로만 실행 가능)
 - 백그라운드 작업화 안 됨
 - 사용자별 자격증명 입력 플로우(회원가입/설정 화면 연동) 없음
-- `graduation_engine`(`domains/academics`)의 실제 판정 로직은 요건 규칙 시드 데이터가 필요해 미구현
-- `RequirementSet`/`Course`의 `department_id` FK는 연결만 됐고 요건/과목 데이터 자체는 비어있음 (정식 학사요람 출처 확보되면 채울 것)
+- `RequirementSet`/`Course`의 `department_id` FK는 연결만 됐고 `courses` 카탈로그
+  테이블 자체가 비어있어 course_id 매칭이 안 되고 텍스트 매칭에만 의존한다
+- 복수전공/부전공 요건 데이터, 입학연도별 요건, 전과 이력 모델링이 전부 미해결
+  (위 "졸업요건 판정 엔진" 절 참고)
