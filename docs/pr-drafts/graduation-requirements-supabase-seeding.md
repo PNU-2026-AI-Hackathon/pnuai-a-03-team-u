@@ -1,13 +1,21 @@
-# PR: 졸업요건 세부 테이블 추가 및 Supabase seed 반영
+# PR: 졸업요건 학사 프로그램 기반 + Supabase seed 반영
 
 ## Summary
 
-학과별 홈페이지/교육과정 원문, 수강편람 과목 매칭, 부산대학교 교육과정 편성 및 운영규정 PDF에서 정리한 졸업요건 후보 데이터를 DB에 담을 수 있도록 정규 테이블과 seed 스크립트를 추가했습니다.
+졸업요건을 회원가입용 학과명(`departments`)이 아니라 학사 프로그램 코드(`academic_programs`) 기준으로 관리할 수 있도록 기반 테이블을 추가하고, 학과별 홈페이지/교육과정 원문, 수강편람 과목 매칭, 부산대학교 교육과정 편성 및 운영규정 PDF에서 정리한 졸업요건 후보 데이터를 Supabase DB에 반영했습니다.
 
 이번 PR은 자동 파싱 결과를 곧바로 확정 졸업판정 규칙으로 사용하는 것이 아니라, 원문 출처와 `needs_review` 상태를 함께 저장해 사람이 검토하며 확정할 수 있는 기반을 만드는 작업입니다.
 
 ## Changes
 
+- 졸업요건 기준 학사 프로그램 마스터 추가
+  - `academic_programs`
+  - `academic_program_aliases`
+  - `department_academic_program_mappings`
+  - `UserAcademicProgram.academic_program_code`
+  - `RequirementSet.academic_program_code`
+- 2026학년도 활성 학사 프로그램 151개 seed 추가
+- 회원가입 검증용 `departments`와 졸업요건 기준 `academic_programs` 역할 분리
 - `requirement_categories`, `requirement_courses`, `requirement_text_rules` 테이블 추가
 - `RequirementCategory`, `RequirementCourse`, `RequirementTextRule` SQLAlchemy 모델 추가
 - `requirement_sets`에 `(academic_program_code, program_type, curriculum_year)` unique 제약 추가
@@ -19,6 +27,13 @@
   - active bachelor 프로그램에 없는 alias 제외
 - 진행 상황/남은 작업 문서 추가
   - `docs/progress/graduation-requirements-supabase-seeding.md`
+
+## Repository Correction
+
+이 작업의 이전 PR이 실수로 `PNU-2026-AI-Hackathon/StarterTemplate`에 생성되어 닫았습니다.
+
+- 닫은 잘못된 PR: `PNU-2026-AI-Hackathon/StarterTemplate#16`
+- 올바른 PR: `PNU-2026-AI-Hackathon/pnuai-a-03-team-u#33`
 
 ## Supabase Applied
 
