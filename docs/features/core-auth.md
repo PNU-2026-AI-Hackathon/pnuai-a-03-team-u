@@ -37,6 +37,30 @@
 (`extracurricular_recommender.py`)은 이미 유저의 모든 전공을 프로필 텍스트에 반영하고
 있어서 이 데이터가 들어오면 별도 연동 작업 없이 바로 추천에 쓰인다.
 
+### 학과/전공 검증 (`departments` 테이블)
+
+`department`, `academic_programs[].major`로 들어온 값은 `departments` 테이블에
+있는 정식 명칭이어야 한다 — 없으면 400으로 회원가입 자체가 거부된다
+(`_validate_department_names`, `app/api/auth.py`).
+
+`departments` 시드 데이터(`backend/seeds/pnu_departments.json`, 163개)는 onestop
+수강편람 크롤러(`app/ingestion/crawlers/onestop_course_catalog.py`)로 2026-1학기
+개설 과목의 개설 학과명(`MNG_DEPT_NM`)을 전부 모아, 연구소/센터 같은 비학사 조직을
+제외해 만들었다. `scripts/seed_departments.py`로 upsert한다.
+
+```
+python -m scripts.seed_departments
+```
+
+**알려진 한계**: 수강편람은 과목을 실제로 개설하는 단위(대개 세부 전공)만 보여줘서,
+학생이 소속감을 느끼는 상위 학부명이 빠진 경우가 있다. 예: "정보컴퓨터공학부"는
+과목이 "컴퓨터공학전공"/"인공지능전공" 이름으로만 개설되어 최초 크롤링 결과에는
+없었고, 부산대 홈페이지를 따로 찾아 수동으로 추가했다. "전기전자공학부",
+"디자인학과"도 같은 이유로 수동 추가함. 이런 상위 학부명이 더 있을 수 있어
+(전체 16개 단과대학을 다 대조하지는 않음) — 회원가입 시 "등록되지 않은 학과"
+에러가 자주 나오면 그 학과명을 `pnu_departments.json`에 추가하고
+`seed_departments.py`를 재실행하면 된다.
+
 ## 구현 세부사항
 
 - **비밀번호 해싱**: `bcrypt`를 직접 사용 (`app/core/security.py`의 `hash_password`/`verify_password`).
@@ -61,3 +85,4 @@
 1. 다른 기능 API(`GET /activities/recommendations/{user_id}` 등)를 `get_current_user` 기반으로 전환
 2. `auth_accounts` 테이블 마이그레이션 + 소셜 로그인
 3. 비밀번호 재설정/이메일 인증 (범위 밖으로 보류 중)
+4. `departments` 목록에서 빠진 상위 학부명 보강 (위 "알려진 한계" 참고)

@@ -6,6 +6,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base, TimestampMixin
 
 
+class Department(Base):
+    """부산대 정식 학부/학과/전공 목록.
+
+    onestop 수강편람(공개 API, 로그인 불필요)에서 크롤링해 시드한다
+    (scripts/seed_departments.py). 회원가입 시 department/major 값을
+    이 테이블에 있는지로 검증한다.
+    """
+
+    __tablename__ = "departments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+
+
 class UserAcademicProgram(TimestampMixin, Base):
     """사용자의 학적 프로그램(주전공/복수전공/부전공/연계전공 등)."""
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
-from app.domains.academics.models import UserAcademicProgram
+from app.domains.academics.models import Department, UserAcademicProgram
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -94,6 +94,26 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
     )
 
 
+def _validate_department_names(db: Session, names: list[str]) -> None:
+    """department/major로 입력된 이름이 departments 테이블에 있는지 검증한다.
+
+    부산대 정식 학부/학과/전공만 허용 — 목록은 onestop 수강편람에서 크롤링해
+    시드했다(scripts/seed_departments.py). 없는 이름이면 400.
+    """
+    unique_names = {n for n in names if n}
+    if not unique_names:
+        return
+    known = set(
+        db.scalars(select(Department.name).where(Department.name.in_(unique_names)))
+    )
+    unknown = unique_names - known
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"등록되지 않은 학과/전공입니다: {', '.join(sorted(unknown))}",
+        )
+
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if len(payload.password) < 8:
@@ -102,6 +122,11 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다")
+
+    _validate_department_names(
+        db,
+        [payload.department, *(p.major for p in payload.academic_programs)],
+    )
 
     user = User(
         email=payload.email,

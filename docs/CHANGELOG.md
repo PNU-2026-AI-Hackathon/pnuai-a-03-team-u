@@ -12,6 +12,13 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 10
+
+- 회원가입 시 학과/전공 정식 명칭 검증 (`departments` 테이블)
+  - `department`, `academic_programs[].major`가 DB에 없는 값이면 400으로 회원가입 거부
+  - `departments` 시드 데이터(163개)는 onestop 수강편람 크롤러로 2026-1학기 개설 과목의 개설 학과명을 모아 연구소/센터 등 비학사 조직 제외해 생성 (`backend/seeds/pnu_departments.json`, `scripts/seed_departments.py`)
+  - 알려진 한계: 수강편람은 과목 개설 단위(대개 세부 전공)만 노출해서 상위 학부명(정보컴퓨터공학부, 전기전자공학부 등)이 누락되는 경우가 있었음 — 발견된 것만 수동 보강, 전체 16개 단과대학 전수 대조는 안 함
+
 ## 2026-07-02 (d0won) - 9
 
 - 회원가입에 복수전공/부전공 입력 추가 (`SignupRequest.academic_programs`)
