@@ -93,8 +93,16 @@ final_score = similarity_score * career_weight * recency_weight
 
 - `similarity_score`: 사용자 프로필 임베딩과 Activity 임베딩의 코사인 유사도 (pgvector `cosine_distance`)
 - `career_weight`: `career_goal`이 설정되어 있으면 1.2배, 없으면 1.0배
-- `recency_weight`: 게시일 기준 90일 선형 감쇠 (게시 당일 1.0 → 90일 경과 시 0.5)
-- 마감일이 지난 활동, 게시일이 90일보다 오래된 활동은 후보에서 제외
+- `recency_weight`: 게시일 기준 지수 감쇠, 반감기 30일(`_RECENCY_HALF_LIFE_DAYS`) —
+  최신 공지일수록 순위가 확실히 위로 오도록 함 (최솟값 0.1, 게시일 없으면 0.1)
+- 게시일이 90일(`_LOOKBACK_DAYS`)보다 오래된 활동은 후보에서 제외
+
+### 신청 기간이 끝난 공지 필터링
+
+- 마감일이 파싱된 공지(전체의 약 11%, 제목에서 정규식으로 추출됨)는 마감일이 지나면 정확히 제외
+- 마감일이 파싱되지 않은 나머지(약 89%)는 게시일이 45일(`_NO_DEADLINE_ACTIVE_DAYS`) 지나면
+  신청 기간이 끝났다고 보고 제외한다. 대부분의 비교과 활동 신청 기간이 길어야 한두 달이라는
+  가정에 기반한 휴리스틱 — 실제로 이 규칙으로 현재 DB에서 154건이 제외됨
 - 상위 50개(`_TOP_K`)를 계산해 `UserActivityRecommendation`에 upsert (user_id + activity_id unique)
 - `UserActivityRecommendation.user_id`/`activity_id`는 `ForeignKey(ondelete="CASCADE")` — 유저/활동이 삭제되면 추천 레코드도 같이 삭제됨
 
@@ -136,9 +144,12 @@ python -m app.ai.evaluation.recommendation_eval --top-k 10 --output raw_data/eva
 | 최초 기준선 | 0.533 | 0.711 |
 | 출처 간 중복 정리 적용 후 | 0.55 | 0.713 |
 | 프로필 확장(확장 임베딩만) | 0.55 | 0.705 |
-| 프로필 확장(원본+확장 블렌딩) | **0.583** | **0.733** |
+| 프로필 확장(원본+확장 블렌딩) | 0.583 | 0.733 |
+| 신청기간 만료 필터 + recency 지수 감쇠(반감기 30일) | 0.567 | 0.693 |
 
 LLM judge 특성상 run 간 ±0.1 정도 변동이 있으므로 소수점 둘째 자리 차이는 과신하지 말 것.
+recency 강화는 judge가 "관련성"만 채점하고 "최신성"은 채점하지 않기 때문에 이 지표상으로는
+약간 손해로 보일 수 있다 — 최신 공지를 우선하는 건 요구사항이라 의도적으로 받아들인 트레이드오프.
 
 페르소나별 최신 수치 (블렌딩 적용 후):
 

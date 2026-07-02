@@ -3,7 +3,13 @@
 
 최종 점수 = similarity_score * career_weight * recency_weight
 - career_weight: career_goal이 있으면 유사도를 더 크게 반영(1.2배), 없으면 1.0
-- recency_weight: 게시일이 최근일수록 1.0에 가깝고, 90일에 가까울수록 0.5로 감쇠
+- recency_weight: 게시일 기준 지수 감쇠(반감기 30일) — 최신 공지가 확실히 위로 오도록 함
+
+신청 기간이 끝난 공지 필터링:
+- 마감일이 파싱된 공지(전체의 약 11%)는 마감일 지난 것을 정확히 제외
+- 마감일이 파싱되지 않은 나머지는 제목에 마감일 표기가 없거나 파싱 실패한 경우인데,
+  이런 공지 대부분은 신청 기간이 길어야 한두 달이므로 게시일이 45일(_NO_DEADLINE_ACTIVE_DAYS)
+  넘은 것은 마감으로 간주해 제외한다.
 """
 
 from __future__ import annotations
@@ -25,6 +31,12 @@ _LOOKBACK_DAYS = 90
 _TOP_K = 50
 _NO_CAREER_GOAL_WEIGHT = 1.0
 _HAS_CAREER_GOAL_WEIGHT = 1.2
+
+# 마감일이 파싱되지 않은 공지는 게시일이 이만큼 지나면 신청 기간이 끝났다고 보고 제외
+_NO_DEADLINE_ACTIVE_DAYS = 45
+# recency_weight 지수 감쇠 반감기: 게시 후 이 기간이 지날 때마다 가중치가 절반이 됨
+_RECENCY_HALF_LIFE_DAYS = 30
+_MIN_RECENCY_WEIGHT = 0.1
 
 _EXPANSION_MODEL = "gpt-4o-mini"
 
@@ -91,13 +103,12 @@ def _build_profile_text(user: User, majors: list[str]) -> str | None:
 
 def _recency_weight(posted_date: datetime.date | None) -> float:
     if posted_date is None:
-        return 0.5
+        return _MIN_RECENCY_WEIGHT
     age_days = (datetime.date.today() - posted_date).days
     if age_days <= 0:
         return 1.0
-    if age_days >= _LOOKBACK_DAYS:
-        return 0.5
-    return 1.0 - 0.5 * (age_days / _LOOKBACK_DAYS)
+    weight = 0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS)
+    return max(weight, _MIN_RECENCY_WEIGHT)
 
 
 def recommend_for_user(db: Session, user_id: int, top_k: int = _TOP_K) -> list[UserActivityRecommendation]:
@@ -121,13 +132,22 @@ def recommend_for_user(db: Session, user_id: int, top_k: int = _TOP_K) -> list[U
     profile_embedding = _profile_embedding(profile_text)
     career_weight = _HAS_CAREER_GOAL_WEIGHT if user.career_goal else _NO_CAREER_GOAL_WEIGHT
 
-    cutoff = datetime.date.today() - datetime.timedelta(days=_LOOKBACK_DAYS)
+    today = datetime.date.today()
+    lookback_cutoff = today - datetime.timedelta(days=_LOOKBACK_DAYS)
+    no_deadline_cutoff = today - datetime.timedelta(days=_NO_DEADLINE_ACTIVE_DAYS)
     similarity = (1 - Activity.embedding.cosine_distance(profile_embedding)).label("similarity_score")
     rows = db.execute(
         select(Activity, similarity)
         .where(Activity.embedding.is_not(None))
-        .where((Activity.deadline.is_(None)) | (Activity.deadline >= datetime.date.today()))
-        .where((Activity.posted_date.is_(None)) | (Activity.posted_date >= cutoff))
+        .where((Activity.posted_date.is_(None)) | (Activity.posted_date >= lookback_cutoff))
+        .where(
+            # 마감일이 있으면 안 지난 것만, 없으면 게시일이 너무 오래되지 않은 것만
+            (Activity.deadline.is_not(None) & (Activity.deadline >= today))
+            | (
+                Activity.deadline.is_(None)
+                & ((Activity.posted_date.is_(None)) | (Activity.posted_date >= no_deadline_cutoff))
+            )
+        )
         .order_by(similarity.desc())
         .limit(top_k)
     ).all()
