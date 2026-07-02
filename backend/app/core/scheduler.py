@@ -52,6 +52,39 @@ def _crawl_notice_boards() -> None:
         counts[row.source] = counts.get(row.source, 0) + 1
     logger.info("counts by source: %s", counts)
 
+    _embed_new_activities()
+    _refresh_recommendations()
+
+
+def _embed_new_activities() -> None:
+    from app.ai.embeddings.activity_embeddings import embed_pending_activities
+    from app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        count = embed_pending_activities(db)
+        logger.info("activity embedding done: %d", count)
+    except Exception:
+        db.rollback()
+        logger.exception("activity embedding failed")
+    finally:
+        db.close()
+
+
+def _refresh_recommendations() -> None:
+    from app.ai.recommendations.extracurricular_recommender import recommend_for_all_users
+    from app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        count = recommend_for_all_users(db)
+        logger.info("recommendation refresh done: users=%d", count)
+    except Exception:
+        db.rollback()
+        logger.exception("recommendation refresh failed")
+    finally:
+        db.close()
+
 
 scheduler.add_job(
     _crawl_notice_boards,
