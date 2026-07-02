@@ -19,5 +19,10 @@ class Settings(BaseSettings):
     # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 로 생성.
     CREDENTIAL_ENCRYPTION_KEY: str | None = None
 
+    # 자체 로그인(JWT) 서명 키. `python -c "import secrets; print(secrets.token_urlsafe(32))"`로 생성.
+    JWT_SECRET_KEY: str | None = None
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7일
+
 
 settings = Settings()

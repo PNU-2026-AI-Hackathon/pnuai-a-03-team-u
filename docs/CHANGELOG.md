@@ -12,6 +12,15 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 8
+
+- 이메일/비밀번호 로그인·회원가입 구현 (`app/api/auth.py`)
+  - `POST /auth/signup`, `POST /auth/login`, `GET /auth/me`, 재사용 가능한 `get_current_user` 의존성
+  - JWT(`python-jose`) 발급/검증, 만료 7일
+  - 비밀번호 해싱은 `passlib[bcrypt]` 대신 `bcrypt` 직접 사용 — passlib이 최신 bcrypt(4.1+)와 호환이 깨져있어서 교체 (`requirements.txt` 반영)
+  - `User` 모델에 이미 email/password_hash가 있어서 마이그레이션 불필요
+  - 다른 기능 API(추천 등)는 아직 `user_id` 파라미터 방식 그대로, `get_current_user` 전환은 별도 작업
+
 ## 2026-07-02 (d0won) - 7
 
 - 추천 기준 재조정: 신청기간 만료 필터 강화 + 최신성 가중치 강화

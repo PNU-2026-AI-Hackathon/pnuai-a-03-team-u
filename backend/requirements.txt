@@ -10,7 +10,7 @@ pgvector
 
 # 인증 / 보안
 python-jose[cryptography]
-passlib[bcrypt]
+bcrypt
 python-multipart
 
 # AI / RAG (LangChain)
@@ -34,3 +34,4 @@ pillow
 # 환경설정 / 검증
 pydantic-settings
 python-dotenv
+email-validator

@@ -112,8 +112,8 @@ final_score = similarity_score * career_weight * recency_weight
 
 - 캐시된 추천이 있으면 즉시 반환, 없으면 그 자리에서 계산 후 반환 (최초 요청은 지연 있음)
 - 응답 필드: `title`, `category`, `source`, `deadline`, `d_day`, `recommendation_score`(0~100%)
-- **로그인 시스템이 아직 없어서 `user_id`를 그냥 경로 파라미터로 받는다.** [core-auth.md](./core-auth.md)가
-  구현되면 `get_current_user` 의존성으로 교체 필요
+- **아직 `get_current_user`로 전환 안 됨** — [core-auth.md](./core-auth.md)의 로그인/회원가입은
+  구현됐지만, 이 API는 여전히 `user_id`를 그냥 경로 파라미터로 받는다. 전환은 별도 작업
 
 ## 스케줄링
 
