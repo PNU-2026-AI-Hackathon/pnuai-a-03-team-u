@@ -32,6 +32,17 @@
 - 제목 유사도(예: 80% 이상)만으로 판단하지 않는 이유: 회차별/재모집 공고(예: "하나은행" vs "한국은행" 채용설명회, "5월" vs "6월" 도서관 프로그램)는 제목이 비슷해도 실제로 다른 공지이기 때문
 - 자정 크롤 직후 자동 실행
 
+### 원본에서 내려간 공지 정리 (`remove_stale_activities`, `activity_normalizer.py`)
+
+upsert는 추가/갱신만 하고 삭제는 안 하므로, 별도 정리가 없으면 원본 사이트에서
+지워진 공지가 DB에 영구히 남는다. 매일 전체 삭제 후 재삽입하는 방식은 배제했다 —
+Activity id가 매번 바뀌면 임베딩을 전부 다시 계산해야 하고 추천 캐시(FK)도 다 날아가기 때문.
+
+대신 부분 삭제로 처리한다: 출처별로 이번 크롤에서 실제로 보인 `source_url` 집합을 구하고,
+90일 lookback 안에 있으면서 이번에 안 보인 Activity만 삭제한다. lookback 밖의 글은
+크롤러가 애초에 다시 방문하지 않으므로 "안 보였다"고 지우면 안 되어 대상에서 제외한다.
+내용이 그대로인 Activity는 id/embedding을 건드리지 않는다.
+
 ### 카테고리/마감일 자동 추론 (`app/ingestion/normalizers/activity_normalizer.py`)
 
 - 제목 키워드로 카테고리 1차 분류: 공모전/인턴십/취업/장학금/스터디/교내활동/강연특강/교육프로그램/도서관/상담
@@ -73,9 +84,10 @@ final_score = similarity_score * career_weight * recency_weight
 `app/core/scheduler.py`의 APScheduler가 매일 00:00 KST(`Asia/Seoul`)에 다음을 순서대로 실행한다.
 
 1. 7개 출처 크롤 → JSON 백업(`raw_data/crawled_data/notice_boards/{date}.json`) → `Activity` upsert
-2. 중복 정리
-3. embedding 생성 (신규/미처리 Activity만)
-4. 전체 사용자 추천 재계산
+2. 원본에서 내려간 공지 정리 (부분 삭제)
+3. 중복 정리
+4. embedding 생성 (신규/미처리 Activity만)
+5. 전체 사용자 추천 재계산
 
 ## 알려진 한계 / TODO
 
