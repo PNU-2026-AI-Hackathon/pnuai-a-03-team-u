@@ -28,9 +28,23 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("교내활동", re.compile(r"동아리|학생회|총학|봉사|멘토|튜터", re.I)),
     ("강연/특강", re.compile(r"특강|강연|세미나|워크숍|포럼|lecture|seminar", re.I)),
     ("교육프로그램", re.compile(r"프로그램|캠프|부트캠프|교육|훈련|과정", re.I)),
-    ("도서관", re.compile(r"도서관|열람실|대출|반납", re.I)),
+    # "대출"만으로 매칭하면 "학자금대출"(재정 지원 공지, 활동 아님)까지 도서관으로
+    # 잘못 분류되어 "도서 대출/반납"으로 한정
+    ("도서관", re.compile(r"도서관|열람실|도서\s*대출|도서\s*반납", re.I)),
     ("상담", re.compile(r"상담|counseling|심리|진로상담", re.I)),
 ]
+
+# 학생이 "참여"할 수 있는 활동이 아니라 시설 운영/행정성 공지라서 아예 저장하지 않는다.
+# 학과 게시판을 나중에 추가하면 이런 운영 공지 비중이 늘어날 것으로 예상되어 미리 마련.
+_EXCLUDE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"개관\s*시간|휴관|정기\s*점검|전산.*(?:고도화|점검)", re.I),
+    re.compile(r"좌석\s*이용|이용\s*방식\s*변경", re.I),
+    re.compile(r"학자금\s*대출|이자\s*지원", re.I),
+]
+
+
+def _is_excluded(title: str) -> bool:
+    return any(pattern.search(title) for pattern in _EXCLUDE_PATTERNS)
 
 # 마감일 패턴 — 제목에서 "~MM/DD", "D-N", "N월N일까지" 등을 뽑는다
 _DEADLINE_PATTERNS: list[re.Pattern[str]] = [
@@ -65,12 +79,18 @@ def _infer_deadline(title: str, posted_date: datetime.date | None) -> datetime.d
     return None
 
 
-def upsert_activity(db: Session, row: NoticeRow) -> Activity:
+def upsert_activity(db: Session, row: NoticeRow) -> Activity | None:
     """NoticeRow 하나를 Activity로 변환해 upsert하고 ORM 객체를 반환한다.
+
+    시설 운영/행정성 공지(개관시간 변경, 학자금대출 안내 등)는 학생이 참여할
+    활동이 아니므로 저장하지 않고 None을 반환한다.
 
     source + source_url이 이미 존재하면 title/posted_date/views만 갱신한다.
     embedding은 건드리지 않는다(별도 배치가 담당).
     """
+    if _is_excluded(row.title):
+        return None
+
     posted = datetime.date.fromisoformat(row.posted_date) if row.posted_date else None
     category = _infer_category(row.title)
     deadline = _infer_deadline(row.title, posted)
