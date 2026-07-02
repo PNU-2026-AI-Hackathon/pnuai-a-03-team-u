@@ -465,7 +465,33 @@ def extract_course_candidates(
 ) -> list[dict[str, str]]:
     contexts = context_units(doc)
     rows: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
+    legend = parse_legend(doc.text)
+    symbol_types = legend_symbol_program_types(legend)
+
+    def emit(program_type: str, category: str, code: str, raw_name: str, matched: dict[str, str], review_reason: str) -> None:
+        key = (display_path(doc.path), code, raw_name, context[:120], program_type)
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            course_row(
+                target,
+                doc,
+                program_type,
+                category,
+                curriculum_year,
+                year_level,
+                semester,
+                raw_course_code=code,
+                raw_course_name=raw_name,
+                raw_credit=infer_credit(context),
+                matched=matched,
+                context=context,
+                review_reason=review_reason,
+            )
+        )
+
     for context in contexts:
         if not likely_curriculum_context(context):
             continue
@@ -473,59 +499,34 @@ def extract_course_candidates(
         program_type = infer_program_type(context, doc.title)
         year_level, semester = infer_recommended_period(context)
         curriculum_year = infer_year(" ".join([doc.title, context]))
+        # 범례 기호로 잡힌 복수전공/부전공 필수과목은 원래 분류(전공선택 등)와 무관하게
+        # 그 프로그램의 전공필수로 취급한다 (♤/◎ 표시 자체가 "이 과목은 필수"라는 뜻).
+        marker_types = marker_program_types(context, symbol_types) if symbol_types else set()
 
         codes = COURSE_CODE_RE.findall(context)
         for code in codes:
             matched = match_course("", None, target.department_name, catalog_index, code)
             raw_name = matched["course_name"].split("|", 1)[0] if matched["course_name"] else code
-            key = (display_path(doc.path), code, raw_name, context[:120])
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append(
-                course_row(
-                    target,
-                    doc,
-                    program_type,
-                    category,
-                    curriculum_year,
-                    year_level,
-                    semester,
-                    raw_course_code=code,
-                    raw_course_name=raw_name,
-                    raw_credit=infer_credit(context),
-                    matched=matched,
-                    context=context,
-                    review_reason="candidate extracted from source text by course code",
+            emit(program_type, category, code, raw_name, matched, "candidate extracted from source text by course code")
+            for marker_type in marker_types:
+                marker_cat = category_for_program(marker_type, "전공필수")
+                emit(
+                    marker_type, marker_cat, code, raw_name, matched,
+                    f"범례 기호로 표시된 {marker_cat} 후보 (candidate extracted from legend marker)",
                 )
-            )
 
         for raw_name in find_course_names(context, catalog_lookup, max_name_matches_per_context):
             matched = match_course(raw_name, infer_credit(context), target.department_name, catalog_index)
-            key = (display_path(doc.path), "", raw_name, context[:120])
-            if key in seen:
-                continue
-            seen.add(key)
             review_reasons = ["candidate extracted from source text by course name"]
             if matched["match_status"] != "matched":
                 review_reasons.append(f"course catalog match status is {matched['match_status']}")
-            rows.append(
-                course_row(
-                    target,
-                    doc,
-                    program_type,
-                    category,
-                    curriculum_year,
-                    year_level,
-                    semester,
-                    raw_course_code="",
-                    raw_course_name=raw_name,
-                    raw_credit=infer_credit(context),
-                    matched=matched,
-                    context=context,
-                    review_reason=" | ".join(review_reasons),
+            emit(program_type, category, "", raw_name, matched, " | ".join(review_reasons))
+            for marker_type in marker_types:
+                marker_cat = category_for_program(marker_type, "전공필수")
+                emit(
+                    marker_type, marker_cat, "", raw_name, matched,
+                    f"범례 기호로 표시된 {marker_cat} 후보 (candidate extracted from legend marker)",
                 )
-            )
     return rows
 
 
@@ -749,6 +750,49 @@ def infer_program_type(context: str, title: str = "") -> str:
     if "심화전공" in text:
         return "advanced_major"
     return "major"
+
+
+# 부산대 학과 교육과정표는 "◎ 부전공 필수과목, ♤ 최소전공(복수전공) 필수 과목"처럼
+# 과목명 앞에 기호를 붙이고 문서 상단 범례에서 기호를 정의하는 경우가 많다. 학과마다
+# 쓰는 기호와 그 의미가 다르므로, 문서별로 범례를 파싱해 기호->의미를 알아낸다.
+LEGEND_SYMBOLS = "♤◎★△□◇◆♧♣●○◈"
+LEGEND_ENTRY_RE = re.compile(
+    r"([" + re.escape(LEGEND_SYMBOLS) + r"])\s*([^,♤◎★△□◇◆♧♣●○◈]{2,30}?)(?=[,，]|\s*[" + re.escape(LEGEND_SYMBOLS) + r"]|$)"
+)
+
+
+def parse_legend(doc_text: str) -> dict[str, str]:
+    idx = doc_text.find("범례")
+    if idx < 0:
+        return {}
+    window = doc_text[idx : idx + 400]
+    legend: dict[str, str] = {}
+    for match in LEGEND_ENTRY_RE.finditer(window):
+        symbol, meaning = match.group(1), match.group(2).strip()
+        if meaning:
+            legend[symbol] = meaning
+    return legend
+
+
+def legend_symbol_program_types(legend: dict[str, str]) -> dict[str, set[str]]:
+    mapping: dict[str, set[str]] = {}
+    for symbol, meaning in legend.items():
+        types: set[str] = set()
+        if "복수전공" in meaning or "다중전공" in meaning:
+            types.add("dual_major")
+        if "부전공" in meaning:
+            types.add("minor")
+        if types:
+            mapping[symbol] = types
+    return mapping
+
+
+def marker_program_types(context: str, symbol_types: dict[str, set[str]]) -> set[str]:
+    found: set[str] = set()
+    for symbol, types in symbol_types.items():
+        if symbol in context:
+            found |= types
+    return found
 
 
 def infer_recommended_period(value: str) -> tuple[str, str]:

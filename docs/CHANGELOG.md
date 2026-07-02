@@ -12,6 +12,17 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-03 (hyunwoocho) #4
+
+- 복수전공/부전공 요건을 학과 교육과정표 범례 마커(♤/◎ 등)에서 구조화 추출
+  - 기존엔 운영규정 PDF 학점표가 있는 EES융합전공 1곳에만 복수전공/부전공 요건 데이터가 있었는데, 실제로는 32개 학과 교육과정표 자체에 "이 과목은 복수전공/부전공 필수"라는 범례 마커가 붙어있고 지금까지 이걸 버리고 있었음
+  - `build_department_curriculum_structured_candidates.py`에 학과별 범례 파싱(`parse_legend`) + 마커 기호를 dual_major/minor 추가 후보로 뽑는 로직 추가
+  - `build_graduation_requirement_seed_tables.py`: 운영규정 PDF 없이도 마커 증거만으로 dual/minor `requirement_sets`를 만드는 3번째 패스 추가, `program_type="dual_major"`가 DB 컨벤션 `"dual"`로 정규화되지 않던 버그 수정(기존엔 조용히 primary로 잘못 귀속됐을 것), 복수전공/부전공 카테고리 매핑 보강
+  - `seed_graduation_requirements.py`: stale-row prune을 courses뿐 아니라 categories/text_rules에도 동일 적용
+  - 결과: `requirement_sets` 153→196, dual/minor 요건 세트 2→45개(37개 학사 프로그램), dual/minor `requirement_courses` ~0→900건(matched 742)
+  - 한계: 필수과목 목록만 있고 총 이수학점 기준은 아직 텍스트로만 있음 (`requirement_text_rules`), 판정 엔진 카테고리 체크에는 아직 못 씀
+  - 상세: `docs/progress/graduation-requirements-supabase-seeding.md`
+
 ## 2026-07-03 (hyunwoocho) #3
 
 - 과목코드-수강편람 카탈로그 대조 검증 (matched 11,500건 전수)

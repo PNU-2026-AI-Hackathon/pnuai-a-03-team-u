@@ -293,6 +293,7 @@ def _upsert_categories(
             }
         )
     _bulk_upsert(db, RequirementCategory, values, CATEGORY_COLUMNS, "uq_requirement_categories_external_id")
+    _prune_stale(db, RequirementCategory, {value["external_id"] for value in values})
     return len(values)
 
 
@@ -398,17 +399,7 @@ def _upsert_courses(
         result = db.execute(delete(RequirementCourse).where(RequirementCourse.external_id.in_(dropped_ids)))
         deleted = result.rowcount or 0
 
-    # requirement_course_id는 (category, matched_course_code, raw_course_name, source_file)
-    # 등을 해시한 값이라, 매칭 로직이 개선되어 어떤 행의 matched_course_code가 바뀌면
-    # 그 행의 external_id 자체가 바뀐다 -- upsert만으로는 옛 해시로 남은 행이 DB에 그대로
-    # 남는다. 이번 실행에서 실제로 만들어진 external_id 집합과 DB를 동기화해 정리한다.
-    current_ids = {value["external_id"] for value in values}
-    stale = db.execute(
-        select(RequirementCourse.external_id).where(RequirementCourse.external_id.not_in(current_ids))
-    ).scalars().all()
-    if stale:
-        result = db.execute(delete(RequirementCourse).where(RequirementCourse.external_id.in_(stale)))
-        deleted += result.rowcount or 0
+    deleted += _prune_stale(db, RequirementCourse, {value["external_id"] for value in values})
 
     return len(values), deleted
 
@@ -440,7 +431,23 @@ def _upsert_text_rules(
             }
         )
     _bulk_upsert(db, RequirementTextRule, values, TEXT_RULE_COLUMNS, "uq_requirement_text_rules_external_id")
+    _prune_stale(db, RequirementTextRule, {value["external_id"] for value in values})
     return len(values)
+
+
+def _prune_stale(db, model, current_ids: set[str]) -> int:
+    """requirement_course_id 등 external_id는 매칭 결과를 포함한 내용 해시라, 매칭
+    로직이 개선되면 같은 행이라도 해시가 바뀐다. upsert만으로는 옛 해시로 남은 행이
+    DB에 그대로 남으므로, 이번 실행에서 실제로 만들어진 external_id 집합과 동기화한다."""
+    if not current_ids:
+        return 0
+    stale = db.execute(
+        select(model.external_id).where(model.external_id.not_in(current_ids))
+    ).scalars().all()
+    if not stale:
+        return 0
+    result = db.execute(delete(model).where(model.external_id.in_(stale)))
+    return result.rowcount or 0
 
 
 def _bulk_upsert(db, model, values: list[dict[str, Any]], columns: list[str], constraint: str) -> None:

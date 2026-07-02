@@ -70,6 +70,22 @@ CATEGORY_MAP = {
     "일반 선택": "free_elective",
     "일반선택": "free_elective",
     "교직": "teacher_training",
+    # 문맥에 "복수전공"/"부전공"이 함께 등장하는 행이나, 학과 교육과정표의 ♤/◎ 범례
+    # 마커에서 나온 후보의 category_for_program() 결과 (예: "전공기초"의 "전공"을
+    # "복수전공"/"부전공"으로 치환). program_type이 이미 dual/minor로 구분돼 있으니
+    # category_code는 primary와 같은 major_* 코드로 통일한다.
+    "복수전공기초": "major_foundation",
+    "복수전공필수": "major_required",
+    "복수전공선택": "major_elective",
+    "부전공기초": "major_foundation",
+    "부전공필수": "major_required",
+    "부전공선택": "major_elective",
+    # 카테고리 키워드를 못 찾은 폴백 (infer_requirement_category 참고). 구체 분류가
+    # 아니라 판정에 그대로 쓸 수 없으니 unknown으로 남겨 사람 검토 대상임을 표시한다.
+    "졸업요건": "unknown",
+    "복수전공요건": "unknown",
+    "부전공요건": "unknown",
+    "기초교양": "general_elective_area",
     "unknown": "unknown",
 }
 
@@ -202,6 +218,7 @@ def build_requirement_sets(
     regulation_rows: list[dict[str, str]],
     by_name: dict[str, list[Program]],
     unresolved_names: set[str],
+    candidate_rows: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, object]], dict[tuple[str, str, str], str]]:
     regulation_by_code: dict[str, dict[str, str]] = {}
     for row in regulation_rows:
@@ -278,6 +295,42 @@ def build_requirement_sets(
                 "coverage_status": "regulation_credit_row_found",
                 "source_file": reg.get("source_file", ""),
                 "notes": reg.get("notes", ""),
+            }
+        )
+
+    # 운영규정 PDF에 복수전공/부전공 학점표가 없어도, 학과 교육과정표 자체에 ♤/◎ 같은
+    # 범례 마커로 복수전공/부전공 필수과목이 표시된 경우가 많다 (build_department_curriculum_
+    # structured_candidates.py의 marker_program_types 참고). 그 후보에서 마커가 잡힌
+    # 학과는 규정표가 없어도 최소한의 요건 세트를 만들어 필수과목을 담을 곳을 마련한다.
+    by_code = {program.code: program for program in programs}
+    for row in candidate_rows or []:
+        candidate_type = row.get("program_type")
+        if candidate_type not in {"minor", "dual_major"}:
+            continue
+        program = by_code.get(row.get("department_code", ""))
+        if not program:
+            continue
+        curriculum_year = "2026"
+        program_type = regulation_program_type(candidate_type)
+        if (program.code, program_type, curriculum_year) in key_to_id:
+            continue
+        requirement_set_id = stable_id("reqset", program.code, program_type, curriculum_year)
+        key_to_id[(program.code, program_type, curriculum_year)] = requirement_set_id
+        rows.append(
+            {
+                "requirement_set_id": requirement_set_id,
+                "academic_program_code": program.code,
+                "college_name": program.college,
+                "program_name": program.name,
+                "display_name": program.display_name,
+                "program_type": program_type,
+                "curriculum_year": curriculum_year,
+                "name": f"{program.name} {curriculum_year} {program_type} 졸업요건 후보 (학과 교육과정표 범례 마커 기반)",
+                "required_total_credits": "",
+                "source_priority": "parsed_department_source_marker",
+                "coverage_status": "needs_review",
+                "source_file": "",
+                "notes": "학과 자체 교육과정표의 ♤/◎류 범례 마커에서 발견된 필수과목 후보. 총 이수학점 기준은 원문 확인 필요.",
             }
         )
     return rows, key_to_id
@@ -425,6 +478,8 @@ def build_course_rows(
         program_type = row.get("program_type") or "primary"
         if program_type == "major":
             program_type = "primary"
+        elif program_type in {"minor", "dual_major"}:
+            program_type = regulation_program_type(program_type)
         curriculum_year = row.get("curriculum_year") or "2026"
         reqset_id = key_to_id.get((code, program_type, curriculum_year)) or key_to_id.get(
             (code, "primary", "2026")
@@ -629,7 +684,7 @@ def main() -> None:
     unresolved_names = {row.get("program_name", "") for row in read_csv(UNRESOLVED_PATH)}
 
     requirement_sets, key_to_id = build_requirement_sets(
-        programs, regulation_rows, by_name, unresolved_names
+        programs, regulation_rows, by_name, unresolved_names, candidate_rows
     )
     category_rows = build_category_rows(
         requirement_sets,

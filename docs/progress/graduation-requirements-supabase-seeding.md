@@ -7,27 +7,34 @@
 이 문서는 시간순 작업 기록이라 아래로 갈수록 최신인데, 처음 보는 사람을 위해 최종
 상태만 먼저 요약한다. 세부 근거는 각 날짜별 절 참고.
 
-**Supabase 현재 수치**: `requirement_sets` 153 / `requirement_categories` 550 /
-`requirement_courses` 13,837(matched 11,500 · ambiguous 792 · unmatched 1,545) /
-`requirement_text_rules` 903. `needs_review=false`(신뢰 가능) 4,631건, 나머지는 검토 대기.
+**Supabase 현재 수치**: `requirement_sets` 196(primary 148 · minor 28 · dual 17 · contract 3) /
+`requirement_categories` 554 / `requirement_courses` 14,374 /
+`requirement_text_rules` 868. `needs_review=false`(신뢰 가능)는 courses 기준 4,631건,
+나머지는 검토 대기.
 
 **됨:**
-- 153개 학사 프로그램 중 136개가 `ready_for_human_review`(실제 과목 데이터 있음)
+- 153개 학사 프로그램(주전공 기준) 중 대부분이 `ready_for_human_review`(실제 과목 데이터 있음)
 - 사람 검토 → 재시딩 back-propagation 워크플로우 (`export_requirement_course_review_queue.py` + `backend/seeds/requirement_course_corrections.csv`)
 - HWP 추출을 `pyhwp`/`hwp5html`로 교체 (기존 `textutil`/`strings`는 거의 다 실패하고 있었음)
 - 과목코드-수강편람 카탈로그 대조 검증 완료 (표본 기준, 전수는 아님) — 전기공학전공의 소스 오염 버그 1건 발견/수정
+- **복수전공/부전공 요건을 학과 교육과정표의 범례 마커(♤/◎ 등)에서 구조화 추출** — 예전엔
+  운영규정 PDF에 별도 학점표가 있는 EES융합전공 1곳에만 데이터가 있었는데, 실제로는
+  32개 학과의 교육과정표 자체에 "이 과목은 복수전공/부전공 필수"라는 마커가 붙어있었다.
+  이를 파싱해 37개 학사 프로그램에 걸쳐 45개 복수전공/부전공 요건 세트, 900개 필수과목
+  후보(매칭 742건)를 새로 만들었다. 상세: 아래 "복수전공/부전공 범례 마커 구조화" 절
 - 졸업요건 판정 엔진 MVP (`backend/app/domains/academics/graduation_engine.py`)
 
 **안 됨 / 다음에 할 일 (우선순위순):**
-1. **사람 검토**: `needs_review=true` 약 9,200건. `export_requirement_course_review_queue.py` 실행 → 학과별로 훑어서 `backend/seeds/requirement_course_corrections.csv`에 `confirm`/`fix`/`drop` 기록 → 재시딩. 컴퓨터공학전공/인공지능전공처럼 과목 수가 많은 인기 학과부터 우선순위.
+1. **사람 검토**: `requirement_courses.needs_review=true`. `export_requirement_course_review_queue.py` 실행 → 학과별로 훑어서 `backend/seeds/requirement_course_corrections.csv`에 `confirm`/`fix`/`drop` 기록 → 재시딩. 컴퓨터공학전공/인공지능전공처럼 과목 수가 많은 인기 학과부터 우선순위.
 2. **미해결 학과 9개**:
    - 약학전공/제약학전공/약학부(통합6년제) 3개 — "이수체계도" 이미지뿐, 상세 과목표를 못 찾음. 약학대학에 직접 문의하거나 학사요람 PDF 확인 필요.
    - 스마트가전공학과(2027 첫 모집)/정보컴퓨터공학부(디자인테크놀로지전공)(2026 이관 예정) — 아직 공식 발표 전이라 원문 자체가 없음. 시간 지나면 재시도.
    - 교양학부(인문사회/공학/자연과학/의학/예체능계열)+기타모집단위 6개 — 자유전공학부 계열별 모집단위라 애초에 전공 교육과정이 없음. **해당없음으로 확정, 더 찾을 필요 없음.**
 3. **GSP(Global Studies Program) 전공선택 12과목** 미반영 (전공필수/전공기초만 반영함)
-4. **과목코드-학과 매핑 전수 검증**: 이번엔 상위 몇 개 학과만 표본 확인했다. 나머지도 전기공학전공 같은 소스 오염이 있을 수 있으니, 사람 검토 워크플로우를 돌릴 때 "요청 학과와 무관한 학과 과목이 매칭되지 않았는지"도 같이 확인할 것.
-5. **`requirement_text_rules`(903건)**: 아직 검토 워크플로우가 없다 (`requirement_courses`만 있음). 선택규칙("N개 중 M개 이수")이 여기 텍스트로만 남아있어서, 실제 판정 로직에서 못 쓰는 상태.
-6. **졸업요건 판정 엔진**(`graduation_engine.py`) 자체의 한계: FastAPI 엔드포인트로 노출 안 됨, 복수전공/부전공 요건 데이터가 EES융합전공 1개뿐, 전과 이력 모델링 안 됨(학생이 이전 전공에서 딴 학점이 현재 전공 요건에 그대로 합산됨), `curriculum_year`가 전부 "2026"뿐이라 입학연도별 요건 차이 미반영. 자세한 내용은 [my-info-graduation-check.md](../features/my-info-graduation-check.md).
+4. **과목코드-학과 매핑 전수 검증**: 표본(상위 몇 개 학과) 확인만 했다. 나머지도 전기공학전공 같은 소스 오염이 있을 수 있으니, 사람 검토 워크플로우를 돌릴 때 "요청 학과와 무관한 학과 과목이 매칭되지 않았는지"도 같이 확인할 것.
+5. 새로 만든 복수전공/부전공 요건 세트(45개)는 필수과목 목록만 있고 **총 이수학점 기준(minimum_credits)이 없다** — 범례 옆에 "부전공: ◎ 과목 필수이수 + 전공필수 ♤ 과목 중 추가 이수하여 총 21학점"처럼 텍스트로만 있어서, 구조화하려면 `requirement_text_rules`를 사람이 읽고 카테고리를 만들어야 한다.
+6. **`requirement_text_rules`(868건)**: 아직 검토 워크플로우가 없다 (`requirement_courses`만 있음). 선택규칙("N개 중 M개 이수")과 위 5번의 복수전공/부전공 총학점 기준이 여기 텍스트로만 남아있다.
+7. **졸업요건 판정 엔진**(`graduation_engine.py`) 자체의 한계: FastAPI 엔드포인트로 노출 안 됨, 전과 이력 모델링 안 됨(학생이 이전 전공에서 딴 학점이 현재 전공 요건에 그대로 합산됨), `curriculum_year`가 전부 "2026"뿐이라 입학연도별 요건 차이 미반영, 새로 생긴 dual/minor 카테고리에 minimum_credits가 없어 엔진의 카테고리 판정 자체는 아직 못 씀(필수과목 체크는 가능). 자세한 내용은 [my-info-graduation-check.md](../features/my-info-graduation-check.md).
 7. `courses`(수강편람 과목 카탈로그) 테이블 자체가 비어 있어 `course_id` FK 매칭이 안 되고 텍스트 매칭에만 의존.
 8. Supabase RLS/권한 정책 정리 (아직 안 함).
 
@@ -410,3 +417,72 @@ matched로 전환), 재시딩 2회 연속 실행으로 멱등성 확인.
 표본 확인(상위 몇 개 학과)이었지 153개 전체를 낱낱이 확인한 건 아니므로, 사람 검토
 워크플로우(`export_requirement_course_review_queue.py`)로 `needs_review=true` 9천여
 건을 학과별로 훑을 때 이런 오염 패턴이 또 있는지 계속 주의해서 봐야 한다.
+
+## 복수전공/부전공 범례 마커 구조화 (2026-07-03)
+
+### 문제
+
+기존에는 복수전공/부전공 요건이 EES융합전공 1개 학과에만 있었다(`requirement_sets.
+program_type = dual/minor` 행이 딱 2개). 원인은 이 요건이 운영규정 PDF의 별도 학점표에서만
+왔기 때문인데, 실제로는 **학과 자체 교육과정표 안에서 과목명 앞에 기호를 붙여 복수전공/
+부전공 필수과목을 표시하는 방식이 훨씬 널리 쓰인다.** 예를 들어 정보컴퓨터공학부:
+
+```
+※ 범례 : ♤ 최소전공(복수전공) 필수 과목, ◎ 부전공 필수과목
+```
+
+교과목 표에서 "♤ ◎ 인터넷과웹기초"처럼 과목명 앞에 기호가 붙어있으면, 그 과목은 원래
+소속 카테고리(전공기초/전공필수 등)와 무관하게 복수전공/부전공 학생에게는 필수과목이라는
+뜻이다. 학과마다 기호와 그 의미가 다르다 (예: 디자인학과는 ◎=부전공, ★=연계전공, △=교직
+과정, □=교직교과교육영역, ◇=융복합교과, ◆=산학협력교과, ♧=윤리및봉사, ♣=캡스톤디자인).
+
+기존 파이프라인은 이 기호를 원문 텍스트(`context`)에는 담았지만 구조화된 필드로 뽑지
+않아서 그냥 버려지고 있었다. 32개 학과, 2,051개 과목 후보 행에 이 마커가 있었다.
+
+### 구현
+
+`backend/scripts/build_department_curriculum_structured_candidates.py`:
+- `parse_legend(doc_text)`: 문서에서 "범례" 텍스트를 찾아 기호->의미 텍스트를 파싱
+- `legend_symbol_program_types(legend)`: 의미 텍스트에 "복수전공"/"다중전공"이 있으면
+  `dual_major`, "부전공"이 있으면 `minor`로 매핑 (그 외 기호는 무시 — 연계전공/교직과정/
+  캡스톤디자인 등은 현재 스키마의 program_type으로 표현할 대상이 아님)
+- 과목 후보를 만들 때, 그 과목이 속한 context 안에 마커 기호가 있으면 원래 프로그램
+  타입(primary 등) 행과 **별개로** dual_major/minor 행을 추가로 만든다. 카테고리는
+  원래 분류와 무관하게 "전공필수"로 강제한다 (마커 자체가 "이 과목은 필수"라는 뜻이므로)
+
+`backend/scripts/build_graduation_requirement_seed_tables.py`:
+- 기존에는 운영규정 PDF(`regulation_rows`)에서만 dual/minor `requirement_sets`를
+  만들었다. 이제 학과 교육과정표 후보(`candidate_rows`)에서 마커로 발견된 dual_major/minor
+  조합도 규정표 없이 최소 요건 세트를 만들도록 `build_requirement_sets()`에 3번째 패스를 추가
+- `build_course_rows()`가 `program_type="dual_major"`를 DB 컨벤션인 `"dual"`로 정규화하지
+  않던 버그를 고쳤다 (기존에는 조용히 `primary` 세트로 잘못 귀속되고 있었을 것)
+- `CATEGORY_MAP`에 `복수전공기초/필수/선택`, `부전공기초/필수/선택`, 그리고 카테고리
+  키워드를 못 찾은 폴백(`졸업요건`/`복수전공요건`/`부전공요건`/`기초교양`) 매핑 추가
+
+`backend/scripts/seed_graduation_requirements.py`:
+- stale-row 정리(prune)를 courses에만 적용하던 걸 categories/text_rules에도 동일하게
+  적용 (매칭 로직이 바뀌면 세 테이블 다 해시가 바뀌므로)
+
+### 결과
+
+| 지표 | 이전 | 이후 |
+| --- | ---: | ---: |
+| `requirement_sets` | 153 | 196 |
+| `requirement_sets` (dual+minor) | 2 (EES융합전공만) | 45 |
+| dual/minor 요건 있는 학사 프로그램 수 | 1 | 37 |
+| `requirement_courses` (dual+minor) | ~0 | 900 (matched 742 · ambiguous 112 · unmatched 46) |
+| `requirement_categories` | 550 | 554 |
+| `requirement_courses` 전체 | 13,837 | 14,374 |
+
+### 한계
+
+- 새로 생긴 45개 dual/minor 요건 세트는 **필수과목 목록만 있고 총 이수학점 기준이 없다**.
+  "부전공: ◎ 과목 필수이수, 전공필수 ♤ 과목 중에서 추가 이수하여 총 21학점"같은 총학점
+  규칙은 과목표가 아니라 별도 문장으로 적혀있어서 `requirement_text_rules`에 텍스트로만
+  들어가고, `requirement_categories`의 `minimum_credits`로는 구조화하지 않았다. 즉
+  `graduation_engine`의 카테고리 판정에는 아직 못 쓰고, 필수과목 존재 여부 체크에만 쓸 수 있다.
+- 마커 인식은 문맥(context) 단위(표의 한 행)에 기호가 있으면 그 행의 모든 과목에 적용하는
+  방식이라, 한 행에 여러 과목이 나열된 경우 기호가 실제로 어느 과목에 붙은 건지 정밀하게
+  구분하지 못할 수 있다. 사람 검토 시 확인 필요.
+- ♤/◎ 외의 기호(★연계전공, △/□교직과정, ◇융복합, ◆산학협력, ♧윤리봉사, ♣캡스톤디자인)는
+  의도적으로 무시했다. 연계전공은 현재 `program_type`에 없는 개념이라 별도 설계가 필요하다.
