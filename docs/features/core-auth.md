@@ -10,12 +10,32 @@
 
 | 메서드/경로 | 설명 |
 | --- | --- |
-| `POST /auth/signup` | 이메일/비밀번호/이름(+선택적으로 학번/학교/학과/진로) 가입. 비밀번호 8자 미만이면 400, 이메일 중복이면 409 |
+| `POST /auth/signup` | 이메일/비밀번호/이름(+선택적으로 학번/학교/학과/진로/복수전공·부전공) 가입. 비밀번호 8자 미만이면 400, 이메일 중복이면 409 |
 | `POST /auth/login` | 이메일/비밀번호 검증 후 JWT access token 발급 |
-| `GET /auth/me` | `Authorization: Bearer <token>` 헤더로 현재 유저 조회 |
+| `GET /auth/me` | `Authorization: Bearer <token>` 헤더로 현재 유저 + 전공 목록 조회 |
 
 `get_current_user` 의존성(`app/api/auth.py`)이 다른 라우터에서도 재사용 가능 —
 `Depends(get_current_user)`로 가져다 쓰면 됨.
+
+### 복수전공/부전공
+
+`SignupRequest.academic_programs`로 회원가입 시점에 여러 전공을 한 번에 등록한다.
+`User` 테이블에 컬럼을 추가하지 않고 기존 `UserAcademicProgram`(`domains/academics/models.py`)
+테이블에 유저당 여러 행으로 저장 — 원래 One-Stop 크롤러(주전공만 upsert)를 위해 설계된
+테이블을 그대로 재사용한다.
+
+```json
+"academic_programs": [
+  {"major": "컴퓨터공학", "program_type": "primary"},
+  {"major": "경영학", "program_type": "dual"},
+  {"major": "심리학", "program_type": "minor"}
+]
+```
+
+`program_type`은 `primary`/`dual`/`minor`/`interdisciplinary` 중 하나만 허용(422 검증).
+`GET /auth/me` 응답의 `academic_programs`에서 확인 가능. 추천 로직
+(`extracurricular_recommender.py`)은 이미 유저의 모든 전공을 프로필 텍스트에 반영하고
+있어서 이 데이터가 들어오면 별도 연동 작업 없이 바로 추천에 쓰인다.
 
 ## 구현 세부사항
 

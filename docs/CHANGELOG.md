@@ -12,6 +12,14 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 9
+
+- 회원가입에 복수전공/부전공 입력 추가 (`SignupRequest.academic_programs`)
+  - User 테이블에 컬럼 추가 대신 기존 `UserAcademicProgram` 테이블(One-Stop 크롤러용으로 이미 있던)을 재사용, 유저당 여러 행으로 저장
+  - program_type은 primary/dual/minor/interdisciplinary만 허용
+  - 추천 로직이 이미 유저의 모든 전공을 프로필에 반영하고 있어서 별도 연동 없이 바로 추천에 반영됨
+  - `GET /auth/me` 응답에 academic_programs 목록 포함
+
 ## 2026-07-02 (d0won) - 8
 
 - 이메일/비밀번호 로그인·회원가입 구현 (`app/api/auth.py`)
