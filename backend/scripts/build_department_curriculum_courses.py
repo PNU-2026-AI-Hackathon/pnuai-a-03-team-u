@@ -19,6 +19,10 @@ from app.ingestion.normalizers.graduation_requirement_normalizer import (
 
 
 SUPPORTED_SOURCE_SUFFIXES = {".html", ".txt"}
+# 실제 수강편람 과목코드는 항상 대문자 2~3자 + 숫자 7자리(9~10자)이며 소문자를 포함하지 않는다.
+# (이전에는 "Z[A-Z]z?\d{6}" 같은 변형도 코드로 인식했는데, 이는 "효원균형" 교양영역
+# 표에 나오는 ZFz000091 같은 placeholder 라벨까지 과목코드로 잘못 캡처하는 버그였다.)
+COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,3}\d{7}\b")
 CATALOG_COLUMNS = [
     "year",
     "semester",
@@ -335,7 +339,7 @@ def rows_from_code_list_txt_source(
     document_title = txt_path.stem
     curriculum_year = infer_year(document_title)
     seen_codes = set()
-    for match in re.finditer(r"\b(?:[A-Z]{2}\d{7}|Z[A-Z]z?\d{6}|Z[A-Z]\d{7})\b", text):
+    for match in COURSE_CODE_RE.finditer(text):
         course_code = match.group(0)
         if course_code in seen_codes:
             continue
@@ -447,6 +451,19 @@ def match_course(
     ]
     if dept_matches:
         return summarize_match(dept_matches, "matched", "name_credit_department")
+
+    # department_name이 "한국음악학과 관악・타악전공"(상위학과가 접두어)이거나
+    # "전기전자공학부 전기공학전공"(구체 전공명이 뒤에 붙는 접미어)인 경우, 카탈로그에는
+    # 그중 한쪽 이름으로만 개설학과가 찍혀 있을 수 있다. 부분 문자열 포함 관계일 때만
+    # 매칭해 다른 학과와의 오탐을 막는다 (아주 짧은 이름은 우연히 걸릴 수 있어 제외).
+    if department_name:
+        prefix_matches = [
+            item for item in candidates
+            for offering in (item.get("offering_department"), item.get("display_department_name"))
+            if offering and len(offering) >= 3 and (offering in department_name or department_name in offering)
+        ]
+        if prefix_matches:
+            return summarize_match(prefix_matches, "matched", "name_credit_department_prefix")
 
     unique_codes = sorted({item["course_code"] for item in candidates if item["course_code"]})
     if len(unique_codes) == 1:

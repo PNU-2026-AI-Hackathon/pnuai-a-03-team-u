@@ -31,6 +31,9 @@ playwright
 pytesseract
 pillow
 
+# HWP(한글) 교육과정 문서 파싱 -- textutil/strings보다 hwp5html이 표 내용을 훨씬 안정적으로 뽑는다
+pyhwp
+
 # 환경설정 / 검증
 pydantic-settings
 python-dotenv

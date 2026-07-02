@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,10 @@ from build_department_curriculum_courses import (  # noqa: E402
 )
 
 
-COURSE_CODE_RE = re.compile(r"\b(?:[A-Z]{2}\d{7}|Z[A-Z]z?\d{6}|Z[A-Z]\d{7})\b")
+# 실제 수강편람 과목코드는 항상 대문자 2~3자 + 숫자 7자리(9~10자)이며 소문자를 포함하지 않는다.
+# (이전에는 "Z[A-Z]z?\d{6}" 같은 변형도 코드로 인식했는데, 이는 "효원균형" 교양영역
+# 표에 나오는 ZFz000091 같은 placeholder 라벨까지 과목코드로 잘못 캡처하는 버그였다.)
+COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,3}\d{7}\b")
 SOURCE_SUFFIXES = {
     ".html",
     ".htm",
@@ -325,9 +329,15 @@ def extract_source_doc(path: Path, title: str, url: str) -> SourceDoc:
             text = run_text_command(["pdftotext", str(path), "-"])
             return SourceDoc(source_type, path, title, url, clean_text(text), [], "extracted" if text.strip() else "empty", "pdftotext")
         if source_type == "hwp":
+            html_text, html_tables, html_error = extract_hwp_via_hwp5html(path)
+            if html_text.strip():
+                return SourceDoc(source_type, path, title, url, html_text, html_tables, "extracted", "hwp5html")
             text, method, error = extract_hwp_text(path)
             status = "extracted_partial" if text.strip() else "needs_converter"
-            return SourceDoc(source_type, path, title, url, clean_text(text), [], status, method, error)
+            return SourceDoc(
+                source_type, path, title, url, clean_text(text), [], status, method,
+                error or html_error,
+            )
         if source_type == "spreadsheet":
             return SourceDoc(source_type, path, title, url, "", [], "needs_parser", "spreadsheet_parser_missing", "")
         if source_type == "image":
@@ -341,6 +351,10 @@ def extract_source_doc(path: Path, title: str, url: str) -> SourceDoc:
 
 def extract_html(path: Path) -> tuple[str, list[list[list[str]]]]:
     html = path.read_text(encoding="utf-8", errors="replace")
+    return extract_html_content(html)
+
+
+def extract_html_content(html: str) -> tuple[str, list[list[list[str]]]]:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
@@ -354,6 +368,37 @@ def extract_html(path: Path) -> tuple[str, list[list[list[str]]]]:
         if table_rows:
             tables.append(table_rows)
     return clean_text(soup.get_text(" ", strip=True)), tables
+
+
+def _venv_executable(name: str) -> str | None:
+    candidate = Path(sys.executable).parent / name
+    return str(candidate) if candidate.exists() else None
+
+
+def extract_hwp_via_hwp5html(path: Path) -> tuple[str, list[list[list[str]]], str]:
+    """pyhwp의 hwp5html로 변환한다. textutil/strings 폴백보다 표 내용을 훨씬 안정적으로
+    뽑아낸다 (HWP5는 압축 바이너리 포맷이라 strings만으로는 본문이 거의 안 나온다)."""
+    # shutil.which()는 os.environ["PATH"]만 보는데, 이 스크립트를 venv를 activate하지
+    # 않고 `.venv/bin/python scripts/...`로 바로 실행하면 venv의 bin/이 PATH에 없어서
+    # pip install pyhwp로 깔린 hwp5html을 못 찾는다. 지금 실행 중인 인터프리터와 같은
+    # venv의 bin/도 함께 확인한다.
+    hwp5html = shutil.which("hwp5html") or _venv_executable("hwp5html")
+    if not hwp5html:
+        return "", [], "hwp5html not installed (pip install pyhwp)"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result = subprocess.run(
+            [hwp5html, str(path), "--output", tmp_dir],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        index_path = Path(tmp_dir) / "index.xhtml"
+        if result.returncode != 0 or not index_path.exists():
+            return "", [], clean_text(result.stderr)
+        xhtml = index_path.read_text(encoding="utf-8", errors="replace")
+        text, tables = extract_html_content(xhtml)
+        return text, tables, ""
 
 
 def extract_hwp_text(path: Path) -> tuple[str, str, str]:

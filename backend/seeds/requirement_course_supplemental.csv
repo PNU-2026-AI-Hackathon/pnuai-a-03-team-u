@@ -1,0 +1,13 @@
+requirement_course_id,academic_program_code,program_type,curriculum_year,category_code,raw_course_code,raw_course_name,raw_credit,recommended_year,recommended_semester,source_file,note
+reqcourse_manual_gsp_req_01,U02030800044,primary,2026,major_required,GP29277,INTRODUCTION TO MICROECONOMICS,3,2,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집 (일반 크롤 파이프라인이 영문 rowspan 표/짧은 과목코드 형식을 못 읽어 수기 추가)
+reqcourse_manual_gsp_req_02,U02030800044,primary,2026,major_required,GP30747,MODERN THEORY OF MANAGEMENT,3,2,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_req_03,U02030800044,primary,2026,major_required,GP29281,INTERNATIONAL TRADE,3,2,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_req_04,U02030800044,primary,2026,major_required,GP35752,INTERNATIONAL RELATIONS AND POLITICS,3,3,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_req_05,U02030800044,primary,2026,major_required,GP34953,INTRODUCTION TO INTERNATIONAL LAW,3,3,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_req_06,U02030800044,primary,2026,major_required,GP30722,INTERNATIONAL BUSINESS STRATEGY AND ORGANIZATION,3,4,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_01,U02030800044,primary,2026,major_foundation,GP16737,READING AND WRITING IN GLOBAL STUDIES (I): THE FUNDAMENTAL ESSAY,3,2,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_02,U02030800044,primary,2026,major_foundation,GP16743,ORAL SKILLS IN GLOBAL STUDIES (I): READING AND DISCUSSION,3,2,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_03,U02030800044,primary,2026,major_foundation,GP16568,ORAL SKILLS IN GLOBAL STUDIES (II): RESEARCH AND PRESENTATION,3,2,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_04,U02030800044,primary,2026,major_foundation,GP16738,READING AND WRITING IN GLOBAL STUDIES (II): THE ACADEMIC ESSAY,3,2,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_05,U02030800044,primary,2026,major_foundation,GP16739,READING AND WRITING IN GLOBAL STUDIES (III): THE INTERPRETIVE ESSAY,3,3,1,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
+reqcourse_manual_gsp_basic_06,U02030800044,primary,2026,major_foundation,GP16581,READING AND WRITING IN GLOBAL STUDIES (IV): THE RESEARCH ESSAY,3,3,2,https://pnudgs.com/page/03_02.php,GSP Curriculum 표 직접 수집
