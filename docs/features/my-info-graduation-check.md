@@ -1,7 +1,8 @@
-# 부산대 One-Stop 포털 크롤러
+# 내 정보 페이지 (졸업요건 확인)
 
 사용자의 One-Stop 포털(`onestop.pusan.ac.kr`) 계정으로 로그인해 학적부/성적/졸업요건을
-가져와 DB 모델로 매핑한다. Playwright 기반이며 사용자 본인 계정으로만 동작한다.
+가져와 DB 모델로 매핑한다. "내 정보" 페이지에서 보여줄 학적/성적/졸업요건 데이터의
+수집·저장 파이프라인이며, Playwright 기반으로 사용자 본인 계정으로만 동작한다.
 
 ## 로그인 (`app/ingestion/crawlers/pnu_session.py`)
 
