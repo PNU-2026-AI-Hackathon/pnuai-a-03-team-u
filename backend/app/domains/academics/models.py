@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -185,6 +185,104 @@ class RequirementSet(TimestampMixin, Base):
     required_total_credits: Mapped[int | None] = mapped_column()
     rule_metadata: Mapped[dict | None] = mapped_column(JSON)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class RequirementCategory(TimestampMixin, Base):
+    """졸업요건 세트의 카테고리별 학점/규칙 후보."""
+
+    __tablename__ = "requirement_categories"
+    __table_args__ = (
+        UniqueConstraint("external_id", name="uq_requirement_categories_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    requirement_set_id: Mapped[int] = mapped_column(
+        ForeignKey("requirement_sets.id", ondelete="CASCADE"), index=True
+    )
+    academic_program_code: Mapped[str | None] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code"), nullable=True, index=True
+    )
+    program_name: Mapped[str | None] = mapped_column(String(200))
+    program_type: Mapped[str | None] = mapped_column(String(20), index=True)
+    category_code: Mapped[str] = mapped_column(String(80), index=True)
+    category_name: Mapped[str | None] = mapped_column(String(120))
+    minimum_credits: Mapped[str | None] = mapped_column(String(50))
+    rule_type: Mapped[str | None] = mapped_column(String(80))
+    source_kind: Mapped[str | None] = mapped_column(String(80))
+    source_file: Mapped[str | None] = mapped_column(String(1000))
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    review_reason: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class RequirementCourse(TimestampMixin, Base):
+    """졸업요건 세트에 연결된 과목 후보."""
+
+    __tablename__ = "requirement_courses"
+    __table_args__ = (
+        UniqueConstraint("external_id", name="uq_requirement_courses_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    requirement_set_id: Mapped[int] = mapped_column(
+        ForeignKey("requirement_sets.id", ondelete="CASCADE"), index=True
+    )
+    academic_program_code: Mapped[str | None] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code"), nullable=True, index=True
+    )
+    college_name: Mapped[str | None] = mapped_column(String(100))
+    program_name: Mapped[str | None] = mapped_column(String(200))
+    program_type: Mapped[str | None] = mapped_column(String(20), index=True)
+    curriculum_year: Mapped[str | None] = mapped_column(String(10), index=True)
+    category_code: Mapped[str | None] = mapped_column(String(80), index=True)
+    recommended_year: Mapped[str | None] = mapped_column(String(20))
+    recommended_semester: Mapped[str | None] = mapped_column(String(20))
+    raw_course_code: Mapped[str | None] = mapped_column(Text)
+    raw_course_name: Mapped[str | None] = mapped_column(String(255))
+    raw_credit: Mapped[str | None] = mapped_column(String(50))
+    matched_course_code: Mapped[str | None] = mapped_column(Text, index=True)
+    matched_course_name: Mapped[str | None] = mapped_column(String(255))
+    match_status: Mapped[str | None] = mapped_column(String(50), index=True)
+    match_method: Mapped[str | None] = mapped_column(String(100))
+    matched_terms: Mapped[str | None] = mapped_column(Text)
+    matched_departments: Mapped[str | None] = mapped_column(Text)
+    choice_rule_types: Mapped[str | None] = mapped_column(String(200))
+    choice_rule_raw: Mapped[str | None] = mapped_column(Text)
+    source_table: Mapped[str | None] = mapped_column(String(100))
+    source_file: Mapped[str | None] = mapped_column(String(1000))
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    review_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class RequirementTextRule(TimestampMixin, Base):
+    """과목 행으로 정규화하기 어려운 졸업요건 텍스트 규칙 후보."""
+
+    __tablename__ = "requirement_text_rules"
+    __table_args__ = (
+        UniqueConstraint("external_id", name="uq_requirement_text_rules_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    requirement_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requirement_sets.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    academic_program_code: Mapped[str | None] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code"), nullable=True, index=True
+    )
+    program_name: Mapped[str | None] = mapped_column(String(200))
+    program_type: Mapped[str | None] = mapped_column(String(50), index=True)
+    category_code: Mapped[str | None] = mapped_column(String(100), index=True)
+    rule_text: Mapped[str | None] = mapped_column(Text)
+    rule_field: Mapped[str | None] = mapped_column(String(120))
+    rule_value: Mapped[str | None] = mapped_column(Text)
+    source_kind: Mapped[str | None] = mapped_column(String(80))
+    source_file: Mapped[str | None] = mapped_column(String(1000))
+    source_title: Mapped[str | None] = mapped_column(String(500))
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    review_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class GraduationAudit(TimestampMixin, Base):

@@ -68,11 +68,12 @@ PROGRAM_COLUMNS = [
 def seed_academic_programs() -> dict[str, int]:
     program_rows = _read_csv(PROGRAMS_PATH)
     alias_rows = _read_csv(ALIASES_PATH)
+    active_program_codes = {row["academic_program_code"] for row in program_rows}
 
     db = SessionLocal()
     try:
         _upsert_programs(db, program_rows)
-        _upsert_aliases(db, alias_rows)
+        _upsert_aliases(db, alias_rows, active_program_codes)
         mapping_count = _upsert_department_mappings(db)
         db.commit()
     finally:
@@ -117,18 +118,27 @@ def _program_value(row: dict[str, str]) -> dict[str, Any]:
     return value
 
 
-def _upsert_aliases(db, rows: list[dict[str, str]]) -> None:
-    values = [
-        {
+def _upsert_aliases(db, rows: list[dict[str, str]], allowed_program_codes: set[str]) -> None:
+    values = []
+    seen = set()
+    for row in rows:
+        if not row.get("academic_program_code") or not row.get("alias_name"):
+            continue
+        if row["academic_program_code"] not in allowed_program_codes:
+            continue
+        key = (row["academic_program_code"], row["alias_type"], row["alias_name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(
+            {
             "academic_program_code": row["academic_program_code"],
             "alias_type": row["alias_type"],
             "alias_name": row["alias_name"],
             "normalized_alias_name": row["normalized_alias_name"] or _normalize(row["alias_name"]),
             "source": _blank_to_none(row.get("source", "")),
-        }
-        for row in rows
-        if row.get("academic_program_code") and row.get("alias_name")
-    ]
+            }
+        )
     if not values:
         return
 

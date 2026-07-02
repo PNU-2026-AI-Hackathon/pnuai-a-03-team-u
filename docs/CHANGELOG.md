@@ -14,6 +14,14 @@
 
 ## 2026-07-02 (hyunwoocho)
 
+- 졸업요건 세부 테이블 추가 및 Supabase seed 반영
+  - `requirement_categories`, `requirement_courses`, `requirement_text_rules` 모델/마이그레이션 추가
+  - 학과별 파싱 자료, 수강편람, 교육과정 운영규정 PDF 기반 seed 후보를 `requirement_sets` 및 세부 테이블에 upsert
+  - Supabase 검증 결과: `requirement_sets` 153개, `requirement_categories` 493개, `requirement_courses` 9,082개, `requirement_text_rules` 706개
+  - 진행 상황과 남은 작업: `docs/progress/graduation-requirements-supabase-seeding.md`
+
+## 2026-07-02 (hyunwoocho)
+
 - 졸업요건용 학사 프로그램 마스터를 raw 실험 파일에서 백엔드 DB 구조로 승격
   - 회원가입 검증용 `departments`와 졸업요건 기준 `academic_programs`를 분리
   - `academic_programs`, `academic_program_aliases`, `department_academic_program_mappings` 모델/마이그레이션 추가
