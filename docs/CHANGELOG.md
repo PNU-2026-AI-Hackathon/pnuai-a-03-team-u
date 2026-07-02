@@ -12,6 +12,17 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (hyunwoocho)
+
+- 졸업요건용 학사 프로그램 마스터를 raw 실험 파일에서 백엔드 DB 구조로 승격
+  - 회원가입 검증용 `departments`와 졸업요건 기준 `academic_programs`를 분리
+  - `academic_programs`, `academic_program_aliases`, `department_academic_program_mappings` 모델/마이그레이션 추가
+  - `UserAcademicProgram.academic_program_code`, `RequirementSet.academic_program_code` nullable FK 추가
+  - 2026학년도 활성 학사 프로그램 151개와 별칭 1222개를 `backend/seeds/`로 이동
+  - `scripts/seed_academic_programs.py`로 프로그램/별칭/department 매핑 upsert 가능하게 함
+  - 상세 설계: `docs/features/graduation-academic-programs.md`
+  - PR 본문 초안: `docs/pr-drafts/academic-programs-graduation-requirements.md`
+
 ## 2026-07-02 (d0won) - 11
 
 - `Course.department_id`/`RequirementSet.department_id`를 `departments` 테이블 FK로 추가

@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Numeric, String
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -20,6 +20,100 @@ class Department(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
 
 
+class AcademicProgram(Base):
+    """졸업요건 기준 학사 프로그램 마스터.
+
+    departments는 회원가입 입력값 검증용 이름 목록이고, 이 테이블은 학과코드가
+    필요한 졸업요건/교육과정 연결 기준이다.
+    """
+
+    __tablename__ = "academic_programs"
+
+    academic_program_code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    survey_year: Mapped[int | None] = mapped_column(Integer)
+    survey_round: Mapped[int | None] = mapped_column(Integer)
+    school_code: Mapped[str | None] = mapped_column(String(20))
+    school_name: Mapped[str | None] = mapped_column(String(100))
+    campus_code: Mapped[str | None] = mapped_column(String(20))
+    campus_name: Mapped[str | None] = mapped_column(String(100))
+    college_code: Mapped[str | None] = mapped_column(String(20))
+    college_name: Mapped[str | None] = mapped_column(String(100), index=True)
+    program_name: Mapped[str] = mapped_column(String(200), index=True)
+    display_name: Mapped[str | None] = mapped_column(String(300))
+    normalized_program_name: Mapped[str | None] = mapped_column(String(300), index=True)
+    parent_department_name: Mapped[str | None] = mapped_column(String(200))
+    major_name: Mapped[str | None] = mapped_column(String(200))
+    day_night_code: Mapped[str | None] = mapped_column(String(20))
+    day_night_name: Mapped[str | None] = mapped_column(String(50))
+    program_feature_code: Mapped[str | None] = mapped_column(String(20))
+    program_feature_name: Mapped[str | None] = mapped_column(String(100))
+    duration_code: Mapped[str | None] = mapped_column(String(20))
+    duration_name: Mapped[str | None] = mapped_column(String(50))
+    status_code: Mapped[str | None] = mapped_column(String(20))
+    status_name: Mapped[str | None] = mapped_column(String(50))
+    education_ministry_5_category: Mapped[str | None] = mapped_column(String(100))
+    degree_level: Mapped[str | None] = mapped_column(String(50))
+    quota_adjustment_type: Mapped[str | None] = mapped_column(String(100))
+    first_admission_year: Mapped[str | None] = mapped_column(String(10))
+    free_major_type_code: Mapped[str | None] = mapped_column(String(20))
+    free_major_type_name: Mapped[str | None] = mapped_column(String(100))
+    kedi_7_category: Mapped[str | None] = mapped_column(String(100))
+    source_updated_at: Mapped[str | None] = mapped_column(String(50))
+    source_file: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_bachelor: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
+class AcademicProgramAlias(Base):
+    """학사 프로그램명 검색/매칭용 별칭."""
+
+    __tablename__ = "academic_program_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            "academic_program_code",
+            "alias_type",
+            "alias_name",
+            name="uq_academic_program_alias",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    academic_program_code: Mapped[str] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code", ondelete="CASCADE"),
+        index=True,
+    )
+    alias_type: Mapped[str] = mapped_column(String(50))
+    alias_name: Mapped[str] = mapped_column(String(300), index=True)
+    normalized_alias_name: Mapped[str] = mapped_column(String(300), index=True)
+    source: Mapped[str | None] = mapped_column(String(100))
+
+
+class DepartmentAcademicProgramMapping(Base):
+    """회원가입용 departments와 졸업요건용 academic_programs의 연결."""
+
+    __tablename__ = "department_academic_program_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "department_id",
+            "academic_program_code",
+            "relation_type",
+            name="uq_department_academic_program_mapping",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), index=True
+    )
+    academic_program_code: Mapped[str] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code", ondelete="CASCADE"),
+        index=True,
+    )
+    relation_type: Mapped[str] = mapped_column(String(50), default="alias")
+    source: Mapped[str | None] = mapped_column(String(100))
+    confidence: Mapped[float | None] = mapped_column(Float)
+
+
 class UserAcademicProgram(TimestampMixin, Base):
     """사용자의 학적 프로그램(주전공/복수전공/부전공/연계전공 등)."""
 
@@ -29,6 +123,9 @@ class UserAcademicProgram(TimestampMixin, Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     requirement_set_id: Mapped[int | None] = mapped_column(
         ForeignKey("requirement_sets.id"), nullable=True
+    )
+    academic_program_code: Mapped[str | None] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code"), nullable=True, index=True
     )
 
     school: Mapped[str | None] = mapped_column(String(100))
@@ -77,6 +174,9 @@ class RequirementSet(TimestampMixin, Base):
     department: Mapped[str | None] = mapped_column(String(200))
     department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True
+    )
+    academic_program_code: Mapped[str | None] = mapped_column(
+        ForeignKey("academic_programs.academic_program_code"), nullable=True, index=True
     )
     major: Mapped[str | None] = mapped_column(String(200))
     program_type: Mapped[str | None] = mapped_column(String(20))

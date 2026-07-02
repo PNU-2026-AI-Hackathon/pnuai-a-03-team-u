@@ -37,6 +37,28 @@
 부전공/복수전공 요건은 별도 테이블이 아니라 `RequirementSet.program_type`이
 `minor`/`dual`인 행으로 표현한다.
 
+## Academic Program FK
+
+졸업요건은 회원가입 검증용 `departments`와 분리된 `academic_programs`를 기준으로
+관리한다. `departments`는 사용자가 입력하는 학과/전공명을 검증하기 위한 이름 목록이고,
+`academic_programs`는 학과코드(`academic_program_code`)가 있는 학사 프로그램 마스터다.
+
+상세 설계는 [graduation-academic-programs.md](./graduation-academic-programs.md)에 정리했다.
+
+- `academic_programs` — 2026학년도 활성 학사 프로그램 151개
+- `academic_program_aliases` — 공식명/표시명/정규화명 등 매칭용 별칭
+- `department_academic_program_mappings` — 로그인용 `departments`와 졸업요건용
+  `academic_programs` 연결
+- `RequirementSet.academic_program_code` — 졸업요건 세트가 어느 학사 프로그램 기준인지 명시
+- `UserAcademicProgram.academic_program_code` — 사용자의 학적 프로그램이 코드 기준으로
+  확정된 경우 연결
+
+시드:
+
+```
+python -m scripts.seed_academic_programs
+```
+
 **아직 비어있음** — FK 연결만 해뒀고 실제 졸업요건 내용(전공별 필수 학점,
 필수과목 목록 등)은 정식 학사요람 데이터가 있어야 채울 수 있어 시드되지 않았다.
 사실과 다른 요건 정보는 학생의 졸업 판단을 오도할 수 있어 확실한 출처 없이
