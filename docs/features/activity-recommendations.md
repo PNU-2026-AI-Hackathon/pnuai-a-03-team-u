@@ -89,10 +89,38 @@ final_score = similarity_score * career_weight * recency_weight
 4. embedding 생성 (신규/미처리 Activity만)
 5. 전체 사용자 추천 재계산
 
+## 정확도 평가 (`app/ai/evaluation/recommendation_eval.py`)
+
+실사용 데이터가 없으므로 오프라인 평가로 측정한다. 전공/진로가 다른 가상 페르소나
+6명(백엔드/데이터/UX디자인/화학연구/마케팅/행정공무원)별로 추천 top-k를 뽑고,
+LLM-as-judge(`gpt-4o-mini`)가 관련성을 0~2점으로 채점해 Precision@k / nDCG@k를 계산한다.
+
+```
+python -m app.ai.evaluation.recommendation_eval --top-k 10 --output raw_data/eval/날짜.json
+```
+
+가중치 튜닝 시 이 수치를 전후 비교 기준선으로 쓴다.
+
+**기준선 (2026-07-02, 활동 458건):** mean P@10 = 0.533, mean nDCG@10 = 0.711
+
+| 페르소나 | P@10 | nDCG@10 |
+| --- | --- | --- |
+| data_scientist | 0.8 | 0.911 |
+| backend_dev | 0.6 | 0.683 |
+| chem_researcher | 0.6 | 0.573 |
+| marketer | 0.6 | 0.741 |
+| ux_designer | 0.4 | 0.559 |
+| public_officer | 0.2 | 0.798 |
+
+평가에서 드러난 개선 포인트:
+
+- **출처가 다른 동일 공지가 top-10에 중복 등장** (예: 띵동상담소 공지가 pnucounsel과 pusan_main에 각각 게시됨) — 현재 중복 정리는 같은 출처 안에서만 동작
+- IT 외 분야(행정/디자인)는 상위권에 무관한 취업 공지가 섞임 — 임베딩 유사도가 "진로 분야"보다 "취업/모집이라는 형식"에 끌리는 경향
+
 ## 알려진 한계 / TODO
 
 - job 게시판에서 텍스트 제목 없는 이미지 배너 공지는 제외되므로 해당 공고는 노출되지 않음
 - 90일 이전 게시물은 페이지네이션 중단 기준일 뿐 강제 삭제하지는 않음 (추천 API 쪽에서 필터링)
-- 추천 정확도 정량 평가 없음 (현재는 카테고리 감으로만 확인)
+- 출처 간(cross-source) 중복 공지 정리 미구현 (위 평가 결과 참고)
 - 프론트엔드 그리드 UI 미연동
 - 로그인 붙기 전까지 추천 API는 인증 없이 `user_id`로 직접 조회 가능

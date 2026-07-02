@@ -12,6 +12,13 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 3
+
+- 추천 정확도 오프라인 평가 도입 (`app/ai/evaluation/recommendation_eval.py`)
+  - 가상 페르소나 6명 × LLM-as-judge(gpt-4o-mini) 채점 → Precision@10 / nDCG@10
+  - 기준선: mean P@10 = 0.533, mean nDCG@10 = 0.711 (활동 458건)
+  - 발견: 출처 간 동일 공지 중복 노출, 비IT 진로에서 무관한 취업 공지 혼입
+
 ## 2026-07-02 (d0won) - 2
 
 - docs 구조 개편: 날짜별 작업 기록 → 단일 `CHANGELOG.md` + `docs/features/` 기능별 문서
