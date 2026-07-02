@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Date, Index, String, Text, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -67,8 +67,8 @@ class UserActivityRecommendation(TimestampMixin, Base):
     __tablename__ = "user_activity_recommendations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(index=True)
-    activity_id: Mapped[int] = mapped_column(index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    activity_id: Mapped[int] = mapped_column(ForeignKey("activities.id", ondelete="CASCADE"), index=True)
 
     # 점수 구성
     similarity_score: Mapped[float | None] = mapped_column()   # 임베딩 코사인 유사도

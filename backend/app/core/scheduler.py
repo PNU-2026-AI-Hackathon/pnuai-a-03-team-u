@@ -23,6 +23,7 @@ def _crawl_notice_boards() -> None:
     from app.core.db import SessionLocal
     from app.ingestion.crawlers.notice_board_crawler import crawl_all_notice_boards
     from app.ingestion.normalizers.activity_normalizer import upsert_all_activities
+    from app.ingestion.normalizers.dedup_activities import remove_duplicate_activities
 
     logger.info("notice board crawl started")
     rows = crawl_all_notice_boards()
@@ -41,6 +42,8 @@ def _crawl_notice_boards() -> None:
     try:
         saved = upsert_all_activities(db, rows)
         logger.info("notice board crawl done: total=%d saved=%d", len(rows), len(saved))
+        removed = remove_duplicate_activities(db)
+        logger.info("duplicate activities removed: %d", removed)
     except Exception:
         db.rollback()
         logger.exception("activity upsert failed")
@@ -51,6 +54,39 @@ def _crawl_notice_boards() -> None:
     for row in rows:
         counts[row.source] = counts.get(row.source, 0) + 1
     logger.info("counts by source: %s", counts)
+
+    _embed_new_activities()
+    _refresh_recommendations()
+
+
+def _embed_new_activities() -> None:
+    from app.ai.embeddings.activity_embeddings import embed_pending_activities
+    from app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        count = embed_pending_activities(db)
+        logger.info("activity embedding done: %d", count)
+    except Exception:
+        db.rollback()
+        logger.exception("activity embedding failed")
+    finally:
+        db.close()
+
+
+def _refresh_recommendations() -> None:
+    from app.ai.recommendations.extracurricular_recommender import recommend_for_all_users
+    from app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        count = recommend_for_all_users(db)
+        logger.info("recommendation refresh done: users=%d", count)
+    except Exception:
+        db.rollback()
+        logger.exception("recommendation refresh failed")
+    finally:
+        db.close()
 
 
 scheduler.add_job(

@@ -19,6 +19,7 @@ langchain-openai
 langchain-community
 langchain-postgres
 anthropic
+openai
 
 # 크롤러
 apscheduler

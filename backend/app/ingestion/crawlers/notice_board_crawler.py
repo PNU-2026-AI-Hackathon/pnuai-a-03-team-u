@@ -258,6 +258,10 @@ def fetch_job_board_page(source: JobBoardSource, page: int) -> list[NoticeRow]:
         link = li.select_one(".title a")
         if link is None:
             continue
+        title = link.get_text(strip=True)
+        if not title:
+            # 텍스트 없이 이미지 배너만 있는 공지 (예: job 204025) - 제목을 알 수 없어 제외
+            continue
         href = link.get("href", "")
         match = re.search(r"/view/(\d+)", href)
         article_id = match.group(1) if match else ""
@@ -267,7 +271,7 @@ def fetch_job_board_page(source: JobBoardSource, page: int) -> list[NoticeRow]:
         rows.append(
             NoticeRow(
                 source=source.name,
-                title=link.get_text(strip=True),
+                title=title,
                 url=source.detail_url(article_id),
                 author="",
                 posted_date=(time_cell.get("datetime", "") or "")[:10]
