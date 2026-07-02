@@ -12,6 +12,13 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 11
+
+- `Course.department_id`/`RequirementSet.department_id`를 `departments` 테이블 FK로 추가
+  - 자유 텍스트 department 컬럼은 표시용으로 유지, 검증/조인은 FK 기준
+  - 부전공/복수전공 요건은 별도 테이블 없이 `RequirementSet.program_type`("minor"/"dual")으로 표현
+  - FK 연결만 하고 실제 졸업요건/과목 데이터는 채우지 않음 — 정식 학사요람 출처 없이 요건 내용(학점/필수과목)을 채우면 졸업 판단을 오도할 위험이 있어 보류
+
 ## 2026-07-02 (d0won) - 10
 
 - 회원가입 시 학과/전공 정식 명칭 검증 (`departments` 테이블)

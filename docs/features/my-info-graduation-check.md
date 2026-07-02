@@ -30,9 +30,22 @@
 - `map_student_record`, `map_grades`, `map_graduation_requirement` — raw 크롤 결과를
   `User`, `UserAcademicProgram`, `StudentCourseRecord`, `GraduationAudit` 등으로 매핑
 
+## Department FK ([core-auth.md](./core-auth.md)의 `departments` 테이블 재사용)
+
+`Course.department_id`, `RequirementSet.department_id`가 `departments` 테이블을
+가리키는 FK로 추가됐다 (department 자유 텍스트 컬럼은 표시용으로 유지).
+부전공/복수전공 요건은 별도 테이블이 아니라 `RequirementSet.program_type`이
+`minor`/`dual`인 행으로 표현한다.
+
+**아직 비어있음** — FK 연결만 해뒀고 실제 졸업요건 내용(전공별 필수 학점,
+필수과목 목록 등)은 정식 학사요람 데이터가 있어야 채울 수 있어 시드되지 않았다.
+사실과 다른 요건 정보는 학생의 졸업 판단을 오도할 수 있어 확실한 출처 없이
+채우지 않는다.
+
 ## 알려진 한계 / TODO
 
 - FastAPI 라우터로 노출되지 않음 (아직 API 엔드포인트 없음, 스크립트로만 실행 가능)
 - 백그라운드 작업화 안 됨
 - 사용자별 자격증명 입력 플로우(회원가입/설정 화면 연동) 없음
 - `graduation_engine`(`domains/academics`)의 실제 판정 로직은 요건 규칙 시드 데이터가 필요해 미구현
+- `RequirementSet`/`Course`의 `department_id` FK는 연결만 됐고 요건/과목 데이터 자체는 비어있음 (정식 학사요람 출처 확보되면 채울 것)
