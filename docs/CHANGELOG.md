@@ -12,6 +12,15 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-03 (hyunwoocho) #6
+
+- 카탈로그 추정 데이터가 검토완료로 잘못 표시되던 문제 수정 + 원문 9개 학과 복구
+  - 경제학부 데이터를 직접 확인하다가 "전공선택에 일반선택이 섞인 것 같다"는 지적을 받고 조사 — 학과 공식 졸업요건 문서가 아니라 수강편람 카탈로그의 교과목구분 태그를 그대로 가져다 쓴 `department_courses_from_catalog` 소스였음. 106개 학과·4,314개 과목 행이 이 소스였고(45개는 유일한 소스), 전부 `needs_review=false`(검토완료)로 잘못 표시돼 있었음
+  - `build_graduation_requirement_seed_tables.py`: 이 소스는 무조건 `needs_review=true`로 강제하도록 수정. `needs_review=false` 4,631 -> 317건으로 정직하게 감소
+  - 45개 카탈로그 전용 학과 중 11개는 로컬에 AIS 동적 위젯(부산대 여러 단과대가 쓰는 `fnctId=curriculum` 컴포넌트)이 크롤링 당시 빈 응답을 줘서 저장된 흔적이 있었음. 같은 요청을 재시도(최대 8회)하는 방식으로 9개 학과(경영학과/고고학과/무용학과/식품영양학과/아동가족학과/음악학과/의류학과/조경학과) 실제 원문 복구, 1개(조형학과)는 계속 실패
+  - `requirement_courses` 14,374 -> 14,807
+  - 상세: `docs/progress/graduation-requirements-supabase-seeding.md`
+
 ## 2026-07-03 (hyunwoocho) #5
 
 - 졸업요건 판정 엔진에 학과 필터링 추가 (antigravity로 작업)

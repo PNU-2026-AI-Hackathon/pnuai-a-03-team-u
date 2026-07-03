@@ -510,6 +510,19 @@ def build_course_rows(
         needs_review = row.get("needs_review", "")
         if match_status and match_status != "matched":
             needs_review = "Y"
+        review_reason = row.get("review_reason", "")
+        if source_table == "department_courses_from_catalog":
+            # 이 소스는 학과 공식 졸업요건 문서가 아니라, 수강편람에 그 학과가 개설한다고
+            # 찍힌 과목들을 모아 카탈로그 자체의 교과목구분 태그를 그대로 가져다 쓴 것이다.
+            # 여러 학기에 걸친 카탈로그 태그를 섞어 쓰기 때문에(예: 전공선택/일반선택 경계가
+            # 연도별로 다르게 찍혀있을 수 있음) 실제 학과 요건과 다를 수 있어 항상 사람 검토가
+            # 필요하다고 표시한다.
+            needs_review = "Y"
+            review_reason = (
+                (review_reason + " | " if review_reason else "")
+                + "source_table=department_courses_from_catalog: 학과 공식 교육과정표가 아니라 "
+                "수강편람 카탈로그의 교과목구분 태그로 추정한 후보라 검토 필요"
+            )
         rows.append(
             {
                 "requirement_course_id": stable_id("reqcourse", *key),
@@ -536,7 +549,7 @@ def build_course_rows(
                 "source_table": source_table,
                 "source_file": source_ref(row.get("source_file", "")),
                 "needs_review": needs_review or "N",
-                "review_reason": row.get("review_reason", ""),
+                "review_reason": review_reason,
             }
         )
 
