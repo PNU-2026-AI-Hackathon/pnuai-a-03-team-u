@@ -12,6 +12,11 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-02 (d0won) - 12
+
+- 프론트엔드 연동 가이드 문서 추가 (`docs/frontend-api-guide.md`) — 지금 동작하는 API(회원가입/로그인/내정보/추천)만 요청·응답·에러 예시로 정리. 팀 검토 전이라 PR 머지는 보류 중
+- 문서 작성 중 버그 발견 및 수정: `GET /activities/recommendations/{user_id}`에 존재하지 않는 user_id를 넣으면 404가 아니라 처리 안 된 500이 나던 문제 — 유저 존재 여부를 먼저 확인하도록 수정
+
 ## 2026-07-02 (d0won) - 11
 
 - `Course.department_id`/`RequirementSet.department_id`를 `departments` 테이블 FK로 추가

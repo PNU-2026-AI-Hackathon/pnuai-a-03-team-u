@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.ai.recommendations.extracurricular_recommender import recommend_for_user
 from app.core.db import get_db
 from app.domains.activities.models import Activity, UserActivityRecommendation
+from app.domains.users.models import User
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 
@@ -40,6 +41,9 @@ def _to_d_day(deadline: datetime.date | None) -> int | None:
 
 @router.get("/recommendations/{user_id}", response_model=list[RecommendedActivity])
 def get_recommendations(user_id: int, limit: int = 20, db: Session = Depends(get_db)):
+    if db.get(User, user_id) is None:
+        raise HTTPException(status_code=404, detail="존재하지 않는 user_id입니다")
+
     rows = db.execute(
         select(UserActivityRecommendation, Activity)
         .join(Activity, Activity.id == UserActivityRecommendation.activity_id)
