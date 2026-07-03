@@ -38,3 +38,7 @@ pyhwp
 pydantic-settings
 python-dotenv
 email-validator
+
+# 리포트 (학과별 요건 데이터 엑셀 export)
+pandas
+openpyxl

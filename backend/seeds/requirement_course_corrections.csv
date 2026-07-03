@@ -26,3 +26,9 @@ reqcourse_483b65134bc1,drop,,,,claude,2026-07-03,자동 패턴 분류: 교양영
 reqcourse_072f0e7ae4a9,drop,,,,claude,2026-07-03,자동 패턴 분류: 교양영역 라벨/안내문/표 서식 부스러기이지 실제 과목이 아님 (raw_course_name='4영역 : 과학과 기술')
 reqcourse_5d239d79ea96,drop,,,,claude,2026-07-03,자동 패턴 분류: 교양영역 라벨/안내문/표 서식 부스러기이지 실제 과목이 아님 (raw_course_name='5영역: 건강과 레포츠')
 reqcourse_0fe452293a79,drop,,,,claude,2026-07-03,자동 패턴 분류: 교양영역 라벨/안내문/표 서식 부스러기이지 실제 과목이 아님 (raw_course_name='2과목 수강')
+reqcourse_4b23b0672a8d,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF(econ.pusan.ac.kr 학부메뉴)의 필수모듈 기초분석기법과 대조해 전공필수 분류 확인
+reqcourse_03b2aa6b14e0,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF의 필수모듈 경제학기초이론과 대조해 전공기초 분류 확인
+reqcourse_77d8dd716c74,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF의 필수모듈 경제학기초이론과 대조해 전공기초 분류 확인
+reqcourse_68399c54433e,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF의 필수모듈 기초분석기법과 대조해 전공필수 분류 확인
+reqcourse_652a8d7ad672,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF의 필수모듈 경제학기초이론과 대조해 전공필수 분류 확인
+reqcourse_75d251677abd,confirm,,,,claude,2026-07-03,경제학부 공식 "펜토미노 교육과정" PDF의 필수모듈 경제학기초이론과 대조해 전공필수 분류 확인
