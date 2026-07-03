@@ -12,6 +12,15 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-03 (hyunwoocho) #5
+
+- 졸업요건 판정 엔진에 학과 필터링 추가 (antigravity로 작업)
+  - `_evaluate_categories()`가 `StudentCourseRecord.course_id` -> `Course.department_id`/`department`를 요건 세트의 학과와 비교해, 전공필수/전공선택/전공기초/심화전공 집계에서 다른 학과 과목을 제외하도록 수정. 전과/복수전공/부전공 학생의 과목이 서로 다른 전공 요건에 섞여 합산되던 문제를 고침
+  - `backend/tests/test_golden_data.py` + `run_golden_tests.py`: 6개 시나리오 회귀 테스트 추가, 전부 통과 확인
+  - `backend/tests/verify_calculation.py`: 컴공/수학 전필이 서로 안 섞이는지 보여주는 검증 스크립트
+  - **한계**: `course_id`가 채워져 있을 때만 필터가 작동하는데, `courses`(수강편람 카탈로그) 테이블이 아직 비어있어 실제 학생 데이터는 매칭이 안 됨 — 로직/테스트는 맞지만 운영 환경에서는 아직 효과 없음. `backend/test_scenarios.py`(course_id 미설정)로 재현 가능
+  - 테스트가 pytest 컨벤션이 아니라 스크립트 직접 실행이라 CI에 안 걸림 — 추후 개선 필요
+
 ## 2026-07-03 (hyunwoocho) #4
 
 - 복수전공/부전공 요건을 학과 교육과정표 범례 마커(♤/◎ 등)에서 구조화 추출

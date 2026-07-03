@@ -24,6 +24,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domains.courses.models import Course
 from app.domains.academics.models import (
     RequirementCategory,
     RequirementCourse,
@@ -127,17 +128,23 @@ def _find_requirement_set(
 
 def _evaluate_categories(
     db: Session,
-    requirement_set_id: int,
+    requirement_set: RequirementSet,
     course_records: list[StudentCourseRecord],
 ) -> tuple[list[CategoryResult], list[str]]:
     warnings: list[str] = []
     categories = db.scalars(
         select(RequirementCategory).where(
-            RequirementCategory.requirement_set_id == requirement_set_id,
+            RequirementCategory.requirement_set_id == requirement_set.id,
             RequirementCategory.rule_type == "minimum_credits",
             RequirementCategory.needs_review.is_(False),
         )
     ).all()
+
+    course_ids = [rec.course_id for rec in course_records if rec.course_id]
+    course_map = {}
+    if course_ids:
+        courses = db.scalars(select(Course).where(Course.id.in_(course_ids))).all()
+        course_map = {c.id: c for c in courses}
 
     credits_by_code: dict[str, Decimal] = {}
     names_by_code: dict[str, list[str]] = {}
@@ -148,6 +155,21 @@ def _evaluate_categories(
         if not codes:
             unmapped_courses.append(rec.raw_course_name)
             continue
+            
+        is_major_code = any(c.startswith("major_") or c == "deep_major" for c in codes)
+        if is_major_code and rec.course_id and rec.course_id in course_map:
+            course = course_map[rec.course_id]
+            is_diff_dept = False
+            if course.department_id and requirement_set.department_id:
+                if course.department_id != requirement_set.department_id:
+                    is_diff_dept = True
+            elif course.department and requirement_set.department:
+                if course.department != requirement_set.department:
+                    is_diff_dept = True
+            
+            if is_diff_dept:
+                continue
+
         for code in codes:
             credits_by_code[code] = credits_by_code.get(code, Decimal("0")) + credit
             names_by_code.setdefault(code, []).append(rec.raw_course_name)
@@ -239,7 +261,7 @@ def evaluate_program(
         )
         return evaluation
 
-    categories, cat_warnings = _evaluate_categories(db, requirement_set.id, course_records)
+    categories, cat_warnings = _evaluate_categories(db, requirement_set, course_records)
     evaluation.warnings.extend(cat_warnings)
 
     if not categories:

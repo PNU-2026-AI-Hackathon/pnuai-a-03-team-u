@@ -81,9 +81,16 @@ python -m scripts.seed_academic_programs
   목록이라 **총 이수학점 기준(minimum_credits)이 없다** — 필수과목 존재 여부는 체크
   가능하지만 카테고리 학점 판정에는 아직 못 쓴다. 나머지 학사 프로그램은 여전히
   "요건 데이터 없음"으로 반환된다
-- `student_course_records`가 어느 `user_academic_programs`에 속한 과목인지 연결이
-  없어서, 전과(1학년 A전공 -> B전공) 학생의 과거 과목 학점이 현재 활성 전공의 요건
-  카테고리에 그대로 합산된다 (검증 시나리오로 확인됨, 아직 미해결)
+- ~~`student_course_records`가 어느 `user_academic_programs`에 속한 과목인지 연결이
+  없어서, 전과/복수전공/부전공 학생의 과목이 서로 다른 전공 요건에 섞여 합산된다~~
+  2026-07-03에 `_evaluate_categories()`가 `StudentCourseRecord.course_id` ->
+  `Course.department_id`/`department`를 요건 세트의 학과와 비교해 다른 학과 과목을
+  전공필수/전공선택/전공기초/심화전공 집계에서 제외하도록 고쳤다
+  (`backend/tests/run_golden_tests.py`의 6개 회귀 시나리오로 검증, 전부 통과).
+  **단, `course_id`가 채워져 있을 때만 작동한다.** `courses`(수강편람 카탈로그) 테이블이
+  아직 비어있어 실제 학생 데이터는 `course_id`가 매칭되지 않으므로, 이 필터는 로직상
+  맞고 테스트도 통과하지만 **`courses`가 채워지기 전까지는 운영 환경에서 아직 효과가
+  없다** (`backend/test_scenarios.py`로 재현 가능 — course_id 없이 돌리면 여전히 섞임).
 
 ## 알려진 한계 / TODO
 
@@ -91,6 +98,10 @@ python -m scripts.seed_academic_programs
 - 백그라운드 작업화 안 됨
 - 사용자별 자격증명 입력 플로우(회원가입/설정 화면 연동) 없음
 - `RequirementSet`/`Course`의 `department_id` FK는 연결만 됐고 `courses` 카탈로그
-  테이블 자체가 비어있어 course_id 매칭이 안 되고 텍스트 매칭에만 의존한다
+  테이블 자체가 비어있어 course_id 매칭이 안 되고 텍스트 매칭에만 의존한다.
+  전과/복수전공/부전공 학과 필터링(위 항목)이 실제로 작동하려면 이 테이블부터 채워야 한다
+- `backend/tests/`의 골든 테스트(`run_golden_tests.py`, `verify_calculation.py`)는
+  `pytest` 컨벤션이 아니라 `python -m` 직접 실행 스크립트라 CI에 자동으로 안 걸린다.
+  나중에 `assert` 기반 pytest 테스트로 옮기는 게 좋다
 - 복수전공/부전공 요건 데이터, 입학연도별 요건, 전과 이력 모델링이 전부 미해결
   (위 "졸업요건 판정 엔진" 절 참고)
