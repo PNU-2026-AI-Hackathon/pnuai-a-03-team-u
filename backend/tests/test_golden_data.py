@@ -102,6 +102,22 @@ GOLDEN_SCENARIOS = [
             "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []},
             "minor": {"status": "evaluated", "all_passed": False, "failed_categories": ["수학전공필수(부)"]}
         }
+    },
+    {
+        "scenario_id": "TC07_CROSS_DEPT_TO_FREE_ELECTIVE",
+        "description": "타학과 전공선택 과목을 들으면 그 학과 전공 학점이 아니라 일반선택 학점으로 잡혀야 함",
+        "programs": [
+            {"code": "CS02", "type": "primary", "major": "컴퓨터공학과"}
+        ],
+        "courses": [
+            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
+            # 수학과 소속 과목을 전공선택으로 들었지만, 컴공 프로그램 입장에서는
+            # 전공 학점이 아니라 일반선택으로 인정돼야 한다 (필요: 6, 이수: 6).
+            {"name": "수학전선", "department": "수학과", "category": "전공선택", "credits": 6.0},
+        ],
+        "expected_results": {
+            "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []}
+        }
     }
 ]
 

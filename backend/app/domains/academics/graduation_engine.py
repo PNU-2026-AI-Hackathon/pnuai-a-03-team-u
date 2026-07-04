@@ -168,6 +168,14 @@ def _evaluate_categories(
                     is_diff_dept = True
             
             if is_diff_dept:
+                # 다른 학과 과목을 전공필수/선택으로 들었어도 이 프로그램(학과) 입장에서는
+                # 전공 학점으로 인정할 수 없다. 학점 자체가 사라지는 게 아니라 보통
+                # 일반선택(자유선택) 학점으로 인정되므로, 원래 카테고리 대신
+                # free_elective로 재분류해서 합산한다.
+                credits_by_code["free_elective"] = credits_by_code.get("free_elective", Decimal("0")) + credit
+                names_by_code.setdefault("free_elective", []).append(
+                    f"{rec.raw_course_name} (타학과 과목 → 일반선택으로 인정)"
+                )
                 continue
 
         for code in codes:

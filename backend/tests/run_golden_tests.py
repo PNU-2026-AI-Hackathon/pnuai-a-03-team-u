@@ -60,6 +60,22 @@ def setup_global_requirements(db):
     cs_cat2 = RequirementCategory(external_id="cs_req2", requirement_set_id=cs_req.id, category_code="major_elective", category_name="전공선택", minimum_credits="30", rule_type="minimum_credits", needs_review=False)
     cs_cat3 = RequirementCategory(external_id="cs_req3", requirement_set_id=cs_req.id, category_code="general_total", category_name="교양", minimum_credits="35", rule_type="minimum_credits", needs_review=False)
 
+    # TC07 전용: 타학과 과목 -> 일반선택 재분류를 검증하기 위한 별도 프로그램.
+    # 기존 CS01 시나리오들에 영향 주지 않도록 새 academic_program_code를 쓴다.
+    cs2_req = RequirementSet(
+        academic_program_code="CS02",
+        program_type="primary",
+        curriculum_year="2026",
+        name="Computer Science Primary 2026 (free-elective test)",
+        department="컴퓨터공학과",
+        is_active=True,
+    )
+    db.add(cs2_req)
+    db.commit()
+    cs2_cat1 = RequirementCategory(external_id="cs2_req1", requirement_set_id=cs2_req.id, category_code="major_required", category_name="전공필수", minimum_credits="20", rule_type="minimum_credits", needs_review=False)
+    cs2_cat2 = RequirementCategory(external_id="cs2_req2", requirement_set_id=cs2_req.id, category_code="free_elective", category_name="일반선택", minimum_credits="6", rule_type="minimum_credits", needs_review=False)
+    db.add_all([cs2_cat1, cs2_cat2])
+
     # Requirement Categories for Math Minor
     math_minor_cat = RequirementCategory(external_id="math_minor1", requirement_set_id=math_minor_req.id, category_code="major_required", category_name="수학전공필수(부)", minimum_credits="21", rule_type="minimum_credits", needs_review=False)
 
