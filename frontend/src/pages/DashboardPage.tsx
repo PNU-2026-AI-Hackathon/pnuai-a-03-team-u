@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ConsultationStatus = "scheduled" | "completed";
 
@@ -72,16 +72,52 @@ const statusLabels: Record<ConsultationStatus, string> = {
   completed: "상담 완료",
 };
 
+function getConsultationStorageKey(studentNumber: string) {
+  return `plan-u:advisor-consultations:${studentNumber}`;
+}
+
+function isConsultationStatus(status: string): status is ConsultationStatus {
+  return status === "scheduled" || status === "completed";
+}
+
+function loadStoredConsultationStatuses(studentNumber: string) {
+  try {
+    const saved = window.localStorage.getItem(getConsultationStorageKey(studentNumber));
+    if (!saved) return {};
+
+    const parsed = JSON.parse(saved) as Record<string, string>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, status]) => isConsultationStatus(status)),
+    ) as Record<string, ConsultationStatus>;
+  } catch {
+    return {};
+  }
+}
+
+function mergeStoredConsultationStatuses(terms: ConsultationTerm[], studentNumber: string) {
+  const savedStatuses = loadStoredConsultationStatuses(studentNumber);
+  return terms.map((term) => ({
+    ...term,
+    status: savedStatuses[term.id] ?? term.status,
+  }));
+}
+
 export function DashboardPage() {
   const currentTerm = useMemo(() => getCurrentAcademicTerm(), []);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [consultations, setConsultations] = useState(() =>
-    buildConsultationTerms(getAdmissionYear(studentId), currentTerm),
-  );
+  const [consultations, setConsultations] = useState(() => {
+    const defaultTerms = buildConsultationTerms(getAdmissionYear(studentId), currentTerm);
+    return mergeStoredConsultationStatuses(defaultTerms, studentId);
+  });
 
   const currentConsultation = consultations.find(
     (term) => term.year === currentTerm.year && term.semester === currentTerm.semester,
   );
+
+  useEffect(() => {
+    const statuses = Object.fromEntries(consultations.map((term) => [term.id, term.status]));
+    window.localStorage.setItem(getConsultationStorageKey(studentId), JSON.stringify(statuses));
+  }, [consultations]);
 
   function updateConsultationStatus(termId: string, status: ConsultationStatus) {
     setConsultations((current) => current.map((term) => (term.id === termId ? { ...term, status } : term)));
