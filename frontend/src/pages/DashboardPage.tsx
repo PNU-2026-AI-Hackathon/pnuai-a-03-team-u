@@ -1,3 +1,17 @@
+import { useMemo, useState } from "react";
+
+type ConsultationStatus = "scheduled" | "completed";
+
+type ConsultationTerm = {
+  id: string;
+  label: string;
+  year: number;
+  semester: 1 | 2;
+  status: ConsultationStatus;
+};
+
+const studentId = "2023662247";
+
 const profileFacts = [
   ["학부", "의생명융합공학부"],
   ["전공", "데이터사이언스전공"],
@@ -12,16 +26,76 @@ const semesterCredits = [
   ["2026-1", "18"],
 ];
 
+function getCurrentAcademicTerm(date = new Date()) {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+
+  if (month <= 2) {
+    return { year: year - 1, semester: 2 as const };
+  }
+
+  if (month <= 8) {
+    return { year, semester: 1 as const };
+  }
+
+  return { year, semester: 2 as const };
+}
+
+function getAdmissionYear(studentNumber: string) {
+  const parsed = Number(studentNumber.slice(0, 4));
+  return Number.isFinite(parsed) ? parsed : new Date().getFullYear();
+}
+
+function buildConsultationTerms(admissionYear: number, currentTerm: { year: number; semester: 1 | 2 }) {
+  const terms: ConsultationTerm[] = [];
+
+  for (let year = admissionYear; year <= currentTerm.year; year += 1) {
+    ([1, 2] as const).forEach((semester) => {
+      if (year === currentTerm.year && semester > currentTerm.semester) return;
+
+      const id = `${year}-${semester}`;
+      terms.push({
+        id,
+        year,
+        semester,
+        label: `${year}년 ${semester}학기`,
+        status: year === currentTerm.year && semester === currentTerm.semester ? "scheduled" : "completed",
+      });
+    });
+  }
+
+  return terms;
+}
+
+const statusLabels: Record<ConsultationStatus, string> = {
+  scheduled: "상담예정",
+  completed: "상담 완료",
+};
+
 export function DashboardPage() {
+  const currentTerm = useMemo(() => getCurrentAcademicTerm(), []);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [consultations, setConsultations] = useState(() =>
+    buildConsultationTerms(getAdmissionYear(studentId), currentTerm),
+  );
+
+  const currentConsultation = consultations.find(
+    (term) => term.year === currentTerm.year && term.semester === currentTerm.semester,
+  );
+
+  function updateConsultationStatus(termId: string, status: ConsultationStatus) {
+    setConsultations((current) => current.map((term) => (term.id === termId ? { ...term, status } : term)));
+  }
+
   return (
     <>
       <section className="hero-panel">
         <div className="student-card">
           <div className="student-photo">이</div>
           <div>
-            <div className="semester-pill">현재 학기 · 1학기 재학 중</div>
+            <div className="semester-pill">현재 학기 · {currentTerm.semester}학기 재학 중</div>
             <h2>
-              이도원 <span>(2023662247)</span>
+              이도원 <span>({studentId})</span>
             </h2>
             <p>의생명융합공학부 · 데이터사이언스전공</p>
             <p>3학년 · 졸업 요건 점검 중</p>
@@ -65,16 +139,49 @@ export function DashboardPage() {
       </section>
 
       <section className="overview-grid" aria-label="학업 현황">
-        <article className="card advisor-card">
+        <article className="card advisor-card" id="advisor">
           <div className="card-title">
             <div>
               <p className="eyebrow">지도 교수</p>
               <h3>김도현 교수</h3>
             </div>
-            <span className="checkmark">✓</span>
+            <span className="status blue">{currentConsultation ? statusLabels[currentConsultation.status] : "상담예정"}</span>
           </div>
-          <p>1학기 상담 완료</p>
-          <button type="button">상담 기록 보기</button>
+          <p>
+            {currentTerm.year}년 {currentTerm.semester}학기 상담 여부만 홈에서 확인합니다.
+          </p>
+          <div className="advisor-current-status" aria-label="현재 학기 상담 상태">
+            <span>{currentTerm.year}년 {currentTerm.semester}학기</span>
+            <strong>{currentConsultation ? statusLabels[currentConsultation.status] : "상담예정"}</strong>
+          </div>
+          <button
+            className="advisor-history-toggle"
+            type="button"
+            aria-expanded={isHistoryOpen}
+            onClick={() => setIsHistoryOpen((open) => !open)}
+          >
+            상담 기록 내역
+          </button>
+          {isHistoryOpen ? (
+            <div className="advisor-term-list" aria-label="입학년도부터 현재 학기까지 상담 여부">
+              {consultations.map((term) => (
+                <div className={term.status === "completed" ? "completed" : ""} key={term.id}>
+                  <span className="advisor-term-check" aria-hidden="true">
+                    {term.status === "completed" ? "✓" : ""}
+                  </span>
+                  <span className="advisor-term-label">{term.label}</span>
+                  <select
+                    aria-label={`${term.label} 상담 상태`}
+                    value={term.status}
+                    onChange={(event) => updateConsultationStatus(term.id, event.target.value as ConsultationStatus)}
+                  >
+                    <option value="scheduled">상담예정</option>
+                    <option value="completed">상담 완료</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </article>
 
         <article className="card certificate-card">
