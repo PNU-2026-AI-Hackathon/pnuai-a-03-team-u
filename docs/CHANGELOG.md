@@ -5,6 +5,38 @@
 "기능이 지금 어떻게 동작하는지"는 여기가 아니라 `docs/features/`에 기능별로 정리합니다.
 이 파일은 "언제 무엇을 왜 했는지" 시간순 기록입니다.
 
+## 2026-07-06 (hyunwoocho) #11
+
+- 사람 검토 백로그("확정 아닌 것들") 착수 — 버그 2개 발견/수정 + 고신뢰 데이터 2,999건 confirm
+  - **버그 발견 1**: `_supplemental_course_values()`가 `needs_review`를 무조건 True로 하드코딩해서,
+    `requirement_course_corrections.csv`로 confirm/fix/drop하는 사람 검토 워크플로우가 수기 전사
+    데이터(`requirement_course_supplemental`, 1099건, #8~#10에서 실제 공식 문서 읽고 채운 것)에는
+    전혀 적용이 안 되고 있었음 — 원문을 찾아 채워도 판정 엔진(`needs_review=false`만 씀)엔 반영 안 됨.
+    corrections 워크플로우를 이 경로에도 적용하도록 수정 + 1057건 confirm(한문학과 원문 자체의
+    과목코드 중복 오류 2건, 실내환경디자인학과 학년/학기 정보 없는 40건은 제외)
+  - **버그 발견 2**: `_evaluate_required_courses()`가 category_code를 전혀 안 가리고 confirm된 행을
+    전부 "특정 과목을 반드시 이수"로 취급하고 있었음 — `curriculum_course_candidates` 고신뢰 후보
+    2,442건을 confirm하는 과정에서 그 중 1,259건이 전공선택/일반선택처럼 메뉴에서 학점만 채우면
+    되는 이수구분이라, 그대로 뒀으면 학생이 다른 선택과목을 들었어도 "미이수"로 오판정할 뻔했음.
+    `MANDATORY_COURSE_CATEGORIES`(major_required/major_foundation/general_required/teacher_training)
+    필터 추가로 수정
+  - **버그 발견 3**: `infer_requirement_category()`가 "교양필수"/"교양선택"이라는 문구 자체가 표에
+    있어야만 인식하는데, 실제 부산대 교육과정표는 "효원핵심교양"/"효원균형교양"/"효원창의교양"
+    브랜딩된 명칭만 쓰는 경우가 대부분이라 이 흔한 패턴이 전부 category_code=unknown으로 빠지고
+    있었음(컴퓨터공학전공 등 여러 학과에 집중). 패턴 추가 후 raw_data 파이프라인 재실행 —
+    재시딩 전 needs_review=false였던 3,822건이 ID 단위로 전부 그대로 유지됨을 확인(유실/재검토
+    전환 0건), 새로 분류된 general_required/general_elective_area 중 매칭된 500건 추가 confirm
+  - 매 단계 무작위 표본검사(25건)로 학과-과목 정합성 확인 후 진행, 골든테스트 8개 매번 재통과
+  - 결과: `needs_review=false` 323 -> **4,322건**(13.3배), primary 148개 중 검토완료 데이터가
+    있는 학과 4 -> **109개**. 노어노문학과/컴퓨터공학전공으로 `_evaluate_required_courses` 실제
+    동작 검증(과거엔 no_data 또는 전공선택까지 오판정 대상 -> 이제 전공기초/필수만 정확히 판정)
+  - 남은 backlog(각각 다른 방식 필요, 손 안 댐): `department_courses_from_catalog` 4,308건(원문
+    자체가 카탈로그 추정이라 원칙상 계속 검토 상태 유지), 과목명 매칭 major_* 3,175건(표본검사
+    필요), ambiguous 925+172건/unmatched 1,803+24건(매칭 자체 불확실, 케이스별 조사 필요), 범례
+    기호 기반 복수전공/부전공 후보 671건, `department_curriculum_courses` 101건(파서가 택1 선택
+    규칙 자체를 애매하다고 플래그한 것 — 제 전사가 맞는지가 아니라 파서의 선택규칙 해석이 맞는지
+    봐야 하는 별개 문제)
+
 ## 2026-07-06 (hyunwoocho) #10
 
 - 카탈로그 추정만 있던 primary 학과 마지막 3개 해결 — "카탈로그 추정 전용 primary 학과" 이슈 완전 종결 (141건)
