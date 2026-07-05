@@ -1,0 +1,28 @@
+# 로컬 검증 전용 Postgres. 팀 공유 Supabase와 별개다.
+# 마이그레이션/적재 스크립트를 Supabase에 실행하기 전에 여기서 먼저 끝까지 돌려본다.
+#
+# 사용법 (infra/docker 기준):
+#   docker compose -f compose.local.yml up -d
+#   (backend/에서) DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/planu alembic upgrade head
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: planu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: planu
+    ports:
+      - "5432:5432"
+    volumes:
+      - planu_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  planu_postgres_data:
