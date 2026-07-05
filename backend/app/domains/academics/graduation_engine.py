@@ -46,6 +46,17 @@ RAW_CATEGORY_TO_CODES: dict[str, tuple[str, ...]] = {
     "일반선택": ("free_elective",),
 }
 
+# requirement_courses 중 "이 특정 과목을 반드시 이수해야 한다"는 의미인 category_code만.
+# major_elective/general_elective_area/free_elective는 여러 과목 중 학점 기준을 채우면
+# 되는 메뉴형 이수 규칙이라, 특정 한 과목을 안 들었다고 미이수로 잡으면 안 된다
+# (그런 카테고리는 이수학점 기준 판정만 가능 — _evaluate_categories 참고).
+MANDATORY_COURSE_CATEGORIES: tuple[str, ...] = (
+    "major_required",
+    "major_foundation",
+    "general_required",
+    "teacher_training",
+)
+
 
 @dataclass
 class CategoryResult:
@@ -225,6 +236,7 @@ def _evaluate_required_courses(
             RequirementCourse.requirement_set_id == requirement_set_id,
             RequirementCourse.needs_review.is_(False),
             RequirementCourse.choice_rule_types.is_(None),
+            RequirementCourse.category_code.in_(MANDATORY_COURSE_CATEGORIES),
         )
     ).all()
     if not required:
