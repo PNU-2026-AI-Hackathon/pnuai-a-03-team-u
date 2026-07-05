@@ -297,10 +297,13 @@ def _upsert_categories(
     return len(values)
 
 
-def _supplemental_course_values(db) -> list[dict[str, Any]]:
+def _supplemental_course_values(
+    db, corrections: dict[str, dict[str, str]]
+) -> tuple[list[dict[str, Any]], list[str]]:
     if not SUPPLEMENTAL_COURSES_PATH.exists():
-        return []
+        return [], []
     values = []
+    dropped_ids: list[str] = []
     for row in _read_csv(SUPPLEMENTAL_COURSES_PATH):
         reqset_id = db.execute(
             select(RequirementSet.id).where(
@@ -311,36 +314,42 @@ def _supplemental_course_values(db) -> list[dict[str, Any]]:
         ).scalar()
         if not reqset_id:
             continue
-        values.append(
-            {
-                "external_id": row["requirement_course_id"],
-                "requirement_set_id": reqset_id,
-                "academic_program_code": _blank_to_none(row.get("academic_program_code")),
-                "college_name": None,
-                "program_name": None,
-                "program_type": _blank_to_none(row.get("program_type")),
-                "curriculum_year": _blank_to_none(row.get("curriculum_year")),
-                "category_code": _blank_to_none(row.get("category_code")),
-                "recommended_year": _blank_to_none(row.get("recommended_year")),
-                "recommended_semester": _blank_to_none(row.get("recommended_semester")),
-                "raw_course_code": _blank_to_none(row.get("raw_course_code")),
-                "raw_course_name": _blank_to_none(row.get("raw_course_name")),
-                "raw_credit": _blank_to_none(row.get("raw_credit")),
-                "matched_course_code": None,
-                "matched_course_name": None,
-                "match_status": "unmatched",
-                "match_method": "manual_supplemental",
-                "matched_terms": None,
-                "matched_departments": None,
-                "choice_rule_types": None,
-                "choice_rule_raw": None,
-                "source_table": "requirement_course_supplemental",
-                "source_file": _blank_to_none(row.get("source_file")),
-                "needs_review": True,
-                "review_reason": _blank_to_none(row.get("note")),
-            }
-        )
-    return values
+        req_id = row["requirement_course_id"]
+        correction = corrections.get(req_id)
+        if correction and correction["resolution"].strip().lower() == DROP_RESOLUTION:
+            dropped_ids.append(req_id)
+            continue
+        value = {
+            "external_id": req_id,
+            "requirement_set_id": reqset_id,
+            "academic_program_code": _blank_to_none(row.get("academic_program_code")),
+            "college_name": None,
+            "program_name": None,
+            "program_type": _blank_to_none(row.get("program_type")),
+            "curriculum_year": _blank_to_none(row.get("curriculum_year")),
+            "category_code": _blank_to_none(row.get("category_code")),
+            "recommended_year": _blank_to_none(row.get("recommended_year")),
+            "recommended_semester": _blank_to_none(row.get("recommended_semester")),
+            "raw_course_code": _blank_to_none(row.get("raw_course_code")),
+            "raw_course_name": _blank_to_none(row.get("raw_course_name")),
+            "raw_credit": _blank_to_none(row.get("raw_credit")),
+            "matched_course_code": None,
+            "matched_course_name": None,
+            "match_status": "unmatched",
+            "match_method": "manual_supplemental",
+            "matched_terms": None,
+            "matched_departments": None,
+            "choice_rule_types": None,
+            "choice_rule_raw": None,
+            "source_table": "requirement_course_supplemental",
+            "source_file": _blank_to_none(row.get("source_file")),
+            "needs_review": True,
+            "review_reason": _blank_to_none(row.get("note")),
+        }
+        if correction:
+            value = _apply_correction(value, correction)
+        values.append(value)
+    return values, dropped_ids
 
 
 def _upsert_courses(
@@ -391,7 +400,9 @@ def _upsert_courses(
             value = _apply_correction(value, correction)
         values.append(value)
 
-    values.extend(_supplemental_course_values(db))
+    supplemental_values, supplemental_dropped_ids = _supplemental_course_values(db, corrections)
+    values.extend(supplemental_values)
+    dropped_ids.extend(supplemental_dropped_ids)
     _bulk_upsert(db, RequirementCourse, values, COURSE_COLUMNS, "uq_requirement_courses_external_id")
 
     deleted = 0
