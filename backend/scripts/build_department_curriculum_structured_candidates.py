@@ -716,6 +716,14 @@ def infer_requirement_category(context: str, title: str = "") -> str:
         return "교양선택"
     if "기초교양" in text or "기초 교양" in context:
         return "기초교양"
+    # 부산대 "효원" 교양 체계(효원핵심/효원균형/효원창의)는 "교양필수"/"교양선택"이라는
+    # 문구 자체가 표에 없어서 위 두 규칙에 안 걸린다. 효원핵심교양은 특정 과목을 다
+    # 들어야 하는 필수형, 효원균형/효원창의교양은 영역별로 1과목씩 고르는 선택형이라
+    # 실질적으로 교양필수/교양선택과 같은 성격이다.
+    if "효원핵심교양" in text:
+        return "교양필수"
+    if "효원균형교양" in text or "효원창의교양" in text or "효원브릿지" in text:
+        return "교양선택"
     if "전공기초" in text or "전공 기초" in context or "전기" in text:
         return category_for_program(program, "전공기초")
     if "전공필수" in text or "전공 필수" in context or "전필" in text or "필수과목" in text:
