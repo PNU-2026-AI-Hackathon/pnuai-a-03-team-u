@@ -1,21 +1,30 @@
 # Graduation Requirements Supabase Seeding Progress
 
-작성일: 2026-07-02 (최종 갱신: 2026-07-03)
+작성일: 2026-07-02 (최종 갱신: 2026-07-05)
 
-## 현재 상태 요약 (2026-07-03 기준)
+## 현재 상태 요약 (2026-07-05 기준)
 
 이 문서는 시간순 작업 기록이라 아래로 갈수록 최신인데, 처음 보는 사람을 위해 최종
-상태만 먼저 요약한다. 세부 근거는 각 날짜별 절 참고.
+상태만 먼저 요약한다. 세부 근거는 각 날짜별 절 참고 (가장 최신: "primary 12개 gap 종결 +
+minor/dual 파이프라인 버그 수정 (2026-07-05)" 절).
 
-**Supabase 현재 수치**: `requirement_sets` 196(primary 148 · minor 28 · dual 17 · contract 3) /
-`requirement_categories` 555 / `requirement_courses` 14,807 /
-`requirement_text_rules` 876. `needs_review=false`(신뢰 가능)는 courses 기준 **323건뿐**
-(예전엔 4,631건이었는데, 아래 "카탈로그 추정 데이터" 문제를 고치면서 정직하게 줄었다 —
-숫자가 준 게 아니라 그동안 검증 안 된 걸 검증완료로 잘못 표시하고 있던 걸 바로잡은 것).
-학과별 정리 상태를 확인할 수 있는 엑셀은 `raw_data/reports/requirement_courses_by_department.xlsx`
-(재생성: `python -m scripts.export_department_requirements_report <출력경로>`).
+**로컬 검증 수치(2026-07-05, Supabase엔 아직 미반영)**: `requirement_sets` 202(primary 195 ·
+minor/dual/contract 나머지) / `requirement_courses` 15,779 / `needs_review=false`(신뢰 가능)
+**323건(2.0%)뿐** / `category_code='unknown'` 5,188건(32.9%). 이 문서 하단 "됨/안 됨" 목록은
+계속 최신으로 갱신하되, 정확한 최신 숫자는 항상 코드로 재조회해서 확인할 것 — 이 요약은
+스냅샷일 뿐이다.
 
 **됨:**
+- **`program_type='primary'`(신입생 졸업판정에 실제 쓰이는 요건) 중 과목 행이 0건이던 12개
+  gap 전부 해소/확인 종결.** 5개(전기전자공학부 전기공학전공/정보컴퓨터공학부 디자인테크놀로지전공/
+  약학전공/제약학전공/지능형헬스사이언스융합전공)는 실제 원문(HWP/PDF)을 찾아 데이터로 채움,
+  나머지 7개(교양학부 5종+기타모집단위+약학부 통합6년제 wrapper)는 규정/스키마상 원래
+  별도 커리큘럼이 없는 게 정상인 단위로 확인 종결.
+- **minor/dual 요건세트 파이프라인 버그 발견/수정**: `build_graduation_requirement_seed_tables.py`가
+  minor/dual 과목 후보를 매칭 못 하면 무조건 primary 요건세트로 폴백하던 버그를 고쳐서,
+  51개 minor/dual 세트 중 24개가 0건이던 것 중 19개가 실제 데이터로 채워짐. 같이 발견한
+  전기공학전공 소스 오염(다른 프로그램인 반도체융합전공 문서가 잘못 붙어있던 것)도 제거해서
+  전기공학전공 primary 과목 수를 314(오염 포함) -> 66(정확한 값)으로 정정.
 - 153개 학사 프로그램(주전공 기준) 중 대부분이 `ready_for_human_review`(실제 과목 데이터 있음)
 - 사람 검토 → 재시딩 back-propagation 워크플로우 (`export_requirement_course_review_queue.py` + `backend/seeds/requirement_course_corrections.csv`)
 - HWP 추출을 `pyhwp`/`hwp5html`로 교체 (기존 `textutil`/`strings`는 거의 다 실패하고 있었음)
@@ -25,26 +34,26 @@
   32개 학과의 교육과정표 자체에 "이 과목은 복수전공/부전공 필수"라는 마커가 붙어있었다.
   이를 파싱해 37개 학사 프로그램에 걸쳐 45개 복수전공/부전공 요건 세트, 900개 필수과목
   후보(매칭 742건)를 새로 만들었다. 상세: 아래 "복수전공/부전공 범례 마커 구조화" 절
-- 졸업요건 판정 엔진 MVP (`backend/app/domains/academics/graduation_engine.py`)
+- 졸업요건 판정 엔진 MVP (`backend/app/domains/academics/graduation_engine.py`) + 선택형(택1)
+  필수과목("과목A|과목B") 판정 버그 수정(2026-07-05, TC08)
 - **"카탈로그 추정 데이터"가 검토완료로 잘못 표시되던 문제 발견/수정** — 106개 학과가
   실제 학과 졸업요건 문서가 아니라 수강편람 카탈로그 태그로 추정한 데이터(그 중 45개는
   이게 유일한 소스)였는데 `needs_review=false`로 잘못 표시돼 있었다. 전부 `true`로
   되돌리고, 그 중 9개는 실제 원문(AIS 위젯 재시도로 복구)을 다시 찾아 반영했다. 상세:
   아래 "카탈로그 추정 데이터 검토 상태 수정 + 원문 복구" 절
+- 수강편람(onestop_course_catalog) -> `courses` 테이블 적재 파이프라인 신설, 로컬 검증 완료.
+  상세: `docs/progress/course-catalog-import-and-department-coverage.md`
 
 **안 됨 / 다음에 할 일 (우선순위순):**
-1. **사람 검토**: `requirement_courses.needs_review=true`. `export_requirement_course_review_queue.py` 실행 → 학과별로 훑어서 `backend/seeds/requirement_course_corrections.csv`에 `confirm`/`fix`/`drop` 기록 → 재시딩. 컴퓨터공학전공/인공지능전공처럼 과목 수가 많은 인기 학과부터 우선순위.
-2. **미해결 학과 9개**:
-   - 약학전공/제약학전공/약학부(통합6년제) 3개 — "이수체계도" 이미지뿐, 상세 과목표를 못 찾음. 약학대학에 직접 문의하거나 학사요람 PDF 확인 필요.
-   - 스마트가전공학과(2027 첫 모집)/정보컴퓨터공학부(디자인테크놀로지전공)(2026 이관 예정) — 아직 공식 발표 전이라 원문 자체가 없음. 시간 지나면 재시도.
-   - 교양학부(인문사회/공학/자연과학/의학/예체능계열)+기타모집단위 6개 — 자유전공학부 계열별 모집단위라 애초에 전공 교육과정이 없음. **해당없음으로 확정, 더 찾을 필요 없음.**
-3. **GSP(Global Studies Program) 전공선택 12과목** 미반영 (전공필수/전공기초만 반영함)
-4. **과목코드-학과 매핑 전수 검증**: 표본(상위 몇 개 학과) 확인만 했다. 나머지도 전기공학전공 같은 소스 오염이 있을 수 있으니, 사람 검토 워크플로우를 돌릴 때 "요청 학과와 무관한 학과 과목이 매칭되지 않았는지"도 같이 확인할 것.
-5. 새로 만든 복수전공/부전공 요건 세트(45개)는 필수과목 목록만 있고 **총 이수학점 기준(minimum_credits)이 없다** — 범례 옆에 "부전공: ◎ 과목 필수이수 + 전공필수 ♤ 과목 중 추가 이수하여 총 21학점"처럼 텍스트로만 있어서, 구조화하려면 `requirement_text_rules`를 사람이 읽고 카테고리를 만들어야 한다.
-6. **`requirement_text_rules`(868건)**: 아직 검토 워크플로우가 없다 (`requirement_courses`만 있음). 선택규칙("N개 중 M개 이수")과 위 5번의 복수전공/부전공 총학점 기준이 여기 텍스트로만 남아있다.
-7. **졸업요건 판정 엔진**(`graduation_engine.py`) 자체의 한계: FastAPI 엔드포인트로 노출 안 됨, 전과 이력 모델링 안 됨(학생이 이전 전공에서 딴 학점이 현재 전공 요건에 그대로 합산됨), `curriculum_year`가 전부 "2026"뿐이라 입학연도별 요건 차이 미반영, 새로 생긴 dual/minor 카테고리에 minimum_credits가 없어 엔진의 카테고리 판정 자체는 아직 못 씀(필수과목 체크는 가능). 자세한 내용은 [my-info-graduation-check.md](../features/my-info-graduation-check.md).
-7. `courses`(수강편람 과목 카탈로그) 테이블 자체가 비어 있어 `course_id` FK 매칭이 안 되고 텍스트 매칭에만 의존.
-8. Supabase RLS/권한 정책 정리 (아직 안 함).
+1. **사람 검토**: `requirement_courses.needs_review=true`(전체의 98%). `export_requirement_course_review_queue.py` 실행 → 학과별로 훑어서 `backend/seeds/requirement_course_corrections.csv`에 `confirm`/`fix`/`drop` 기록 → 재시딩. 컴퓨터공학전공/인공지능전공처럼 과목 수가 많은 인기 학과부터 우선순위.
+2. **아직 원문 없는 것**: EES융합전공 dual/minor(기존 HWP는 학점요약표뿐), 계약학과 3개(스마트가전공학과/조선・해양공학과/발전공학과) — 아직 확인 안 함.
+3. **스코프 미결정**: 미래자동차/의료인공지능/디지털헬스케어/반도체 융합전공 4개 — 151개 활성 프로그램 인덱스에 아예 없는 순수 부전공/복수전공 전용 프로그램. 원문 파일만 확보해서 `raw_data/manual_staging/.../_unscoped_convergence_majors/`에 보관 중, 스코프 편입 여부 결정 필요.
+4. **GSP(Global Studies Program) 전공선택 12과목** 미반영 (전공필수/전공기초만 반영함)
+5. **과목코드-학과 매핑 전수 검증**: 표본(상위 몇 개 학과) 확인만 했다. 나머지도 전기공학전공 같은 소스 오염이 있을 수 있으니, 사람 검토 워크플로우를 돌릴 때 "요청 학과와 무관한 학과 과목이 매칭되지 않았는지"도 같이 확인할 것.
+6. 새로 만든 복수전공/부전공 요건 세트는 필수과목 목록만 있고 **총 이수학점 기준(minimum_credits)이 없다** — 범례 옆에 "부전공: ◎ 과목 필수이수 + 전공필수 ♤ 과목 중 추가 이수하여 총 21학점"처럼 텍스트로만 있어서, 구조화하려면 `requirement_text_rules`를 사람이 읽고 카테고리를 만들어야 한다.
+7. **`requirement_text_rules`(932건)**: 아직 검토 워크플로우가 없다 (`requirement_courses`만 있음). 선택규칙("N개 중 M개 이수")과 위 6번의 복수전공/부전공 총학점 기준이 여기 텍스트로만 남아있다.
+8. **졸업요건 판정 엔진**(`graduation_engine.py`) 자체의 한계: FastAPI 엔드포인트로 노출 안 됨, 전과 이력 모델링 안 됨(학생이 이전 전공에서 딴 학점이 현재 전공 요건에 그대로 합산됨), `curriculum_year`가 전부 "2026"뿐이라 입학연도별 요건 차이 미반영, 새로 생긴 dual/minor 카테고리에 minimum_credits가 없어 엔진의 카테고리 판정 자체는 아직 못 씀(필수과목 체크는 가능). 자세한 내용은 [my-info-graduation-check.md](../features/my-info-graduation-check.md).
+9. Supabase RLS/권한 정책 정리 (아직 안 함).
 
 ## 목적
 
@@ -574,3 +583,91 @@ PDF는 "모듈-트랙" 구조의 인포그래픽이라 `pdftotext`로 뽑으면 
 - 조형학과는 AIS 위젯이 계속 빈 응답이라 미해결로 남음.
 - 경제학부의 트랙별 전공선택 세부 과목(모듈 c~l, 36개 후보)은 PDF에서 직접 읽을 수 있지만
   아직 구조화하지 않았다 — 필요해지면 `requirement_course_supplemental.csv`에 수기 추가.
+
+## primary 12개 gap 종결 + minor/dual 파이프라인 버그 수정 (2026-07-05)
+
+### primary 12개 gap
+
+`program_type='primary'`이면서 `requirement_courses`가 0건인 요건세트(신입생이 실제로
+그 학과로 졸업판정을 받으려는 순간 요건 자체가 없어 판정 불가능한 상태) 12개를 사용자가
+직접 학과 사이트에서 찾은 원문(HWP/PDF)으로 하나씩 해결했다.
+
+| 학과 | 방법 | 결과 |
+| --- | --- | --- |
+| 정보컴퓨터공학부(디자인테크놀로지전공) | `inter.pusan.ac.kr` docViewer HWP, `hwp5html` 자동파싱 | 0 -> 89건 |
+| 전기전자공학부 전기공학전공 | `eec.pusan.ac.kr` 게시판 PDF(자동파싱 실패, 수기 전사) | 0 -> 66건 |
+| 약학전공(통합6년제) | pharmacy.pusan.ac.kr "교육과정표" 페이지(5616), 자동파싱 | 0 -> 39건 |
+| 제약학전공(통합6년제) | 같은 사이트 "교육과정표" 페이지(5617), 자동파싱 | 0 -> 36건 |
+| 지능형헬스사이언스융합전공 | "이수 안내" HWP, `hwp5html` 자동파싱 | 0 -> 85건 |
+| 교양학부 5종 + 기타모집단위 + 약학부(통합6년제) wrapper (7개) | 규정/스키마상 원래 별도 커리큘럼 없는 게 정상인 단위로 확인 | 확인 종결(액션 불필요) |
+
+약학전공/제약학전공은 처음엔 "교과요목"(과목 설명) 페이지를 저장해서 0건이었다 —
+5자리 legacy 과목코드(`PM21996`)라 표준 정규식(`[A-Z]{2,3}\d{7}`)에 안 걸리고 학점 정보도
+없었다. 같은 사이트의 "교육과정표" 메뉴(7자리 표준 코드, 학점/이수구분 포함)를 다시 찾아
+교체하니 자동파싱이 정상 동작했다 — **"과목 설명" 페이지와 "학점표" 페이지가 같은 학과
+사이트에 따로 있을 수 있다는 걸 배운 사례.**
+
+### minor/dual 파이프라인 버그
+
+primary 12개를 다 해결한 뒤 "이미 모아 놓은 minor/dual 데이터도 정리됐는지" 다시 확인하다가,
+minor/dual 요건세트 51개 중 24개가 과목 0건인 이유가 대부분 원문 부재가 아니라
+**진짜 파이프라인 버그**였다는 걸 발견했다.
+
+`build_graduation_requirement_seed_tables.py`의 `build_course_rows()` 내부 `add()`가
+minor/dual 과목 후보를 매칭할 때:
+
+```python
+curriculum_year = row.get("curriculum_year") or "2026"
+reqset_id = key_to_id.get((code, program_type, curriculum_year)) or key_to_id.get(
+    (code, "primary", "2026")   # 버그: 무조건 primary로 폴백
+)
+```
+
+minor/dual 요건세트는 항상 `curriculum_year="2026"`으로 생성되는데(학과 교육과정표 범례
+마커 기반 3번째 패스), 후보 행 자체의 `curriculum_year`는 원문 문서 표지 연도 그대로
+(2023/2024 등)라 1차 매치가 거의 항상 실패했다. 그러면 무조건 `(code, "primary", "2026")`로
+폴백해버려서, **minor/dual 과목 후보가 통째로 그 학과의 primary 요건세트에 잘못 붙고
+있었다** — DB에서도 `requirement_courses.program_type='minor'`인 행이 `requirement_sets.
+program_type='primary'`인 세트에 FK로 연결된 상태로 실제 존재하는 것까지 확인했다(예:
+중어중문학과 primary 세트에 `program_type='minor'` 12건이 숨어있었음).
+
+폴백을 `(code, program_type, "2026")`로 고쳐서(같은 program_type의 표준 연도로 재시도),
+24개 중 **19개가 실제 데이터로 채워졌다**: 독어독문학과/경영학과/사회복지학과/생물교육과/
+유기소재시스템공학과/원예생명과학과/통계학과/물리학과(dual), 중어중문학과/유아교육과/
+사회기반시스템공학과/산업공학과/미생물학과/분자생물학과/식품공학과/실내환경디자인학과/
+음악학과 성악·피아노·작곡전공(minor).
+
+### 부수적으로 발견한 콘텐츠 오염 (전기공학전공)
+
+이 버그를 조사하다가 전기전자공학부 전기공학전공 폴더의 `00_sources`에 남아있던
+반도체융합전공 안내 HWP 2개가 만드는 후보 375건 중 372건(major 226 + advanced_major 66 +
+minor 80, dual_major 3 제외)이 전부 **전기공학전공 자체 교육과정이 아니라 반도체융합전공
+안내문서 내용이 `department_code=U04050100081`로 잘못 태깅**된 것임을 확인했다. 이 HWP가
+전기공학전공/전자공학전공/나노에너지공학과/기계공학부 등 여러 참여학과를 한 문서에서 같이
+설명하다 보니, 파서가 department_name 매칭으로 전기공학전공에도 붙여버린 것으로 추정된다.
+
+두 파일을 `raw_data/manual_staging/.../_unscoped_convergence_majors/`로 옮기고 재생성한 결과,
+전기공학전공 primary 과목 수가 314 -> **66건으로 정정**됐다 (표에 가까운 숫자였던 314는
+대부분 오염분이었고, 진짜 데이터는 앞서 수기로 넣은 66건이 전부였다). 이 문서와
+`raw_data/WORKLOG_department_curriculum_collection.md`의 이전 절에 "314건"으로 적힌
+부분은 이 절에서 정정한다.
+
+### 결과
+
+| 지표 | 이전 | 이후 |
+| --- | ---: | ---: |
+| primary + 0건 | 12 | 0(7개는 확인 종결, 실제 gap 아님) |
+| minor/dual + 0건 | 24 | 5(EES융합전공 dual/minor, 전기공학전공 minor, 계약학과 미확인 3개) |
+| `requirement_courses` 전체 | 16,097 | 15,779 |
+
+골든테스트 8개(TC08 포함) 매 단계 재통과 확인. `backend/seeds/requirement_course_supplemental.csv`
+(한문학과 39건 + 전기공학전공 66건)와 `requirement_course_corrections.csv`의 수기 데이터는
+raw_data 전체 재생성에도 안 지워진다는 설계가 이번에도 재확인됐다.
+
+### 남은 일
+
+- EES융합전공 dual/minor, 계약학과 3개(스마트가전공학과/조선・해양공학과/발전공학과) 원문 확인 안 함.
+- 미래자동차/의료인공지능/디지털헬스케어/반도체 융합전공 4개는 151개 활성 프로그램 인덱스에
+  아예 없는 순수 부전공/복수전공 전용 프로그램 — 스코프 편입 여부 결정 필요.
+- 검토완료(`needs_review=false`) 비율은 여전히 2.0%뿐 — 이번 작업은 "데이터 자체가 있는가"만
+  해결했고, "그 데이터가 정확한지 사람이 검증했는가"는 별개의 남은 작업이다.

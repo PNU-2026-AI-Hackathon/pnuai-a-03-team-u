@@ -482,7 +482,7 @@ def build_course_rows(
             program_type = regulation_program_type(program_type)
         curriculum_year = row.get("curriculum_year") or "2026"
         reqset_id = key_to_id.get((code, program_type, curriculum_year)) or key_to_id.get(
-            (code, "primary", "2026")
+            (code, program_type, "2026")
         )
         if not reqset_id:
             return
