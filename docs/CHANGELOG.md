@@ -16,7 +16,7 @@
   - **버그 수정**: `graduation_engine.py`의 `_evaluate_required_courses()`가 선택형(택1) 필수과목("캡스톤디자인\|종합설계"처럼 파이프로 여러 대체 과목이 묶인 행)을 문자열 그대로 비교해서 학생이 뭘 들었든 항상 "미이수"로 판정하는 버그 발견 및 수정 — 경영학과 요건표 확인하다가 발견함. 파이프로 쪼개서 대체 과목 중 하나라도 이수하면 충족으로 인정하도록 고침. 지금 데이터(경영학과 6건)는 전부 `needs_review=true`라 실제 오판정을 내고 있진 않았지만(잠재 버그), 사람이 검토해서 `needs_review=false`로 바꾸는 순간 터질 뻔했음. `test_golden_data.py`/`run_golden_tests.py`에 TC08 추가 — 이 함수는 이번에 처음 테스트 커버리지가 생김
   - `infra/docker/compose.local.yml` 신설 — `.env`의 `DATABASE_URL`이 팀 공유 Supabase를 직접 가리키므로, 마이그레이션/대량 적재를 로컬 Postgres에서 끝까지 검증한 뒤 한 번에 반영하는 걸 원칙으로 함(`CLAUDE.md`에도 명시)
   - 로컬 검증 결과: `courses` 6,617행(idempotent 확인), 학과 매칭 94.5%, `requirement_courses.matched_course_code` 13,176건 중 11,849건(89.9%)이 처음으로 실제 `courses`와 조인됨(이전 0건). 골든테스트 7개 전부 통과
-  - **Supabase(팀 공유 DB)엔 아직 미반영** — 로컬 검증만 끝난 상태. 상세: `docs/progress/course-catalog-import-and-department-coverage.md`
+  - ~~Supabase(팀 공유 DB)엔 아직 미반영~~ **2026-07-05 반영 완료** — 아래 마지막 항목 참고
 - `requirement_sets`(primary) 중 과목 행이 0건이던 12개 gap 전부 해소/확인 종결
   - 사용자가 실제 학과 홈페이지 원문(URL/HWP/PDF)을 직접 찾아 하나씩 제공 — 전기전자공학부 전기공학전공(PDF 자동파싱 실패해서 수기 66건), 정보컴퓨터공학부 디자인테크놀로지전공(HWP 자동 89건), 약학전공/제약학전공(교육과정표 페이지로 재발견 후 각 39/36건), 지능형헬스사이언스융합전공(HWP 자동 85건)까지 5개를 실제 데이터로 채움
   - 나머지 7개(교양학부 5종 + 기타모집단위 + 약학부 통합6년제 wrapper)는 규정/스키마상 원래 별도 커리큘럼이 없는 게 정상인 단위로 확인 종결(액션 불필요)
@@ -29,6 +29,10 @@
   - 이 과정에서 별개의 콘텐츠 오염도 발견: 전기공학전공 폴더에 남아있던 반도체융합전공 안내 HWP 2개가 만드는 후보 375건 중 372건이 실은 반도체융합전공 문서 내용이 전기공학전공에 잘못 태깅된 것이었음. 파일을 `_unscoped_convergence_majors/`로 이동 → 전기공학전공 primary가 314 -> **66건으로 정정**(퇴보 아니라 교정 — 248건이 오염분이었고 진짜 데이터는 원래 66건)
   - 골든테스트 8개 재통과, primary+0 gap 7개로 회귀 없음 확인. 남은 것: 계약학과 3개(스마트가전공학과/조선・해양공학과/발전공학과), EES융합전공 dual/minor는 아직 원문 미확보
   - 상세: `raw_data/WORKLOG_department_curriculum_collection.md` "2026-07-05 업데이트 (8)"
+- 위 변경사항 전부 Supabase(팀 공유 DB)에 반영 완료
+  - `backend/.env`의 `DATABASE_URL`(direct connection, `db.<project>.supabase.co`)이 IPv6(AAAA)만 있고 IPv4(A) 레코드가 없어서 이 작업 환경(IPv6 라우팅 없음)에서 접속 자체가 안 됐음. Supabase 대시보드의 Transaction pooler 연결 정보(`aws-1-ap-northeast-2.pooler.supabase.com:6543`)로 우회해서 반영 — `.env` 자체는 안 바꿈, 이번 실행에만 환경변수로 넘김
+  - 순서: `alembic upgrade head`(8f4c1d7b2a90 -> a1c47e0f9d52) → `seed_departments` → `import_course_catalog` → `seed_academic_programs` → `seed_graduation_requirements`, 반영 후 로컬 검증값과 전부 일치 확인(`departments` 184, `courses` 6,617, `requirement_sets` 201[primary 148·minor 31·dual 19·contract 3], `requirement_courses` 15,779, `needs_review=false` 323건). 골든테스트 8개 재통과
+  - `.env`를 pooler로 영구 전환할지는 별도 결정 필요 — transaction-mode pooler는 prepared statement/세션 상태를 커넥션 간 공유하지 않아 앱 런타임에 쓰려면 SQLAlchemy 커넥션 풀 설정을 같이 점검해야 함(이번 마이그레이션/시딩 스크립트에서는 문제 없었음)
 
 ## 2026-07-03 (hyunwoocho) #6
 

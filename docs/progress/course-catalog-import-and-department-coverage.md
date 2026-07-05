@@ -98,7 +98,7 @@
 
 ## 남은 일
 
-- **Supabase(팀 공유 DB)에는 아직 아무것도 실행 안 함.** 위 순서(`alembic upgrade head` -> `seed_departments` -> `import_course_catalog`, 필요시 `seed_academic_programs`/`seed_graduation_requirements` 최신 여부 확인)를 실제 DB에 한 번에 반영할지 사용자 승인 대기 중.
+- ~~Supabase(팀 공유 DB)에는 아직 아무것도 실행 안 함~~ **2026-07-05 반영 완료.** direct connection 호스트(`db.<project>.supabase.co`)가 IPv6 전용(AAAA만 있고 A 레코드 없음)이라 이 작업 환경에서 접속이 안 돼, Transaction pooler(`aws-1-ap-northeast-2.pooler.supabase.com:6543`)로 우회해 `alembic upgrade head` -> `seed_departments`(184) -> `import_course_catalog`(6,617행) -> `seed_academic_programs`(151/1,222/122) -> `seed_graduation_requirements`(201/570/15,779/932) 순서로 실행, 로컬 검증값과 전부 일치 확인. 참고: 위 73번째 줄 "Supabase의 departments는 비어있는 상태"라는 서술은 반영 전 시점의 착오였다 — 실제로는 163개가 이미 있었고(이전 세션이 시딩), 이번엔 그 위에 새 21개가 추가돼 184개가 됐다.
 - 37개 학과 URL 조사 결과를 `raw_data/manual_staging/` 기존 구조에 반영.
 - `requirement_courses` 중 `matched_course_code`가 있는데도 `courses`와 안 맞는 1,327건(폐강/구커리큘럼 코드로 추정) 원인 조사.
 - 한문학과(`hanmun/6069`), 실내환경디자인학과(`hid/10663`) 페이지는 정적 크롤링으로 내용 확인이 안 돼 브라우저로 직접 확인 필요.

@@ -8,11 +8,12 @@
 상태만 먼저 요약한다. 세부 근거는 각 날짜별 절 참고 (가장 최신: "primary 12개 gap 종결 +
 minor/dual 파이프라인 버그 수정 (2026-07-05)" 절).
 
-**로컬 검증 수치(2026-07-05, Supabase엔 아직 미반영)**: `requirement_sets` 202(primary 195 ·
-minor/dual/contract 나머지) / `requirement_courses` 15,779 / `needs_review=false`(신뢰 가능)
-**323건(2.0%)뿐** / `category_code='unknown'` 5,188건(32.9%). 이 문서 하단 "됨/안 됨" 목록은
-계속 최신으로 갱신하되, 정확한 최신 숫자는 항상 코드로 재조회해서 확인할 것 — 이 요약은
-스냅샷일 뿐이다.
+**Supabase 반영 완료(2026-07-05)**: `requirement_sets` 201(primary 148 · minor 31 · dual 19 ·
+contract 3) / `requirement_courses` 15,779 / `needs_review=false`(신뢰 가능) **323건(2.0%)뿐** /
+`category_code='unknown'` 5,188건(32.9%). 로컬 검증값과 전부 일치 확인, direct connection
+DNS 문제로 Transaction pooler(`aws-1-ap-northeast-2.pooler.supabase.com:6543`)로 반영함.
+이 문서 하단 "됨/안 됨" 목록은 계속 최신으로 갱신하되, 정확한 최신 숫자는 항상 코드로
+재조회해서 확인할 것 — 이 요약은 스냅샷일 뿐이다.
 
 **됨:**
 - **`program_type='primary'`(신입생 졸업판정에 실제 쓰이는 요건) 중 과목 행이 0건이던 12개
