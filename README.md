@@ -52,3 +52,105 @@
 
 장기적으로는 축적된 질문·탐색 데이터를 학생들이 자주 찾는 정보, 제때 찾지 못하는 공지, 오해가 빈번한 졸업요건 항목 등을 집계하는 형태로 분석하여 대학 행정의 안내 체계와 정보 구조 개편에 참고 자료로 제공할 수 있다. 나아가 PNU 특화 데이터 파이프라인과 모듈형 설계를 기반으로 타 대학에도 동일한 방식의 서비스를 이식할 수 있어, 장기적으로 다수 대학을 지원하는 학업 의사결정 플랫폼으로 발전시켜 더 넓은 학생 사회에 기여할 수 있다.
 <br/>
+
+### 2. 상세설계
+#### 2.1. 시스템 아키텍처
+- **Frontend**: React(Vite/TypeScript) SPA, Netlify 배포 예정
+- **Backend**: FastAPI, AWS EC2(Docker) 배포 예정, Nginx 리버스 프록시
+- **Database**: PostgreSQL + pgvector (Supabase 팀 공유 인스턴스, 마이그레이션은 Alembic)
+- **AI/LLM**: OpenAI(임베딩, `text-embedding-3-small`) + Anthropic/OpenAI LLM(설명·추천 문구 생성)
+- **Ingestion**: 수강편람/공지 크롤러(Requests+BeautifulSoup, 일부 Playwright), 부산대 One-Stop 포털 크롤러(Playwright, 사용자 본인 계정 전용), APScheduler 기반 일 배치
+
+핵심 설계 원칙은 "졸업요건 충족 판정은 결정론적 규칙 엔진이, 설명·추천은 LLM이" 담당하도록 역할을 분리하는 것이다. 자세한 배경과 스키마 설계는 [docs/architecture.md](./docs/architecture.md)에 정리되어 있다.
+
+#### 2.2. 사용 기술
+
+| 영역 | 기술 |
+|:---:|:---|
+| Backend | Python, FastAPI, SQLAlchemy, Alembic, Pydantic |
+| Database | PostgreSQL, pgvector (Supabase) |
+| AI/RAG | LangChain, OpenAI API, Anthropic API |
+| 인증/보안 | JWT(python-jose), bcrypt |
+| 크롤링/수집 | APScheduler, BeautifulSoup4, Requests, Playwright |
+| OCR | pytesseract, Pillow |
+| Frontend | React 19, TypeScript, Vite, React Router, Axios |
+| 인프라 | Docker, AWS EC2/RDS, Nginx, GitHub Actions |
+
+#### 2.3. 디렉토리 구조
+
+```text
+pnuai-a-03-team-u/
+├── backend/
+│   ├── app/
+│   │   ├── core/                # 설정, DB 세션, 보안, 공통 의존성
+│   │   ├── api/                 # FastAPI 라우터 (auth, activities ...)
+│   │   ├── domains/             # 도메인 모델 및 결정론적 비즈니스 로직
+│   │   │   ├── users/           # 회원/인증
+│   │   │   ├── academics/       # 학적, 졸업요건, 이수내역
+│   │   │   └── courses/         # 과목/개설강좌/시간표
+│   │   ├── ingestion/           # 크롤러 · 파서 · 정규화
+│   │   │   ├── crawlers/
+│   │   │   ├── csv_importers/
+│   │   │   ├── parsers/
+│   │   │   └── normalizers/
+│   │   └── ai/                  # RAG, LLM, 임베딩, 추천
+│   │       ├── rag/
+│   │       ├── llm/
+│   │       ├── embeddings/
+│   │       ├── prompts/
+│   │       ├── recommendations/
+│   │       └── evaluation/
+│   ├── migrations/               # Alembic 마이그레이션
+│   ├── scripts/                  # 시드/운영 스크립트
+│   ├── seeds/                    # 시드 데이터 (학과 목록 등)
+│   └── tests/
+├── frontend/
+│   └── src/
+│       ├── api/                  # axios client, API 함수
+│       ├── auth/                 # AuthContext
+│       ├── components/           # 공통 레이아웃/컴포넌트
+│       ├── pages/                # 대시보드/인증/내정보/로드맵/활동 페이지
+│       └── routes/                # 라우터 설정
+├── infra/                         # docker / nginx / rds / github-actions 배포 설정
+└── docs/
+    ├── architecture.md            # 백엔드/DB/인프라 설계 문서
+    ├── frontend-api-guide.md      # 프론트엔드-백엔드 연동 가이드
+    ├── CHANGELOG.md               # 시간순 작업 기록
+    └── features/                  # 기능별 상세 문서 (구현 현황 포함)
+```
+<br/>
+
+### 3. 개발 현황
+기능별 상세 동작과 API 명세는 [docs/features/](./docs/features/) 문서를 참고한다.
+
+| 기능 | 상태 | 문서 |
+|:---:|:---:|:---|
+| 회원가입 / 로그인 (이메일·비밀번호, JWT) | 구현 완료 | [core-auth.md](./docs/features/core-auth.md) |
+| 비교과 활동 추천 (크롤링 + 임베딩 유사도) | 구현 완료 | [activity-recommendations.md](./docs/features/activity-recommendations.md) |
+| 내 정보 페이지 (One-Stop 연동 졸업요건 확인) | 데이터 수집 파이프라인 구현 | [my-info-graduation-check.md](./docs/features/my-info-graduation-check.md) |
+| 성장 로드맵 | 미구현 (설계 전) | [growth-roadmap.md](./docs/features/growth-roadmap.md) |
+| 다음 학기 시간표 추천 | 미구현 | - |
+
+날짜별 작업 이력은 [docs/CHANGELOG.md](./docs/CHANGELOG.md)에서 확인할 수 있다.
+<br/>
+
+### 4. 설치 및 실행 방법
+
+**Backend**
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # DATABASE_URL, OPENAI_API_KEY 등 값 채우기 (팀 공유 채널 참고)
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+**Frontend**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+<br/>
