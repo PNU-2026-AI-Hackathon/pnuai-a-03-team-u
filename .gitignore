@@ -46,6 +46,9 @@ out/
 
 # Claude Code
 .claude/
+# personal working notes for Claude sessions — not shared with the team
+/CLAUDE.md
+/local.md
 
 # Sublime
 *.sublime-project

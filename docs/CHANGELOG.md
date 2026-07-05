@@ -5,6 +5,31 @@
 "기능이 지금 어떻게 동작하는지"는 여기가 아니라 `docs/features/`에 기능별로 정리합니다.
 이 파일은 "언제 무엇을 왜 했는지" 시간순 기록입니다.
 
+## 2026-07-05 (hyunwoocho) #7
+
+- 수강편람 -> `courses` 테이블 적재 파이프라인 신설 + `departments` seed 163 -> 201개로 확장
+  - `courses`가 계속 비어있어서 졸업요건 엔진의 학과 필터링 로직이 실데이터로 검증된 적이 없었음(2026-07-03 #5/#6 한계). `raw_data/crawled_data/onestop_course_catalog/`(17개 학기, 이미 크롤링돼 있었음)를 course_code 기준으로 dedup해서 적재하는 `app/ingestion/csv_importers/course_catalog_importer.py` + `scripts/import_course_catalog.py` 작성. 시간표/분반/교수 등 학기별 개설 정보는 이번엔 안 다룸(과목명/학점은 전수 확인상 학기별 drift 0건이라 마스터 하나면 충분, 개설 단위 정보는 나중에 시간표 기능 만들 때 같은 원본에서 별도로 다루기로 함)
+  - `courses.course_code`에 unique 제약 추가(`migrations/versions/a1c47e0f9d52_...`) — 기존엔 non-unique라 재실행 시 중복 쌓이는 문제가 있었음
+  - `departments` seed(`backend/seeds/pnu_departments.json`)가 낡아서 매칭 실패가 많았음 — 수강편람 실제 개설 이력, 사용자가 준 전학과 졸업이수학점 요건표, 「부산대학교 교육과정 편성 및 운영규정」 원문(47페이지) 3단계로 대조해서 163 -> 201개로 확장. "그린바이오과학전공"과 "그린바이오융합전공"이 서로 다른 실재 프로그램이라는 것 등 확인
+  - **자체 검수 후 재조정**: 201개 중 17개가 사실 "최소전공을 구성하지 않는" 연계전공/학생자율전공/부전공전용 융합전공(별표2-2, 별표2-4)이었음 — 회원가입 학과 검증용인 `departments`엔 안 맞아서 제거, 184개로 정리. 제거 전 `courses.department_id` 참조 0건 확인. `seed_departments.py`가 insert-only(`on_conflict_do_nothing`)라 JSON에서 지워도 이미 seed된 DB에선 안 지워진다는 것도 확인 — 로컬 DB는 직접 DELETE로 정리함. 상세: `docs/progress/course-catalog-import-and-department-coverage.md` "5) 검수" 절
+  - 자체 검수 중 추가로 확인: 같은 학기에 course_code 하나가 여러 학과로 동시 개설되는 케이스 27건(교직과목/공학교육인증 공통과목) — 다행히 졸업판정 로직은 전공 카테고리일 때만 학과를 비교해서 지금은 영향 없음. course_code=course_name 안정성은 규정 제3조③으로 보장되는 걸 확인했지만 credits drift 감지 로직은 없음(지금 데이터엔 0건). stem 매칭 fallback은 실제 활성화된 4쌍 전부 수동 검증 완료
+  - **버그 수정**: `graduation_engine.py`의 `_evaluate_required_courses()`가 선택형(택1) 필수과목("캡스톤디자인\|종합설계"처럼 파이프로 여러 대체 과목이 묶인 행)을 문자열 그대로 비교해서 학생이 뭘 들었든 항상 "미이수"로 판정하는 버그 발견 및 수정 — 경영학과 요건표 확인하다가 발견함. 파이프로 쪼개서 대체 과목 중 하나라도 이수하면 충족으로 인정하도록 고침. 지금 데이터(경영학과 6건)는 전부 `needs_review=true`라 실제 오판정을 내고 있진 않았지만(잠재 버그), 사람이 검토해서 `needs_review=false`로 바꾸는 순간 터질 뻔했음. `test_golden_data.py`/`run_golden_tests.py`에 TC08 추가 — 이 함수는 이번에 처음 테스트 커버리지가 생김
+  - `infra/docker/compose.local.yml` 신설 — `.env`의 `DATABASE_URL`이 팀 공유 Supabase를 직접 가리키므로, 마이그레이션/대량 적재를 로컬 Postgres에서 끝까지 검증한 뒤 한 번에 반영하는 걸 원칙으로 함(`CLAUDE.md`에도 명시)
+  - 로컬 검증 결과: `courses` 6,617행(idempotent 확인), 학과 매칭 94.5%, `requirement_courses.matched_course_code` 13,176건 중 11,849건(89.9%)이 처음으로 실제 `courses`와 조인됨(이전 0건). 골든테스트 7개 전부 통과
+  - **Supabase(팀 공유 DB)엔 아직 미반영** — 로컬 검증만 끝난 상태. 상세: `docs/progress/course-catalog-import-and-department-coverage.md`
+- `requirement_sets`(primary) 중 과목 행이 0건이던 12개 gap 전부 해소/확인 종결
+  - 사용자가 실제 학과 홈페이지 원문(URL/HWP/PDF)을 직접 찾아 하나씩 제공 — 전기전자공학부 전기공학전공(PDF 자동파싱 실패해서 수기 66건), 정보컴퓨터공학부 디자인테크놀로지전공(HWP 자동 89건), 약학전공/제약학전공(교육과정표 페이지로 재발견 후 각 39/36건), 지능형헬스사이언스융합전공(HWP 자동 85건)까지 5개를 실제 데이터로 채움
+  - 나머지 7개(교양학부 5종 + 기타모집단위 + 약학부 통합6년제 wrapper)는 규정/스키마상 원래 별도 커리큘럼이 없는 게 정상인 단위로 확인 종결(액션 불필요)
+  - 재생성 파이프라인(`build_department_curriculum_structured_candidates.py` -> `build_graduation_requirement_seed_tables.py` -> `seed_graduation_requirements.py`)을 이 세션에서 여러 번 반복 실행하면서, `backend/seeds/requirement_course_supplemental.csv`/`requirement_course_corrections.csv`의 수기 데이터가 raw_data 재생성에도 안 지워진다는 설계가 실제로 계속 검증됨. 골든테스트 8개(TC08 포함) 매번 재통과
+  - 덤으로 핀테크융합전공(HWP가 기존 HTML 소스보다 풍부, 20->153건 primary), EES융합전공(HWP는 참고자료용, 변화 없음) 확인
+  - 스코프 밖(151개 활성 프로그램 인덱스에 없는) 순수 부전공/복수전공 전용 융합전공 4개(미래자동차/의료인공지능/디지털헬스케어/반도체) 원문 파일은 `raw_data/manual_staging/01_graduation_requirements/_unscoped_convergence_majors/`에 보관만 해두고 편입 여부는 보류 — 사용자 확인 필요
+  - 상세: `raw_data/WORKLOG_department_curriculum_collection.md` "2026-07-05 업데이트 (4)~(7)"
+- **버그 수정**: minor/dual 요건세트 51개 중 24개가 과목 0건이던 원인이 대부분 실제 데이터 부재가 아니라 파이프라인 버그였음
+  - `build_graduation_requirement_seed_tables.py`의 `build_course_rows()`가 minor/dual 후보를 `(code, program_type, curriculum_year)`로 못 찾으면 무조건 `(code, "primary", "2026")`로 폴백하던 버그. minor/dual 요건세트는 항상 `curriculum_year="2026"`으로 생성되는데 후보 행 자체 연도는 원문 표지 연도(2023/2024 등) 그대로라 1차 매치가 항상 실패해서, **minor/dual 과목이 통째로 primary 요건세트에 잘못 붙고 있었음**(중어중문학과 primary 세트에 `program_type='minor'` 12건이 숨어있는 것까지 확인). 폴백을 `(code, program_type, "2026")`로 수정 → 24개 중 19개가 실제 데이터로 채워짐(독어독문학과/경영학과/사회복지학과/생물교육과/유기소재시스템공학과/원예생명과학과/통계학과/물리학과/중어중문학과/유아교육과/사회기반시스템공학과/산업공학과/미생물학과/분자생물학과/식품공학과/실내환경디자인학과/음악학과 3전공)
+  - 이 과정에서 별개의 콘텐츠 오염도 발견: 전기공학전공 폴더에 남아있던 반도체융합전공 안내 HWP 2개가 만드는 후보 375건 중 372건이 실은 반도체융합전공 문서 내용이 전기공학전공에 잘못 태깅된 것이었음. 파일을 `_unscoped_convergence_majors/`로 이동 → 전기공학전공 primary가 314 -> **66건으로 정정**(퇴보 아니라 교정 — 248건이 오염분이었고 진짜 데이터는 원래 66건)
+  - 골든테스트 8개 재통과, primary+0 gap 7개로 회귀 없음 확인. 남은 것: 계약학과 3개(스마트가전공학과/조선・해양공학과/발전공학과), EES융합전공 dual/minor는 아직 원문 미확보
+  - 상세: `raw_data/WORKLOG_department_curriculum_collection.md` "2026-07-05 업데이트 (8)"
+
 ## 2026-07-03 (hyunwoocho) #6
 
 - 졸업요건 판정 엔진: 타학과 과목은 일반선택으로 재분류
