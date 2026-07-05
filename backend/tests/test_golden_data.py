@@ -118,6 +118,29 @@ GOLDEN_SCENARIOS = [
         "expected_results": {
             "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []}
         }
+    },
+    {
+        "scenario_id": "TC08_REQUIRED_COURSE_CHOICE_GROUP",
+        "description": "선택형(택1) 필수과목 - 대체 과목 중 하나만 이수해도 충족으로 인정돼야 함",
+        "programs": [
+            {"code": "CS03", "type": "primary", "major": "컴퓨터공학과"}
+        ],
+        "courses": [
+            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
+            # 필수과목 요건은 "캡스톤디자인|종합설계" 중 하나를 요구한다. 학생은
+            # 두 번째 대체 과목("종합설계")만 들었으므로, 문자열 그대로 비교하면
+            # 절대 못 찾지만 실제로는 충족된 것으로 인정돼야 한다.
+            {"name": "종합설계", "department": "컴퓨터공학과", "category": "전공선택", "credits": 3.0},
+        ],
+        "expected_results": {
+            "primary": {
+                "status": "evaluated",
+                "all_passed": True,
+                "failed_categories": [],
+                "required_courses_completed": ["캡스톤디자인 / 종합설계"],
+                "required_courses_missing": [],
+            }
+        }
     }
 ]
 

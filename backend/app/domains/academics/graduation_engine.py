@@ -236,11 +236,19 @@ def _evaluate_required_courses(
     missing: list[str] = []
     completed: list[str] = []
     for req in required:
-        name = (req.matched_course_name or req.raw_course_name or "").strip()
-        if name and name in completed_names:
-            completed.append(name)
-        elif name:
-            missing.append(name)
+        raw_name = (req.matched_course_name or req.raw_course_name or "").strip()
+        if not raw_name:
+            continue
+        # matched_course_name/matched_course_code는 같은 요건을 여러 과목 중 하나로
+        # 채울 수 있는 경우(택1) "이름1|이름2"처럼 파이프로 묶여 한 행에 들어올 수
+        # 있다. 대체 과목 중 하나만 이수해도 충족으로 인정해야 하며, 문자열 그대로
+        # 비교하면 어떤 학생도 절대 충족시킬 수 없다.
+        alternatives = [n.strip() for n in raw_name.split("|") if n.strip()]
+        display_name = " / ".join(alternatives)
+        if any(alt in completed_names for alt in alternatives):
+            completed.append(display_name)
+        else:
+            missing.append(display_name)
 
     return RequiredCourseResult(status="checked", missing_course_names=missing, completed_course_names=completed)
 

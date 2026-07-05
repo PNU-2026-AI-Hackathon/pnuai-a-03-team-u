@@ -16,6 +16,7 @@ from app.domains.academics.models import (
     StudentCourseRecord,
     RequirementSet,
     RequirementCategory,
+    RequirementCourse,
 )
 from app.domains.academics.graduation_engine import evaluate_graduation
 from tests.test_golden_data import GOLDEN_SCENARIOS
@@ -75,6 +76,29 @@ def setup_global_requirements(db):
     cs2_cat1 = RequirementCategory(external_id="cs2_req1", requirement_set_id=cs2_req.id, category_code="major_required", category_name="전공필수", minimum_credits="20", rule_type="minimum_credits", needs_review=False)
     cs2_cat2 = RequirementCategory(external_id="cs2_req2", requirement_set_id=cs2_req.id, category_code="free_elective", category_name="일반선택", minimum_credits="6", rule_type="minimum_credits", needs_review=False)
     db.add_all([cs2_cat1, cs2_cat2])
+
+    # TC08 전용: 선택형(택1) 필수과목 - matched_course_name이 "이름1|이름2"처럼
+    # 파이프로 묶인 행이 대체 과목 중 하나만 이수해도 충족으로 잡히는지 검증.
+    cs3_req = RequirementSet(
+        academic_program_code="CS03",
+        program_type="primary",
+        curriculum_year="2026",
+        name="Computer Science Primary 2026 (required-course choice group test)",
+        department="컴퓨터공학과",
+        is_active=True,
+    )
+    db.add(cs3_req)
+    db.commit()
+    cs3_cat1 = RequirementCategory(external_id="cs3_req1", requirement_set_id=cs3_req.id, category_code="major_required", category_name="전공필수", minimum_credits="20", rule_type="minimum_credits", needs_review=False)
+    cs3_required_course = RequirementCourse(
+        external_id="cs3_required_choice1",
+        requirement_set_id=cs3_req.id,
+        category_code="major_required",
+        raw_course_name="캡스톤디자인",
+        matched_course_name="캡스톤디자인|종합설계",
+        needs_review=False,
+    )
+    db.add_all([cs3_cat1, cs3_required_course])
 
     # Requirement Categories for Math Minor
     math_minor_cat = RequirementCategory(external_id="math_minor1", requirement_set_id=math_minor_req.id, category_code="major_required", category_name="수학전공필수(부)", minimum_credits="21", rule_type="minimum_credits", needs_review=False)
@@ -158,7 +182,21 @@ def run_golden_tests():
                 if f_cat not in failed_cats:
                     print(f"  ❌ FAIL: {res.program_type} 프로그램에서 '{f_cat}' 미달을 잡아내지 못함!")
                     test_success = False
-        
+
+            # Check required_courses (선택형 택1 필수과목 등) - 지정된 시나리오만 검증
+            if "required_courses_completed" in expected:
+                actual_completed = res.required_courses.completed_course_names if res.required_courses else []
+                for name in expected["required_courses_completed"]:
+                    if name not in actual_completed:
+                        print(f"  ❌ FAIL: {res.program_type} 프로그램에서 필수과목 '{name}' 이수를 못 잡아냄! (실제: {actual_completed})")
+                        test_success = False
+            if "required_courses_missing" in expected:
+                actual_missing = res.required_courses.missing_course_names if res.required_courses else []
+                for name in expected["required_courses_missing"]:
+                    if name not in actual_missing:
+                        print(f"  ❌ FAIL: {res.program_type} 프로그램에서 필수과목 '{name}' 미이수를 못 잡아냄! (실제: {actual_missing})")
+                        test_success = False
+
         if test_success:
             print("  ✅ PASS: 모든 기대 결과와 정확히 일치합니다.\n")
         else:
