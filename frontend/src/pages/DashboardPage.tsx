@@ -260,7 +260,6 @@ export function DashboardPage() {
           <div className="credit-chart">
             {semesterCredits.map(([label, credit]) => (
               <div key={label}>
-                <span style={{ height: `${Number(credit) * 4}px` }} />
                 <small>{label}</small>
                 <strong>{credit}</strong>
               </div>
