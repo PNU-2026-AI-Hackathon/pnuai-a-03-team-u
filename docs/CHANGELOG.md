@@ -5,6 +5,19 @@
 "기능이 지금 어떻게 동작하는지"는 여기가 아니라 `docs/features/`에 기능별로 정리합니다.
 이 파일은 "언제 무엇을 왜 했는지" 시간순 기록입니다.
 
+## 2026-07-06 (hyunwoocho) #13
+
+- 검토 백로그(needs_review) 완전 종결 — "아예 확실하지 않은 것들 없어질 때까지" 진행
+  - #12까지 5,065건이던 `needs_review=false`를 **11,196건**까지 끌어올림. `curriculum_course_candidates`(10,930건 시작)와 `department_curriculum_courses`(101건) 두 소스 모두 needs_review=true 0건으로 완전 종결
+  - **버그 발견**: 자동 파싱 파이프라인이 같은 원문 컨텍스트에서 "과목코드로 추출"과 "과목명으로 추출" 두 경로를 각각 시도하는데, 코드 경로가 이름을 못 찾으면 코드 자체를 이름 필드에 넣어버림(raw_course_name=raw_course_code인 placeholder) — 카탈로그 매칭도 이름 기반이라 이 경로 결과는 항상 unmatched로 남음. unmatched 1,814건 전수 조사: 1,046건은 이름 기반 추출이 이미 성공한 순수 중복(drop), 762건은 원문 context에서 이름/학점/학년학기를 직접 복구해 재등록(그 중 147건은 부산대 과목코드 규칙상 대학원 과정으로 판명돼 별도 drop, 최종 380건 confirm), 나머지는 원문 자체가 이름 공란이거나 과목코드 변경 안내문일 뿐이라 drop
+  - ambiguous(코드가 여러 학과에 중복 개설돼 하나로 못 좁힌 경우) 945건: 필수과목 판정은 과목명으로만 비교하므로 이름이 확정적이면 코드 모호성은 무관함을 확인 후 전수 confirm
+  - `curriculum_course_candidates`의 unknown 카테고리 matched 3,517건: 원문 표의 이수구분 라벨이 별도 헤더 셀(rowspan)에 있어 이 행의 context 추출 범위에 안 잡힌 구조적 한계(효원 라벨 키워드 문제와는 다름) — unknown은 필수과목 판정에 안 쓰이므로 confirm해도 기능 영향 없어 그대로 confirm
+  - 범례 기호 기반 복수전공/부전공 필수과목 후보 618건 + 과목명 매칭 major_elective 433건 confirm
+  - `department_curriculum_courses`(간호학과/독어독문학과/중어문문학과) 101건: 72건 confirm(전공선택/실습·교직 특수과목/효원 라벨 등 이름 자체는 실재), 29건 drop(대학영어/대학영어(고급) 택1 선택쌍 — 둘 다 개별 필수로 confirm하면 오판정 위험, 독어독문학과 코드전용목록의 이름 복구 불가 항목)
+  - 매 배치 표본검사(25~30건)로 학과-과목 정합성 확인 후 진행, 골든테스트 8개 매번 재통과
+  - **최종 상태**: 남은 needs_review=true 4,350건은 전부 "검토 안 해서 불확실"이 아니라 "원문 자체의 한계로 확정 불가" — `department_courses_from_catalog` 4,308건(원문 없는 카탈로그 추정, 정책상 영구 검토상태) + `requirement_course_supplemental` 42건(한문학과 원문 과목코드 중복 오류 2건, 실내환경디자인학과 학년/학기 정보 없음 40건)
+  - 사용자 확인: 발전공학과 계약학과는 모집 중단됨 — 공식 사이트(`meindustry.org`)도 도메인 만료 후 스팸사이트로 넘어간 상태 확인. 액션 불필요한 확정된 공백으로 재분류
+
 ## 2026-07-06 (hyunwoocho) #12
 
 - 검토 백로그 이어서(과목명 매칭 743건 confirm) + minor/dual/contract 0건 세트 3개 원문으로 채움
