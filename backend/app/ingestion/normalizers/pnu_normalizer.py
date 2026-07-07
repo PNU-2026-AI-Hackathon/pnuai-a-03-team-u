@@ -2,24 +2,31 @@
 도메인 모델(users/academics)에 매핑/저장한다.
 
 DB 매핑만 담당하며, 졸업요건 충족 여부의 최종 판정은 domains/academics의
-결정론적 로직이 맡는다 (여기서는 크롤링된 원본을 GraduationAudit
-스냅샷으로 그대로 보관한다).
+GraduationRequirement 기준과 StudentCourseRecord를 그때그때 대조해서
+계산한다(별도 스냅샷 테이블을 두지 않는다).
 """
 
-import datetime
+import re
 
 from sqlalchemy.orm import Session
 
 from app.core.security import encrypt_secret
-from app.domains.academics.models import (
-    GraduationAudit,
-    StudentCourseRecord,
-    UserAcademicProgram,
-)
+from app.domains.academics.models import StudentCourseRecord, UserAcademicProgram
+from app.domains.courses.models import Course
 from app.domains.users.models import PortalCredential, User
 
 _GRADE_TABLE_HEADER = "학년도"
 _GRADE_DATA_COLUMNS = 8  # 학년도, 학기, 성적분류, 교과구분, 교과목명, 학점, 성적등급, 비고
+
+# graduation_expected_info 테이블 0("주전공 및 학적신청(부전공,복수전공,연합전공) 정보")의
+# "학적신청구분" 값 → UserAcademicProgram.program_type. auth.py의 _VALID_PROGRAM_TYPES와 값을 맞춘다.
+_PROGRAM_LABEL_TO_TYPE = {
+    "주전공": "primary",
+    "복수전공": "dual",
+    "부전공": "minor",
+    "연합전공": "interdisciplinary",
+    "연계전공": "interdisciplinary",
+}
 
 
 def save_portal_credential(db: Session, user_id: int, login_id: str, password: str) -> PortalCredential:
@@ -34,18 +41,48 @@ def save_portal_credential(db: Session, user_id: int, login_id: str, password: s
     return credential
 
 
+def _split_college_department_major(raw: str | None) -> tuple[str | None, str | None, str | None]:
+    """학적부 "소속학과" 원문(예: "정보의생명공학대학 의생명융합공학부 데이터사이언스전공")을
+    단과대학/학부·학과/세부전공으로 나눈다.
+
+    마지막 단어가 "전공"으로 끝나면 major로 분리한다. "OO과"처럼 세부 전공
+    구분이 없으면 major는 null. 남은 단어 중 첫 단어가 "대학"으로 끝나면
+    college로 분리하고, 그런 단어가 없으면 college도 null(학과 표기만 있는 경우).
+    """
+    if not raw:
+        return None, None, None
+
+    tokens = raw.split()
+    major = None
+    if tokens and tokens[-1].endswith("전공"):
+        major = tokens[-1]
+        tokens = tokens[:-1]
+
+    college = None
+    if tokens and tokens[0].endswith("대학"):
+        college = tokens[0]
+        tokens = tokens[1:]
+
+    department = " ".join(tokens) or None
+    return college, department, major
+
+
 def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> UserAcademicProgram:
     """학적부 기본정보(student_info.fetch_student_record 결과)를
     User 기본정보 갱신 + UserAcademicProgram(주전공) upsert로 매핑한다.
     """
+    college, department, major = _split_college_department_major(record.get("소속학과"))
+
     user = db.get(User, user_id)
     if user is not None:
         if record.get("성명"):
             user.name = record["성명"]
         if record.get("학번"):
             user.student_id = record["학번"]
-        if record.get("소속학과"):
-            user.department = record["소속학과"]
+        if department:
+            user.department = department
+        user.college = college
+        user.major = major
 
     program = (
         db.query(UserAcademicProgram)
@@ -56,12 +93,55 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
         program = UserAcademicProgram(user_id=user_id, program_type="primary")
         db.add(program)
 
-    program.department = record.get("소속학과")
+    program.college = college
+    program.department = department
+    program.major = major
     program.curriculum_year = record.get("교육과정적용년도")
     program.status = "active" if record.get("학적상태") == "재학" else record.get("학적상태", "active")
 
     db.flush()
     return program
+
+
+def map_academic_program_registrations(
+    db: Session, user_id: int, registration_rows: list[list[str]]
+) -> list[UserAcademicProgram]:
+    """졸업예정정보(menuCD=000000000000089) 테이블 0의 학적신청 행을
+    UserAcademicProgram(주전공/복수전공/부전공/연합전공)에 upsert한다.
+
+    이 정보는 성적표나 졸업요건표에는 없고 이 페이지에서만 확인 가능하다.
+    행 형식 예: ['1', '주전공', '의생명융합공학부 데이터사이언스전공', 'N', '선택']
+    (마지막 칸은 UI 버튼 라벨이 섞여 들어온 것이라 사용하지 않는다.)
+    """
+    saved: list[UserAcademicProgram] = []
+    for row in registration_rows:
+        if len(row) < 3:
+            continue
+        label, raw_text = row[1], row[2]
+        program_type = _PROGRAM_LABEL_TO_TYPE.get(label)
+        if program_type is None or not raw_text:
+            continue  # 헤더 행이거나 인식 못하는 구분
+
+        college, department, major = _split_college_department_major(raw_text)
+
+        program = (
+            db.query(UserAcademicProgram)
+            .filter_by(user_id=user_id, program_type=program_type, major=major)
+            .one_or_none()
+        )
+        if program is None:
+            program = UserAcademicProgram(user_id=user_id, program_type=program_type)
+            db.add(program)
+        # 이 테이블(학적신청 정보)에는 단과대 표기가 없는 경우가 많다.
+        # 이미 다른 소스(학적부)에서 채워진 값을 None으로 덮어쓰지 않는다.
+        if college:
+            program.college = college
+        program.department = department
+        program.major = major
+        saved.append(program)
+
+    db.flush()
+    return saved
 
 
 def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) -> list[StudentCourseRecord]:
@@ -80,6 +160,14 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
 
             year, semester, _grade_class, category, course_name, credits, grade, _remark = row[:8]
 
+            normalized_category = _normalize_category(category)
+            if normalized_category not in _ALLOWED_CATEGORIES:
+                continue  # 실제 과목이 아닌 행
+            course_name_clean = course_name.strip()
+            category_clean = (category or "").strip()
+            if course_name_clean in (normalized_category, category_clean):
+                continue  # 소계 행 (과목명 칸에 이수구분명 자체가 들어있는 경우)
+
             existing = (
                 db.query(StudentCourseRecord)
                 .filter_by(
@@ -97,9 +185,11 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
                 semester=semester,
                 source="crawler",
             )
-            record.category = category or None
+            record.category = normalized_category
             record.credits = _to_float(credits)
             record.grade = grade or None
+            record.is_retake = _is_retake_eligible(grade)
+            _link_course_catalog(db, record, course_name)
             db.add(record)
             saved.append(record)
 
@@ -107,21 +197,62 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
     return saved
 
 
-def map_graduation_requirement(
-    db: Session, user_id: int, graduation_tables: list[list[list[str]]]
-) -> GraduationAudit:
-    """graduation.fetch_graduation_requirement()의 raw 테이블을
-    GraduationAudit 스냅샷(summary_json)으로 저장한다.
+# 실제 이수구분으로 인정하는 값만 저장한다. 성적표에는 소계/구분 헤더 행이
+# 데이터 행과 같은 8열 구조로 섞여 나오는 경우가 있어(과목명 칸에 "교양선택"
+# 같은 구분명 자체가 들어있는 행), 이 목록에 없으면 실제 과목이 아닌 것으로 보고 건너뛴다.
+_ALLOWED_CATEGORIES = {
+    "전공기초",
+    "전공필수",
+    "전공선택",
+    "일반선택",
+    "교양필수",
+    "교양선택",
+    "교직이수",
+}
+
+# 재수강 가능 기준: C+ 이하(C+, C0, D+, D0, F 등). 이 등급들은 재수강해서
+# 성적을 다시 받을 수 있는 과목이라는 뜻으로 is_retake를 True로 표시한다.
+_RETAKE_ELIGIBLE_GRADES = {"C+", "C0", "C", "D+", "D0", "D", "F"}
+
+# 학교마다/학과마다 다르게 표기되지만 실제로는 허용 카테고리 중 하나와 같은 의미인 이름들.
+_CATEGORY_ALIASES = {
+    "기초교양": "교양선택",
+}
+
+
+def _is_retake_eligible(grade: str) -> bool:
+    return (grade or "").strip().upper() in _RETAKE_ELIGIBLE_GRADES
+
+
+def _normalize_category(category: str) -> str | None:
+    """성적표의 이수구분을 허용 카테고리 중 하나로 정규화한다.
+
+    1. "(학부)" 같은 괄호 주석 제거: "전공기초(학부)" -> "전공기초"
+    2. 표기만 다르고 의미가 같은 이름을 표준 이름으로 치환: "기초교양" -> "교양선택"
     """
-    audit = GraduationAudit(
-        user_id=user_id,
-        status="crawled",
-        summary_json={"tables": graduation_tables},
-        crawled_at=datetime.datetime.now(datetime.UTC),
-    )
-    db.add(audit)
-    db.flush()
-    return audit
+    if not category:
+        return None
+    stripped = re.sub(r"\([^)]*\)", "", category).strip()
+    return _CATEGORY_ALIASES.get(stripped, stripped)
+
+
+def _link_course_catalog(db: Session, record: StudentCourseRecord, course_name: str) -> None:
+    """수강편람(courses 테이블)에서 과목명이 일치하는 강좌를 찾아 연결한다.
+
+    성적표 원본에는 course_code가 없어 이름으로만 매칭한다. 동일 과목명이
+    여러 강좌(분반/학과)로 개설된 경우 어느 것인지 특정할 수 없으므로
+    "ambiguous"로 남기고 course_id는 비워둔다(오매칭보다 안전).
+    """
+    matches = db.query(Course).filter_by(course_name=course_name).all()
+    if len(matches) == 1:
+        record.course_id = matches[0].id
+        record.match_status = "matched"
+    elif len(matches) > 1:
+        record.course_id = None
+        record.match_status = "ambiguous"
+    else:
+        record.course_id = None
+        record.match_status = "unmatched"
 
 
 def _to_float(value: str) -> float | None:
