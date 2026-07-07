@@ -1,7 +1,53 @@
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
+
+
+class School(TimestampMixin, Base):
+    """학교(예: "부산대학교")."""
+
+    __tablename__ = "schools"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+
+
+class College(TimestampMixin, Base):
+    """단과대학(예: "정보의생명공학대학")."""
+
+    __tablename__ = "colleges"
+    __table_args__ = (UniqueConstraint("school_id", "name", name="uq_college_school_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+
+
+class Department(TimestampMixin, Base):
+    """학부/학과(예: "의생명융합공학부", "컴퓨터공학과")."""
+
+    __tablename__ = "departments"
+    __table_args__ = (UniqueConstraint("college_id", "name", name="uq_department_college_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    college_id: Mapped[int] = mapped_column(ForeignKey("colleges.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+
+
+class Major(TimestampMixin, Base):
+    """세부 전공(학부제일 때만 존재, 예: "데이터사이언스전공").
+
+    "OO과"처럼 학과 자체가 곧 전공 단위라 세부 전공 구분이 없는 경우는
+    이 테이블에 행을 만들지 않고, 참조하는 쪽(major_id)을 null로 둔다.
+    """
+
+    __tablename__ = "majors"
+    __table_args__ = (UniqueConstraint("department_id", "name", name="uq_major_department_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
 
 
 class UserAcademicProgram(TimestampMixin, Base):
@@ -12,10 +58,8 @@ class UserAcademicProgram(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
-    school: Mapped[str | None] = mapped_column(String(100))
-    college: Mapped[str | None] = mapped_column(String(200))
-    department: Mapped[str | None] = mapped_column(String(200))
-    major: Mapped[str | None] = mapped_column(String(200))
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     program_type: Mapped[str] = mapped_column(String(20), default="primary")
     curriculum_year: Mapped[str | None] = mapped_column(String(10))
     status: Mapped[str] = mapped_column(String(20), default="active")
@@ -60,9 +104,8 @@ class GraduationRequirement(TimestampMixin, Base):
     __tablename__ = "graduation_requirements"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    school: Mapped[str | None] = mapped_column(String(100))
-    department: Mapped[str | None] = mapped_column(String(200))
-    major: Mapped[str | None] = mapped_column(String(200))
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     program_type: Mapped[str | None] = mapped_column(String(20))
     curriculum_year: Mapped[str | None] = mapped_column(String(10))
     required_total_credits: Mapped[int | None] = mapped_column()

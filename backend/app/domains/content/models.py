@@ -1,6 +1,4 @@
-import datetime
-
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -19,21 +17,5 @@ class AcademicInfoArticle(TimestampMixin, Base):
     source_url: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-
-class ExtracurricularProgram(TimestampMixin, Base):
-    """비교과 프로그램(취업/창업/AI/어학/상담 등)."""
-
-    __tablename__ = "extracurricular_programs"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    school: Mapped[str | None] = mapped_column(String(100))
-    title: Mapped[str] = mapped_column(String(500))
-    category: Mapped[str | None] = mapped_column(String(100))
-    organizer: Mapped[str | None] = mapped_column(String(255))
-    apply_start_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
-    apply_end_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
-    program_start_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
-    program_end_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
-    target: Mapped[str | None] = mapped_column(Text)
-    location: Mapped[str | None] = mapped_column(String(255))
-    url: Mapped[str | None] = mapped_column(String(500))
+# 비교과 프로그램 추천(ExtracurricularProgram)은 추천활동 기능을 나중에
+# 다시 설계해서 구현할 예정이라 지금은 테이블을 두지 않는다.

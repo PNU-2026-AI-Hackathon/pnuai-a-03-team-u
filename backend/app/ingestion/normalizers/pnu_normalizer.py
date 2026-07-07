@@ -11,7 +11,8 @@ import re
 from sqlalchemy.orm import Session
 
 from app.core.security import encrypt_secret
-from app.domains.academics.models import StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.hierarchy import get_or_create_major, resolve_hierarchy
+from app.domains.academics.models import Department, StudentCourseRecord, UserAcademicProgram
 from app.domains.courses.models import Course
 from app.domains.users.models import PortalCredential, User
 
@@ -72,6 +73,7 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
     User 기본정보 갱신 + UserAcademicProgram(주전공) upsert로 매핑한다.
     """
     college, department, major = _split_college_department_major(record.get("소속학과"))
+    department_id, major_id = resolve_hierarchy(db, None, college, department, major)
 
     user = db.get(User, user_id)
     if user is not None:
@@ -79,10 +81,9 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
             user.name = record["성명"]
         if record.get("학번"):
             user.student_id = record["학번"]
-        if department:
-            user.department = department
-        user.college = college
-        user.major = major
+        if department_id:
+            user.department_id = department_id
+        user.major_id = major_id
 
     program = (
         db.query(UserAcademicProgram)
@@ -93,14 +94,36 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
         program = UserAcademicProgram(user_id=user_id, program_type="primary")
         db.add(program)
 
-    program.college = college
-    program.department = department
-    program.major = major
+    program.department_id = department_id
+    program.major_id = major_id
     program.curriculum_year = record.get("교육과정적용년도")
     program.status = "active" if record.get("학적상태") == "재학" else record.get("학적상태", "active")
 
     db.flush()
     return program
+
+
+def _resolve_registration_hierarchy(
+    db: Session, college: str | None, department_name: str | None, major_name: str | None
+) -> tuple[int | None, int | None]:
+    """학적신청 정보 행에는 단과대 표기가 없는 경우가 많다. college가 없으면
+    이름이 같은 기존 Department를 먼저 찾아 재사용해서, 학적부에서 이미
+    만들어둔 진짜 단과대 소속 department와 별개의 "미지정" 행이 중복 생성되는
+    것을 피한다.
+    """
+    if not department_name:
+        return None, None
+    if college:
+        return resolve_hierarchy(db, None, college, department_name, major_name)
+
+    existing = db.query(Department).filter_by(name=department_name).first()
+    if existing is not None:
+        department_id = existing.id
+    else:
+        department_id, _ = resolve_hierarchy(db, None, None, department_name, None)
+
+    major_id = get_or_create_major(db, department_id, major_name).id if major_name else None
+    return department_id, major_id
 
 
 def map_academic_program_registrations(
@@ -123,21 +146,22 @@ def map_academic_program_registrations(
             continue  # 헤더 행이거나 인식 못하는 구분
 
         college, department, major = _split_college_department_major(raw_text)
+        # 이 테이블(학적신청 정보)에는 단과대 표기가 없는 경우가 많다. college가
+        # 없으면 resolve_hierarchy가 "미지정" 단과대를 쓰는데, 이미 학적부에서
+        # 만들어둔 진짜 단과대와 다른 department 행이 생길 수 있으니 주의가 필요하다.
+        # -> 기존에 같은 department 이름으로 이미 만들어진 행이 있으면 그걸 우선 재사용한다.
+        department_id, major_id = _resolve_registration_hierarchy(db, college, department, major)
 
         program = (
             db.query(UserAcademicProgram)
-            .filter_by(user_id=user_id, program_type=program_type, major=major)
+            .filter_by(user_id=user_id, program_type=program_type, major_id=major_id)
             .one_or_none()
         )
         if program is None:
             program = UserAcademicProgram(user_id=user_id, program_type=program_type)
             db.add(program)
-        # 이 테이블(학적신청 정보)에는 단과대 표기가 없는 경우가 많다.
-        # 이미 다른 소스(학적부)에서 채워진 값을 None으로 덮어쓰지 않는다.
-        if college:
-            program.college = college
-        program.department = department
-        program.major = major
+        program.department_id = department_id
+        program.major_id = major_id
         saved.append(program)
 
     db.flush()
@@ -163,10 +187,11 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
             normalized_category = _normalize_category(category)
             if normalized_category not in _ALLOWED_CATEGORIES:
                 continue  # 실제 과목이 아닌 행
-            course_name_clean = course_name.strip()
-            category_clean = (category or "").strip()
-            if course_name_clean in (normalized_category, category_clean):
-                continue  # 소계 행 (과목명 칸에 이수구분명 자체가 들어있는 경우)
+
+            # 주의: 과목명이 이수구분명과 같은 행(예: 과목명="교양선택")은 소계가
+            # 아니라 "전적학교성적"(입학 전 인정된 학점) 같은 정상 데이터일 수 있으므로
+            # 과목명만으로 걸러내면 안 된다. len(row) < _GRADE_DATA_COLUMNS 체크로
+            # 실제 소계/요약 행은 이미 위에서 걸러진다.
 
             existing = (
                 db.query(StudentCourseRecord)
@@ -207,7 +232,7 @@ _ALLOWED_CATEGORIES = {
     "일반선택",
     "교양필수",
     "교양선택",
-    "교직이수",
+    "교직과목",
 }
 
 # 재수강 가능 기준: C+ 이하(C+, C0, D+, D0, F 등). 이 등급들은 재수강해서
