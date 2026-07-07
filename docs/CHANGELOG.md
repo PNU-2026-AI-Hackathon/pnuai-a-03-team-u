@@ -12,6 +12,20 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (blackest21)
+
+- **Supabase에 학교 계층 + 2026 교육과정 적재 완료**: schools 1 / colleges 16 / departments 109 /
+  majors 36 / courses 6,402 (전공계열 6,345 + 공통 교양 57). 소스는 전부 AIS(수강신청 시스템)
+  현행 편제 — 표기·배치를 AIS 기준으로 통일했고, 팀 확인으로 특수 케이스(자율전공형·핀테크·
+  지능형헬스·EES·스마트시티·약학부 385세대·치의학과 추가·한의학과 제외)를 확정.
+- 시드 파일 2개(`backend/seeds/school_hierarchy_mapping.csv`, `ais_courses_2026.csv`)와
+  멱등 적재 스크립트 2개(`scripts/seed_school_hierarchy.py`, `scripts/import_courses_from_ais.py`) 추가.
+- 이상 데이터·전원 숙지 컨벤션(학과 조회 시 `major_id IS NULL` 필수 등)·추후 검토 목록은
+  `docs/progress/db-seed-school-hierarchy-and-courses.md`에 정리 — **꼭 한번 읽어주세요.**
+- 주의: 원본 데이터 특이사항 다수 발견 — 행정학과 PA2700143은 AIS부터 과목명 공란,
+  조선·해양공학과는 AIS 동명 코드 2개(342100이 진짜), 국악학과/음악학과 동명 전공 함정 등.
+  상세는 progress 문서의 "이상 데이터 기록" 절.
+
 ## 2026-07-02 (d0won) - 12
 
 - 프론트엔드 연동 가이드 문서 추가 (`docs/frontend-api-guide.md`) — 지금 동작하는 API(회원가입/로그인/내정보/추천)만 요청·응답·에러 예시로 정리. 팀 검토 전이라 PR 머지는 보류 중
