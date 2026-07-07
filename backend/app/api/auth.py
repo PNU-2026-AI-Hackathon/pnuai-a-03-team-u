@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
-from app.domains.academics.models import UserAcademicProgram
+from app.domains.academics.hierarchy import resolve_hierarchy
+from app.domains.academics.models import Department, Major, UserAcademicProgram
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -26,6 +27,10 @@ _VALID_PROGRAM_TYPES = {"primary", "dual", "minor", "interdisciplinary"}
 
 class AcademicProgramInput(BaseModel):
     major: str
+    # 비워두면 SignupRequest의 최상위 school/college/department를 사용한다.
+    school: str | None = None
+    college: str | None = None
+    department: str | None = None
     program_type: str = "primary"
 
     @field_validator("program_type")
@@ -42,6 +47,7 @@ class SignupRequest(BaseModel):
     name: str
     student_id: str | None = None
     school: str | None = None
+    college: str | None = None
     department: str | None = None
     career_goal: str | None = None
     # 주전공 하나, 복수전공/부전공 여러 개까지 한 번에 등록 가능
@@ -70,12 +76,26 @@ class UserResponse(BaseModel):
     email: str
     name: str
     student_id: str | None
-    school: str | None
     department: str | None
+    major: str | None
     career_goal: str | None
     academic_programs: list[AcademicProgramResponse] = []
 
     model_config = {"from_attributes": True}
+
+
+def _department_name(db: Session, department_id: int | None) -> str | None:
+    if department_id is None:
+        return None
+    department = db.get(Department, department_id)
+    return department.name if department else None
+
+
+def _major_name(db: Session, major_id: int | None) -> str | None:
+    if major_id is None:
+        return None
+    major = db.get(Major, major_id)
+    return major.name if major else None
 
 
 def _load_user_response(db: Session, user: User) -> UserResponse:
@@ -87,10 +107,16 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         email=user.email,
         name=user.name,
         student_id=user.student_id,
-        school=user.school,
-        department=user.department,
+        department=_department_name(db, user.department_id),
+        major=_major_name(db, user.major_id),
         career_goal=user.career_goal,
-        academic_programs=[AcademicProgramResponse.model_validate(p) for p in programs],
+        academic_programs=[
+            AcademicProgramResponse(
+                major=_major_name(db, p.major_id) or "",
+                program_type=p.program_type,
+            )
+            for p in programs
+        ],
     )
 
 
@@ -103,28 +129,39 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if existing is not None:
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다")
 
+    top_department_id, _ = resolve_hierarchy(
+        db, payload.school, payload.college, payload.department, None
+    )
+
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
         name=payload.name,
         student_id=payload.student_id,
-        school=payload.school,
-        department=payload.department,
+        department_id=top_department_id,
         career_goal=payload.career_goal,
     )
     db.add(user)
     db.flush()
 
     for program in payload.academic_programs:
+        program_department_id, program_major_id = resolve_hierarchy(
+            db,
+            program.school or payload.school,
+            program.college or payload.college,
+            program.department or payload.department,
+            program.major,
+        )
         db.add(
             UserAcademicProgram(
                 user_id=user.id,
-                school=payload.school,
-                department=payload.department,
-                major=program.major,
+                department_id=program_department_id,
+                major_id=program_major_id,
                 program_type=program.program_type,
             )
         )
+        if program.program_type == "primary" and program_major_id:
+            user.major_id = program_major_id
 
     db.commit()
     db.refresh(user)

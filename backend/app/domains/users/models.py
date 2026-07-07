@@ -14,13 +14,10 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(100))
     student_id: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
-    school: Mapped[str | None] = mapped_column(String(100))
-    # 단과대학(예: "정보의생명공학대학"). 소속학과 원문에 단과대가 없으면 null.
-    college: Mapped[str | None] = mapped_column(String(200))
-    department: Mapped[str | None] = mapped_column(String(200))
-    # 학부제로 다전공(복수전공/부전공)까지 나뉘는 경우의 세부 전공명.
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    # 학부제로 다전공(복수전공/부전공)까지 나뉘는 경우의 세부 전공.
     # "OO과"처럼 학과 자체가 곧 전공이라 세부 전공 구분이 없으면 null.
-    major: Mapped[str | None] = mapped_column(String(200))
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     career_goal: Mapped[str | None] = mapped_column(String(255))
     advisor_consulted: Mapped[bool] = mapped_column(default=False)
 

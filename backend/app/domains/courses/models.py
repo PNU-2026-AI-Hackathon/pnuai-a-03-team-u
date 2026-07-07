@@ -14,11 +14,10 @@ class Course(TimestampMixin, Base):
     __tablename__ = "courses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    school: Mapped[str | None] = mapped_column(String(100))
     course_code: Mapped[str | None] = mapped_column(String(50), index=True)
     course_name: Mapped[str] = mapped_column(String(255))
-    department: Mapped[str | None] = mapped_column(String(200))
-    major: Mapped[str | None] = mapped_column(String(200))
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     category: Mapped[str | None] = mapped_column(String(50))
     credits: Mapped[float | None] = mapped_column()
     year: Mapped[str | None] = mapped_column(String(10))

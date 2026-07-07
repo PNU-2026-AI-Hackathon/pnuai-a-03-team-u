@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.activities import router as activities_router
 from app.api.auth import router as auth_router
 from app.api.portal_sync import router as portal_sync_router
 from app.core.config import settings
@@ -29,7 +28,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
-app.include_router(activities_router)
 app.include_router(portal_sync_router)
 
 
