@@ -2,9 +2,8 @@
 
 이메일/비밀번호 회원가입·로그인 + JWT 발급/검증까지 구현됨. 소셜 로그인은 아직 없음.
 
-**다른 기능 API는 아직 이걸 안 쓴다** — [activity-recommendations.md](./activity-recommendations.md)의
-`GET /activities/recommendations/{user_id}`는 여전히 `user_id`를 경로 파라미터로 받는다.
-`get_current_user` 의존성으로 교체하는 건 별도 작업.
+[내 정보 페이지(졸업요건 확인)](./my-info-graduation-check.md)의 `POST /me/portal-sync`,
+`PATCH /me/advisor-consulted`가 `get_current_user`를 재사용하는 첫 사례다.
 
 ## API (`app/api/auth.py`)
 
@@ -26,43 +25,26 @@
 
 ```json
 "academic_programs": [
-  {"major": "컴퓨터공학", "program_type": "primary"},
+  {"major": "컴퓨터공학", "department": "정보컴퓨터공학부", "program_type": "primary"},
   {"major": "경영학", "program_type": "dual"},
   {"major": "심리학", "program_type": "minor"}
 ]
 ```
 
 `program_type`은 `primary`/`dual`/`minor`/`interdisciplinary` 중 하나만 허용(422 검증).
-`GET /auth/me` 응답의 `academic_programs`에서 확인 가능. 추천 로직
-(`extracurricular_recommender.py`)은 이미 유저의 모든 전공을 프로필 텍스트에 반영하고
-있어서 이 데이터가 들어오면 별도 연동 작업 없이 바로 추천에 쓰인다.
+각 항목의 `school`/`college`/`department`는 생략하면 `SignupRequest` 최상위 값을
+그대로 쓴다. `GET /auth/me` 응답의 `academic_programs`에서 확인 가능.
 
-### 학과/전공 검증 (`departments` 테이블)
+### 학과/전공 계층 (`schools → colleges → departments → majors`)
 
-`department`, `academic_programs[].major`로 들어온 값은 `departments` 테이블에
-있는 정식 명칭이어야 한다 — 없으면 400으로 회원가입 자체가 거부된다
-(`_validate_department_names`, `app/api/auth.py`).
+**2026-07-07부로 방식이 바뀌었다.** 예전엔 미리 시드해둔 `departments` 테이블에
+있는 정식 명칭인지 검증해서 없으면 400으로 거부했는데, 지금은 검증 없이
+[`resolve_hierarchy()`](../../backend/app/domains/academics/hierarchy.py)가
+회원가입 입력값으로 학교/단과대/학과/전공을 자동 생성(get-or-create)한다.
+자세한 계층 구조는 [my-info-graduation-check.md](./my-info-graduation-check.md) 참고.
 
-`departments` 시드 데이터(`backend/seeds/pnu_departments.json`, 163개)는 onestop
-수강편람 크롤러(`app/ingestion/crawlers/onestop_course_catalog.py`)로 2026-1학기
-개설 과목의 개설 학과명(`MNG_DEPT_NM`)을 전부 모아, 연구소/센터 같은 비학사 조직을
-제외해 만들었다. `scripts/seed_departments.py`로 upsert한다.
-
-```
-python -m scripts.seed_departments
-```
-
-**1학년(세부전공 미배정) 대응**: 수강편람은 과목을 실제로 개설하는 단위(대개 세부
-전공)만 보여줘서, 학부제 신입생이 쓰는 상위 학부명(예: "정보컴퓨터공학부")이
-처음엔 빠져있었다. 부산대 2026학년도 수시모집요강(모집단위별 입학정원 표 —
-학부제 신입생이 실제로 선택하는 정식 단위)과 대조해 "정보컴퓨터공학부",
-"전기전자공학부", "디자인학과"를 보강했고, 그 외 학부제 모집단위
-(기계공학부/재료공학부/경제학부/무역학부/공공정책학부/의생명융합공학부/
-자유전공학부/첨단융합학부/약학부 등)는 전부 이미 포함되어 있음을 확인함.
-
-**알려진 한계**: 전체 16개 단과대학의 모집단위를 한 줄씩 전수 대조하지는 않았다 —
-회원가입 시 "등록되지 않은 학과" 에러가 자주 나오면 그 학과명을
-`pnu_departments.json`에 추가하고 `seed_departments.py`를 재실행하면 된다.
+`User.department_id`/`major_id`, `UserAcademicProgram.department_id`/`major_id`가
+이 계층을 FK로 참조한다 — 더 이상 자유 텍스트 컬럼이 아니다.
 
 ## 구현 세부사항
 
