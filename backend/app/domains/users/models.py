@@ -38,33 +38,27 @@ class PortalCredential(TimestampMixin, Base):
     encrypted_password: Mapped[str] = mapped_column(String(500))
 
 
-class UserExternalActivity(TimestampMixin, Base):
-    """외부활동(동아리/인턴/봉사 등)."""
+class UserActivity(TimestampMixin, Base):
+    """비교과 활동. 동아리/인턴/봉사 같은 외부활동과 공모전/수상을 하나로 합친 테이블.
 
-    __tablename__ = "user_external_activities"
+    "내 정보" 페이지의 비교과 활동 리스트가 이 둘을 구분 없이 하나의 목록으로
+    보여줘서(기관명/설명/링크만 있으면 됨) 굳이 두 테이블로 나눌 이유가 없었다.
+    """
+
+    __tablename__ = "user_activities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(255))
     organization: Mapped[str | None] = mapped_column(String(255))
+    # 자유 텍스트 분류(예: "동아리", "공모전", "인턴", "프로젝트"). 정해진 값 집합 없음.
+    category: Mapped[str | None] = mapped_column(String(100))
     role: Mapped[str | None] = mapped_column(String(100))
+    award: Mapped[str | None] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(String(500))
     start_date: Mapped[datetime.date | None] = mapped_column(Date)
     end_date: Mapped[datetime.date | None] = mapped_column(Date)
-    description: Mapped[str | None] = mapped_column(Text)
-
-
-class UserCompetition(TimestampMixin, Base):
-    """내부활동/공모전 참가 및 수상 이력."""
-
-    __tablename__ = "user_competitions"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    title: Mapped[str] = mapped_column(String(255))
-    category: Mapped[str | None] = mapped_column(String(100))
-    award: Mapped[str | None] = mapped_column(String(100))
-    held_at: Mapped[datetime.date | None] = mapped_column(Date)
-    description: Mapped[str | None] = mapped_column(Text)
 
 
 class UserCertification(TimestampMixin, Base):
