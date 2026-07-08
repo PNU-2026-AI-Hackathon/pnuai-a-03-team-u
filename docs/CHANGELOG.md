@@ -26,6 +26,29 @@
   조선·해양공학과는 AIS 동명 코드 2개(342100이 진짜), 국악학과/음악학과 동명 전공 함정 등.
   상세는 progress 문서의 "이상 데이터 기록" 절.
 
+## 2026-07-07 (d0won)
+
+- `schools → colleges → departments → majors` 4단 FK 계층 신설 (`app/domains/academics/models.py`, `hierarchy.py`)
+  - `courses`/`graduation_requirements`/`users`/`user_academic_programs`에 자유 텍스트로 흩어져 있던 school/college/department/major 컬럼을 `department_id`/`major_id` FK로 교체
+  - `departments` 시드 데이터(수강편람 크롤링 기반)는 폐기 — 대신 `hierarchy.py`의 get-or-create 헬퍼가 크롤링/회원가입 시점에 이름이 들어올 때마다 없으면 자동 생성. 회원가입 학과 검증(`_validate_department_names`)도 같이 제거됨
+  - 이유: 팀 공유 DB(Supabase)가 여러 브랜치 마이그레이션이 뒤섞여 어지러운 상태였음 — 전체 스키마를 합의된 ERD로 리셋하면서 같이 정리
+- 포털 자동 로그인/동기화 API 추가 (`POST /me/portal-sync`, `PATCH /me/advisor-consulted`, `app/api/portal_sync.py`)
+  - 학번/비밀번호를 받아 서버가 직접 One-Stop에 로그인, 학적부/성적/졸업예정정보를 크롤링해 DB에 매핑
+  - 졸업예정정보 테이블 0(학적신청 정보)에서 복수전공/부전공 신청 여부까지 자동으로 `UserAcademicProgram`에 반영
+- 성적 크롤링 정규화/버그 수정 (`pnu_normalizer.py`)
+  - 이수구분 정규화: `"전공기초(학부)"` → `"전공기초"`, `"기초교양"` → `"교양선택"`(동의어), `"교직이수"` → `"교직과목"`(실제 표기 오타 수정)
+  - 재수강 가능(C+ 이하) 여부 자동 판정해 `is_retake`에 반영
+  - 수강편람(`courses`)과 과목명 매칭해 `course_id`/`match_status` 채움 (동명 과목 여러 개면 `ambiguous`로 남기고 오매칭 방지)
+  - **버그**: "전적학교성적"(입학 전 인정 학점) 행이 과목명과 이수구분명이 같다는 이유로 소계 행으로 오판되어 걸러지던 문제 발견·수정 (실 계정 테스트 시 10건 → 정확한 14건 저장으로 확인)
+- 추천활동(비교과 크롤링+임베딩+추천) 기능 제거 — 나중에 재설계해서 다시 구현할 예정
+  - `activities`/`user_activity_recommendations`/`extracurricular_programs` 테이블, `app/api/activities.py`,
+    `app/ai/recommendations/extracurricular_recommender.py`, `app/ai/embeddings/activity_embeddings.py`,
+    `app/ai/evaluation/recommendation_eval.py`, `app/ingestion/normalizers/{activity_normalizer,dedup_activities}.py` 삭제
+  - `notice_board_crawler.py`/`notice_board_sources.py`(순수 크롤링 코드), `openai_client.py`(범용 임베딩 유틸)는 재구현 시 재사용 위해 남겨둠
+  - `app/core/scheduler.py`는 빈 스케줄러로 정리 (잡 없음)
+- ERD 합의 후 `courses`/`graduation_requirements`/`user_academic_programs` 등 도메인 모델 전면 재구성, `planning`(수강계획/로드맵)·`content`(학사정보 안내글) 도메인 신설 ([#44](https://github.com/PNU-2026-AI-Hackathon/pnuai-a-03-team-u/pull/44), [#45](https://github.com/PNU-2026-AI-Hackathon/pnuai-a-03-team-u/pull/45))
+- 실 계정으로 전체 흐름(로그인 → 크롤링 → 계층 자동생성 → 저장) 검증 완료: 부산대학교 → 정보의생명공학대학 → 의생명융합공학부 → 데이터사이언스전공까지 정확히 연결됨
+
 ## 2026-07-02 (d0won) - 12
 
 - 프론트엔드 연동 가이드 문서 추가 (`docs/frontend-api-guide.md`) — 지금 동작하는 API(회원가입/로그인/내정보/추천)만 요청·응답·에러 예시로 정리. 팀 검토 전이라 PR 머지는 보류 중

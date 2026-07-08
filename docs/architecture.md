@@ -34,6 +34,13 @@ This keeps the agreed principle intact: AI must not decide graduation satisfacti
 
 ## Backend Structure
 
+> **Status note (2026-07-07):** the shared DB was fully reset to a team-agreed ERD.
+> `domains/planning` and `domains/content` were added; the extracurricular
+> recommendation stack (`domains/activities`, `ai/recommendations`,
+> `ai/embeddings/activity_embeddings.py`, `ai/evaluation`) was removed until it
+> is redesigned. See [docs/CHANGELOG.md](./CHANGELOG.md) 2026-07-07 entry and
+> [docs/features/activity-recommendations.md](./features/activity-recommendations.md).
+
 ```text
 backend/
   app/
@@ -41,8 +48,10 @@ backend/
     api/
     domains/
       users/
-      academics/
+      academics/       # school/college/department/major hierarchy lives here too
       courses/
+      planning/         # course_plans, course_roadmaps
+      content/          # academic_info_articles
     ingestion/
       csv_importers/
       crawlers/
@@ -51,9 +60,8 @@ backend/
     ai/
       rag/
       llm/
-      embeddings/
+      embeddings/       # openai_client.py only, activity-specific embedding removed
       prompts/
-      recommendations/
   migrations/
   scripts/
   seeds/
@@ -145,6 +153,29 @@ auth_accounts
 ```
 
 ## Database Direction
+
+> **Status note (2026-07-07):** the schema sections below (`requirement_sets`,
+> `graduation_audits`, `academic_programs`/`academic_program_aliases` master
+> tables, `student_graduation_category_statuses`, etc.) describe the *planned*
+> design and were not all implemented as written. What actually shipped:
+>
+> - `school`/`department`/`major` are normalized into a 4-level FK hierarchy —
+>   `schools → colleges → departments → majors` — instead of the
+>   `academic_programs`/`academic_program_aliases`/`department_academic_program_mappings`
+>   design below. Rows are created lazily via get-or-create
+>   (`app/domains/academics/hierarchy.py`) instead of pre-seeded from a master file.
+> - `graduation_audits`/`graduation_audit_program_results` (per-user snapshot
+>   tables) were dropped. `graduation_requirements` (a single flat requirement
+>   table, FK'd to department/major) replaced `requirement_sets` /
+>   `requirement_categories` / `requirement_courses`; it exists but is not yet
+>   seeded with real requirement data.
+> - `course_offerings`/`course_times` exist in a simplified shape (no
+>   change-tracking columns like `offering_status`/`change_status` yet).
+> - See [docs/features/my-info-graduation-check.md](./features/my-info-graduation-check.md)
+>   for the schema that's actually live.
+>
+> Keep this section for the long-term design intent, but don't assume any
+> table below exists until you check the actual models under `backend/app/domains/`.
 
 The database should use normalized tables for core audit logic and JSONB for program-specific exceptions or source metadata.
 
