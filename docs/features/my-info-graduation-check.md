@@ -78,8 +78,39 @@
 실제 요건 데이터(전공별 필수 학점, 필수과목 목록 등)는 채워지지 않았다 — 정식 학사요람
 출처 없이 채우면 졸업 판단을 오도할 위험이 있어 보류 중.
 
+## 학교 계층 / 교육과정 시드 데이터
+
+`schools`(1) / `colleges`(16) / `departments`(109) / `majors`(36) / `courses`(6,402 —
+전공계열 6,345 + 공통 교양 57)까지 AIS(수강신청 시스템) 2026 교육과정 기준으로
+전부 시드되어 있다 (`backend/seeds/school_hierarchy_mapping.csv`,
+`ais_courses_2026.csv`, `scripts/seed_school_hierarchy.py`,
+`scripts/import_courses_from_ais.py`). 이상 데이터 케이스와 컨벤션(학과 조회 시
+`major_id IS NULL` 필수 등)은 [db-seed-school-hierarchy-and-courses.md](../progress/db-seed-school-hierarchy-and-courses.md) 참고.
+
+**`graduation_requirements`(졸업요건 기준)만 예외로 비어있다** — 위 계층/과목 데이터와
+달리 공식 학사요람 출처가 확보되지 않아 의도적으로 안 채웠다.
+
+## 사용자 직접 입력 프로필 (`app/api/profile.py`)
+
+크롤링 대상이 아니라 사용자가 직접 CRUD로 관리하는 데이터. 전부 `get_current_user`로
+본인 데이터만 접근 가능(남의 데이터 요청 시 404).
+
+| 메서드/경로 | 설명 |
+| --- | --- |
+| `GET/POST /me/activities` | 비교과 활동 목록 조회/생성 |
+| `PATCH/DELETE /me/activities/{id}` | 비교과 활동 수정/삭제 |
+| `GET/POST /me/certifications` | 자격증 목록 조회/생성 |
+| `PATCH/DELETE /me/certifications/{id}` | 자격증 수정/삭제 |
+| `GET/POST /me/language-scores` | 어학성적 목록 조회/생성 |
+| `PATCH/DELETE /me/language-scores/{id}` | 어학성적 수정/삭제 |
+
+`user_activities`는 `user_external_activities`(외부활동)와 `user_competitions`
+(공모전/수상)를 합친 테이블이다 — "내 정보" 페이지 UI가 이 둘을 구분 없이 기관명/설명/
+링크만 있는 하나의 리스트로 보여줘서 나눌 이유가 없었다. UI에 있던 링크(`url`) 필드도
+이때 새로 추가했다.
+
 ## 알려진 한계 / TODO
 
 - 실제 충족 여부 판정 로직 미구현 (`graduation_requirements`에 요건 데이터 자체가 없음)
 - `graduation.py`(졸업요건기준 및 충족여부 원본)는 크롤링만 되고 아직 DB 매핑 안 함
-- 프론트엔드 미연동 (버튼 눌러서 크롤링 트리거하는 UI 없음)
+- 프론트엔드 미연동 (버튼 눌러서 크롤링 트리거하는 UI, 프로필 CRUD 폼 UI 없음)

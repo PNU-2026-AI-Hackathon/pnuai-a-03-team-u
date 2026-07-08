@@ -12,6 +12,17 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (d0won)
+
+- 비교과 활동/자격증/어학성적 CRUD API 추가 (`app/api/profile.py`)
+  - `GET/POST /me/activities`, `/me/certifications`, `/me/language-scores` + 각 `PATCH/DELETE /{id}`
+  - 크롤링 대상(성적/전공)과 달리 사용자가 직접 입력/편집하는 데이터라 별도 라우터로 분리
+  - `get_current_user`로 본인 데이터만 접근, 남의 데이터 요청 시 404
+- DB 정리: `user_external_activities` + `user_competitions` → `user_activities`(비교과 활동)로 통합
+  - "내 정보" 페이지 UI가 외부활동/공모전을 구분 없이 기관명/설명/링크만 있는 하나의 리스트로 보여줘서 나눌 이유가 없었음
+  - UI에 있던 링크(`url`) 필드 신규 추가, 기존 데이터는 마이그레이션에서 이관
+- TestClient로 로그인 → 생성 → 조회 → 수정 → 삭제 전체 흐름 + 인증 없음(401)/존재하지 않는 리소스(404) 케이스 검증 완료
+
 ## 2026-07-08 (blackest21)
 
 - **Supabase에 학교 계층 + 2026 교육과정 적재 완료**: schools 1 / colleges 16 / departments 109 /
