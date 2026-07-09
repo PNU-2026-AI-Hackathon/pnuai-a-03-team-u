@@ -12,6 +12,17 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (d0won) - 2
+
+- 성장 로드맵 작성/수정 API 추가 (`app/api/roadmaps.py`, `app/api/courses.py`)
+  - "AI 자동 생성 버튼" 없이 로드맵은 항상 존재(없으면 자동 생성)하게 만들어서, 프론트는 "수정하기" 버튼 하나로만 진입 (`GET /me/roadmaps/current`)
+  - `app/domains/planning/history.py`: 이미 크롤링된 이수내역(`StudentCourseRecord`)을 로드맵 항목으로 자동 변환 — 2학년 이상 학생이 처음 로드맵을 만들어도 1학년 때 들은 과목이 빈칸으로 안 보이게. 교육과정적용년도 기준으로 정규 학기만 학년(1~4) 계산, 멱등적 upsert
+  - `GET /courses/search`: 과목 자동완성, 사용자 본인 학과/전공 과목 우선 정렬
+  - 로드맵 항목은 반드시 실제 존재하는 `course_id`로만 생성/수정 가능 — 자유 텍스트 과목명 입력 경로 자체가 없어서 오타로 저장하는 게 구조적으로 불가능
+  - `course_roadmap_items`에 `course_name`/`department_name`/`major_name`/`category`/`credits`(스냅샷), `status`, `is_confirmed` 필드, `course_roadmaps`에 `summary` 필드 추가
+  - `course_plans`/`course_plan_items`(시간표 추천)는 나중에 별도 구현 예정이라 이번엔 건드리지 않음
+  - TestClient로 전체 흐름(자동완성 → 로드맵 자동생성+이수내역 반영 → 항목 추가/수정 → 권한 체크 → 오타 방지) 검증 완료
+
 ## 2026-07-08 (d0won)
 
 - 비교과 활동/자격증/어학성적 CRUD API 추가 (`app/api/profile.py`)
