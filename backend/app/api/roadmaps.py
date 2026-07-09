@@ -1,9 +1,11 @@
 """성장 로드맵 작성/수정. 사용자가 직접 학기별 과목을 채워 넣는 화면용 API.
 
-항목(item) 생성/수정은 항상 실제 존재하는 course_id를 받아서 서버가
-courses/departments/majors를 조회해 course_name 등 스냅샷을 채운다 —
-프론트가 자동완성(GET /courses/search)에서 고른 course_id만 보내게 만들면,
-오타나 존재하지 않는 과목명으로는 애초에 저장 자체가 안 된다.
+항목(item) 생성/수정은 항상 실제 존재하는 course_id를 받아서 서버가 course_name만
+스냅샷으로 저장한다(오타/존재하지 않는 과목명으로는 저장 자체가 안 됨). course_id가
+없거나 동명 과목이 여러 학과에 걸쳐 있어 모호한 경우가 실제로 흔해서 course_name은
+항상 스냅샷으로 남기고, department_name/major_name/category/credits는 course_id가
+있을 때만 courses(+departments+majors)를 조인해 응답 시점에 채운다 — 값이 어긋날
+일이 없게 하기 위함.
 """
 
 from __future__ import annotations
@@ -72,6 +74,37 @@ class RoadmapResponse(BaseModel):
 
 class RoadmapDetailResponse(RoadmapResponse):
     items: list[RoadmapItemResponse]
+
+
+def _item_to_response(db: Session, item: CourseRoadmapItem) -> RoadmapItemResponse:
+    """course_id가 있으면 courses(+departments+majors)를 조인해 표시용 필드를 채운다."""
+    department_name = major_name = category = credits = None
+    if item.course_id is not None:
+        course = db.get(Course, item.course_id)
+        if course is not None:
+            category = course.category
+            credits = course.credits
+            department = db.get(Department, course.department_id) if course.department_id else None
+            major = db.get(Major, course.major_id) if course.major_id else None
+            department_name = department.name if department else None
+            major_name = major.name if major else None
+
+    return RoadmapItemResponse(
+        id=item.id,
+        course_id=item.course_id,
+        planned_grade=item.planned_grade,
+        planned_year=item.planned_year,
+        planned_semester=item.planned_semester,
+        course_name=item.course_name,
+        department_name=department_name,
+        major_name=major_name,
+        category=category,
+        credits=credits,
+        status=item.status,
+        is_confirmed=item.is_confirmed,
+        reason=item.reason,
+        source=item.source,
+    )
 
 
 def _get_owned_roadmap(db: Session, user_id: int, roadmap_id: int) -> CourseRoadmap:
@@ -171,11 +204,12 @@ def delete_roadmap(
 
 
 def _with_items(db: Session, roadmap: CourseRoadmap) -> CourseRoadmap:
-    roadmap.items = db.scalars(  # type: ignore[attr-defined]
+    raw_items = db.scalars(
         select(CourseRoadmapItem)
         .where(CourseRoadmapItem.roadmap_id == roadmap.id)
         .order_by(CourseRoadmapItem.planned_year, CourseRoadmapItem.planned_semester)
     ).all()
+    roadmap.items = [_item_to_response(db, item) for item in raw_items]  # type: ignore[attr-defined]
     return roadmap
 
 
@@ -200,8 +234,8 @@ class RoadmapItemUpdateRequest(BaseModel):
     reason: str | None = None
 
 
-def _fill_course_snapshot(db: Session, item: CourseRoadmapItem, course_id: int) -> None:
-    """course_id로 courses/departments/majors를 조회해 스냅샷 필드를 채운다.
+def _set_course(db: Session, item: CourseRoadmapItem, course_id: int) -> None:
+    """course_id로 courses를 조회해 course_id/course_name을 채운다.
 
     course_id가 courses 테이블에 없으면 404 — 오타/존재하지 않는 과목명으로는
     저장 자체가 안 되는 지점이 여기다.
@@ -209,16 +243,8 @@ def _fill_course_snapshot(db: Session, item: CourseRoadmapItem, course_id: int) 
     course = db.get(Course, course_id)
     if course is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 과목입니다")
-
-    department = db.get(Department, course.department_id) if course.department_id else None
-    major = db.get(Major, course.major_id) if course.major_id else None
-
     item.course_id = course.id
     item.course_name = course.course_name
-    item.department_name = department.name if department else None
-    item.major_name = major.name if major else None
-    item.category = course.category
-    item.credits = course.credits
 
 
 @router.post("/{roadmap_id}/items", response_model=RoadmapItemResponse, status_code=201)
@@ -237,11 +263,11 @@ def create_roadmap_item(
         reason=payload.reason,
         source="manual",
     )
-    _fill_course_snapshot(db, item, payload.course_id)
+    _set_course(db, item, payload.course_id)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return item
+    return _item_to_response(db, item)
 
 
 def _get_owned_item(db: Session, user_id: int, roadmap_id: int, item_id: int) -> CourseRoadmapItem:
@@ -265,10 +291,10 @@ def update_roadmap_item(
     for field, value in data.items():
         setattr(item, field, value)
     if payload.course_id is not None:
-        _fill_course_snapshot(db, item, payload.course_id)
+        _set_course(db, item, payload.course_id)
     db.commit()
     db.refresh(item)
-    return item
+    return _item_to_response(db, item)
 
 
 @router.delete("/{roadmap_id}/items/{item_id}", status_code=204)

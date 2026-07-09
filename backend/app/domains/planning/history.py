@@ -10,26 +10,12 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.domains.academics.models import Department, Major, StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.models import StudentCourseRecord, UserAcademicProgram
 from app.domains.planning.models import CourseRoadmapItem
 
 # 실제 학기가 아니라 특수 구분이라 학년(1~4)을 계산할 수 없는 값들.
 # 이런 행도 항목으로는 만들되 planned_grade는 비워둔다.
 _NON_REGULAR_SEMESTERS = {"입학전성적"}
-
-
-def _resolve_names(db: Session, user_id: int) -> tuple[str | None, str | None]:
-    """이 학생의 주전공 department/major 이름을 한 번만 조회해서 재사용한다."""
-    program = (
-        db.query(UserAcademicProgram)
-        .filter_by(user_id=user_id, program_type="primary")
-        .one_or_none()
-    )
-    if program is None:
-        return None, None
-    department = db.get(Department, program.department_id) if program.department_id else None
-    major = db.get(Major, program.major_id) if program.major_id else None
-    return (department.name if department else None), (major.name if major else None)
 
 
 def _compute_planned_grade(curriculum_year: str | None, year: str | None, semester: str | None) -> int | None:
@@ -52,7 +38,6 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
         .one_or_none()
     )
     curriculum_year = program.curriculum_year if program else None
-    department_name, major_name = _resolve_names(db, user_id)
 
     records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
 
@@ -75,10 +60,6 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
         )
         item.course_id = record.course_id
         item.course_name = record.raw_course_name
-        item.department_name = department_name
-        item.major_name = major_name
-        item.category = record.category
-        item.credits = float(record.credits) if record.credits is not None else None
         item.planned_grade = _compute_planned_grade(curriculum_year, record.year, record.semester)
         item.status = "completed"
         item.source = "manual"
