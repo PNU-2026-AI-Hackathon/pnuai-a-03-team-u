@@ -29,10 +29,10 @@
 
 ## 2026-07-09 (blackest21) - 5
 
-- **One-Stop 졸업예정정보 저장 구조 검토 문서 추가**
+- **One-Stop 졸업예정정보 저장 구조 검토 PR 작성**
   - 로컬 사용자 동의 크롤링으로 확인한 졸업예정정보 table 1(교과목구분별 이수구분),
     table 3(교양선택 영역별 이수여부), table 6(비학점 졸업요건) 구조를 바탕으로,
-    어떤 데이터를 저장하고 서비스에서 어떻게 활용할지 검토 문서로 정리했다.
+    어떤 데이터를 저장하고 서비스에서 어떻게 활용할지 PR 본문에 검토 요청으로 정리했다.
   - 결론은 Supabase에 바로 테이블을 만들지 않고, 우선 `graduation_audits`,
     `student_graduation_category_statuses`, `student_general_education_area_statuses`
     3개 테이블 추가를 검토 대상으로 제안하는 것이다. TOPCIT/외국어/졸업과제 등 table 6
@@ -40,8 +40,8 @@
   - 현재 서비스 코드는 `extract_graduation_expected_info(page)`로 졸업예정정보 7개 테이블을
     이미 크롤링하지만, DB에는 table 0(주전공/복수전공/부전공/연계전공 신청 정보)만
     저장한다는 점을 명확히 기록했다.
-  - 문서: `docs/onestop-graduation-status-review.md`. 이번 항목은 검토 요청용 문서만 추가하며
-    Supabase 마이그레이션/API 동작 변경은 없다.
+  - 별도 장문 md 파일은 GitHub 문서 일관성을 위해 만들지 않고, 이번 항목은 changelog 기록과
+    PR 본문 검토 요청만 남긴다. Supabase 마이그레이션/API 동작 변경은 없다.
 
 ## 2026-07-09 (blackest21) - 3
 
