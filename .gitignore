@@ -46,6 +46,8 @@ out/
 
 # Claude Code
 .claude/
+CLAUDE.md
+local.md
 
 # Sublime
 *.sublime-project
