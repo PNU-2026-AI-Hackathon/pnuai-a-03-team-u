@@ -9,11 +9,15 @@ One-Stop에 로그인해 학적부·성적·졸업요건을 가져와 DB에 저�
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.domains.academics.models import Major, UserAcademicProgram
+from app.domains.planning.history import sync_completed_courses_to_roadmap
+from app.domains.planning.models import CourseRoadmap
 from app.domains.users.models import User
 from app.ingestion.crawlers.graduation import fetch_graduation_requirement
 from app.ingestion.crawlers.graduation_expected_info import extract_graduation_expected_info
@@ -36,7 +40,7 @@ class PortalSyncRequest(BaseModel):
 
 
 class CourseRecordResponse(BaseModel):
-    course_name: str
+    course_name: str = Field(validation_alias="raw_course_name")
     category: str | None
     credits: float | None
     year: str | None
@@ -44,7 +48,7 @@ class CourseRecordResponse(BaseModel):
     grade: str | None
     match_status: str
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class AcademicProgramResponse(BaseModel):
@@ -87,13 +91,32 @@ def sync_portal_data(
     map_student_record(db, current_user.id, student_record)
     saved_records = map_grades(db, current_user.id, grades_tables)
     saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)
+
+    # 새로 크롤링된 이수내역을 사용자의 모든 로드맵에 반영한다. 이 시점(크롤링
+    # 직후)에만 하면 되므로, 로드맵을 열 때마다(GET /me/roadmaps/current) 매번
+    # 다시 확인할 필요가 없다 — 조회는 항상 가볍게 유지된다. 로드맵 개수가 많아도
+    # 항목 수 자체가 적어서(보통 수십 개) 크롤링 자체보다 훨씬 빠르다.
+    roadmap_ids = db.scalars(
+        select(CourseRoadmap.id).where(CourseRoadmap.user_id == current_user.id)
+    ).all()
+    for roadmap_id in roadmap_ids:
+        sync_completed_courses_to_roadmap(db, user_id=current_user.id, roadmap_id=roadmap_id)
+
     db.commit()
 
     return PortalSyncResponse(
         student_record=student_record,
         courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
-        academic_programs=[AcademicProgramResponse.model_validate(p) for p in saved_programs],
+        academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
+    )
+
+
+def _to_academic_program_response(db: Session, program: UserAcademicProgram) -> AcademicProgramResponse:
+    major = db.get(Major, program.major_id) if program.major_id else None
+    return AcademicProgramResponse(
+        program_type=program.program_type,
+        major=major.name if major else None,
     )
 
 

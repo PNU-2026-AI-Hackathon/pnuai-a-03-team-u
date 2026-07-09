@@ -57,11 +57,15 @@ class CourseRoadmapItem(TimestampMixin, Base):
     planned_year: Mapped[str | None] = mapped_column(String(10))
     planned_semester: Mapped[str | None] = mapped_column(String(20))
     # course_id가 null이거나 모호한 경우(동명 과목이 여러 학과에 개설된 경우가 흔해서
-    # 실제로 자주 발생함)에도 이름은 항상 보여줘야 해서 스냅샷으로 저장한다.
-    # department_name/major_name/category/credits는 스냅샷 없이 course_id가 있을 때만
-    # courses(+departments+majors) join으로 가져온다 — 과목명 정보가 바뀌어도
-    # 항상 최신값을 보여주기 위함.
+    # 실제로 자주 발생함)에도 항상 보여줘야 해서 스냅샷으로 저장한다.
+    # course_name/category/credits는 "쓰는 시점"에 확정된 값(과거 이력은
+    # StudentCourseRecord, 신규/수정은 선택한 course_id)을 그대로 복사한다 —
+    # 매칭이 필요 없는 값들이라 join과 무관하게 항상 정확하다.
+    # department_name/major_name만 course_id가 있을 때 courses(+departments+majors)
+    # join으로 채운다 — 과거 이력은 성적표 원본에 학과 정보가 아예 없어서 스냅샷 불가.
     course_name: Mapped[str | None] = mapped_column(String(255))
+    category: Mapped[str | None] = mapped_column(String(50))
+    credits: Mapped[float | None] = mapped_column()
     # planned: 계획만 세운 상태 / completed: 실제로 이수함 / dropped: 계획에서 뺌
     status: Mapped[str] = mapped_column(String(20), default="planned")
     # source="ai"로 제안된 항목을 사용자가 실제로 받아들였는지. source만으로는

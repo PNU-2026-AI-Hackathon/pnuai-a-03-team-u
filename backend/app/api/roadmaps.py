@@ -1,11 +1,12 @@
 """성장 로드맵 작성/수정. 사용자가 직접 학기별 과목을 채워 넣는 화면용 API.
 
-항목(item) 생성/수정은 항상 실제 존재하는 course_id를 받아서 서버가 course_name만
-스냅샷으로 저장한다(오타/존재하지 않는 과목명으로는 저장 자체가 안 됨). course_id가
-없거나 동명 과목이 여러 학과에 걸쳐 있어 모호한 경우가 실제로 흔해서 course_name은
-항상 스냅샷으로 남기고, department_name/major_name/category/credits는 course_id가
-있을 때만 courses(+departments+majors)를 조인해 응답 시점에 채운다 — 값이 어긋날
-일이 없게 하기 위함.
+항목(item) 생성/수정은 항상 실제 존재하는 course_id를 받아서 서버가
+course_name/category/credits를 그 course에서 그대로 복사해 저장한다
+(오타/존재하지 않는 과목명으로는 저장 자체가 안 됨). department_name/major_name은
+course_id가 있을 때만 courses(+departments+majors)를 조인해 응답 시점에 채운다 —
+과거 이수내역은 course_id가 매칭 안 된 경우가 흔한데(동명 과목이 여러 학과에
+걸쳐 있어서), 그런 경우도 학과 정보만 없을 뿐 과목명/학점/이수구분은 성적표
+원본에 그대로 있어서 스냅샷으로 보존한다.
 """
 
 from __future__ import annotations
@@ -77,13 +78,15 @@ class RoadmapDetailResponse(RoadmapResponse):
 
 
 def _item_to_response(db: Session, item: CourseRoadmapItem) -> RoadmapItemResponse:
-    """course_id가 있으면 courses(+departments+majors)를 조인해 표시용 필드를 채운다."""
-    department_name = major_name = category = credits = None
+    """department_name/major_name은 course_id가 있을 때만 join으로 채운다.
+
+    course_name/category/credits는 이미 item에 스냅샷으로 저장돼 있어 join이
+    필요 없다 — 과거 이력은 course_id가 없어도(unmatched) 이 값들이 있어야 하기 때문.
+    """
+    department_name = major_name = None
     if item.course_id is not None:
         course = db.get(Course, item.course_id)
         if course is not None:
-            category = course.category
-            credits = course.credits
             department = db.get(Department, course.department_id) if course.department_id else None
             major = db.get(Major, course.major_id) if course.major_id else None
             department_name = department.name if department else None
@@ -98,8 +101,8 @@ def _item_to_response(db: Session, item: CourseRoadmapItem) -> RoadmapItemRespon
         course_name=item.course_name,
         department_name=department_name,
         major_name=major_name,
-        category=category,
-        credits=credits,
+        category=item.category,
+        credits=item.credits,
         status=item.status,
         is_confirmed=item.is_confirmed,
         reason=item.reason,
@@ -235,7 +238,7 @@ class RoadmapItemUpdateRequest(BaseModel):
 
 
 def _set_course(db: Session, item: CourseRoadmapItem, course_id: int) -> None:
-    """course_id로 courses를 조회해 course_id/course_name을 채운다.
+    """course_id로 courses를 조회해 course_id/course_name/category/credits를 채운다.
 
     course_id가 courses 테이블에 없으면 404 — 오타/존재하지 않는 과목명으로는
     저장 자체가 안 되는 지점이 여기다.
@@ -245,6 +248,8 @@ def _set_course(db: Session, item: CourseRoadmapItem, course_id: int) -> None:
         raise HTTPException(status_code=404, detail="존재하지 않는 과목입니다")
     item.course_id = course.id
     item.course_name = course.course_name
+    item.category = course.category
+    item.credits = course.credits
 
 
 @router.post("/{roadmap_id}/items", response_model=RoadmapItemResponse, status_code=201)

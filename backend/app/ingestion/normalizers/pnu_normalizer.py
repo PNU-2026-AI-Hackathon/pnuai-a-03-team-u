@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from app.core.security import encrypt_secret
 from app.domains.academics.hierarchy import get_or_create_major, resolve_hierarchy
 from app.domains.academics.models import Department, StudentCourseRecord, UserAcademicProgram
-from app.domains.courses.models import Course
 from app.domains.users.models import PortalCredential, User
 
 _GRADE_TABLE_HEADER = "학년도"
@@ -214,7 +213,6 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
             record.credits = _to_float(credits)
             record.grade = grade or None
             record.is_retake = _is_retake_eligible(grade)
-            _link_course_catalog(db, record, course_name)
             db.add(record)
             saved.append(record)
 
@@ -259,25 +257,6 @@ def _normalize_category(category: str) -> str | None:
         return None
     stripped = re.sub(r"\([^)]*\)", "", category).strip()
     return _CATEGORY_ALIASES.get(stripped, stripped)
-
-
-def _link_course_catalog(db: Session, record: StudentCourseRecord, course_name: str) -> None:
-    """수강편람(courses 테이블)에서 과목명이 일치하는 강좌를 찾아 연결한다.
-
-    성적표 원본에는 course_code가 없어 이름으로만 매칭한다. 동일 과목명이
-    여러 강좌(분반/학과)로 개설된 경우 어느 것인지 특정할 수 없으므로
-    "ambiguous"로 남기고 course_id는 비워둔다(오매칭보다 안전).
-    """
-    matches = db.query(Course).filter_by(course_name=course_name).all()
-    if len(matches) == 1:
-        record.course_id = matches[0].id
-        record.match_status = "matched"
-    elif len(matches) > 1:
-        record.course_id = None
-        record.match_status = "ambiguous"
-    else:
-        record.course_id = None
-        record.match_status = "unmatched"
 
 
 def _to_float(value: str) -> float | None:
