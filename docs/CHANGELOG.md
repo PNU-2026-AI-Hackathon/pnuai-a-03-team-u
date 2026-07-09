@@ -56,6 +56,13 @@
     live flat 테이블과 새 `requirement_sets` 스키마 중 PR 범위 확정, 부전공/복수전공/교직
     세부 요건 seed 완성, 새 스키마 적용 전 현재 flat 125행을 `requirement_categories`로
     이전하는 경로 마련.
+- **작업폴더 단일화**
+  - 별도로 남아 있던 `../planU-codex` git worktree를 제거하고, 앞으로는
+    `pnuai-a-03-team-u` 하나에서만 관리한다.
+  - `planU-codex`에만 있던 `outputs/` 산출물은 별도 폴더로 유지하지 않고 제거했다.
+    로컬 산출물이 필요하면 새 임의 폴더를 만들지 말고 기존 raw_data 위치만 사용한다.
+  - 남아 있던 보조 worktree `.worktrees/machine-eng-subtracks`도 제거해 `git worktree list`
+    기준 현재 작업폴더 하나만 남겼다.
 
 ## 2026-07-09 (blackest21) - 2
 
@@ -78,8 +85,8 @@
 
 - **졸업요건 스키마 재설계: 부전공/복수전공/교직 표현 + codex 브랜치 main 통합**
   (브랜치 `feat/graduation-requirement-schema`, 스키마+마이그레이션까지 — 엔진 확장/시드는 다음 세션)
-  - codex/graduation-academic-programs 브랜치(+stash 세션#15 정리분, 워크트리 `../planU-codex`에
-    커밋 `6465c12`로 보존)의 판정 엔진·requirement_* 스키마·골든테스트를 main 계층 위로 포팅
+  - codex/graduation-academic-programs 브랜치(+stash 세션#15 정리분 커밋 `6465c12`)의
+    판정 엔진·requirement_* 스키마·골든테스트를 main 계층 위로 포팅
   - 핵심 설계: ① 부전공/복수전공 = requirement_sets의 program_type 행(별도 테이블 아님),
     ② 교직 = primary 세트의 teacher_training_basic(△)/teacher_training_pedagogy(□, 8학점)
     카테고리(별도 program_type 아님), ③ 대학 공통 기본규칙 = scope='university_default' 행,
