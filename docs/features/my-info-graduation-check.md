@@ -14,6 +14,32 @@
 인증은 `get_current_user`(`app/api/auth.py`) 재사용. 크롤링은 Playwright 동기 API로
 몇 초 걸리므로 엔드포인트를 `def`(동기)로 선언해 FastAPI가 스레드풀에서 처리하게 한다.
 
+`POST /me/portal-sync`는 성공하면 사용자의 모든 로드맵에도
+`sync_completed_courses_to_roadmap()`을 자동 실행한다 — 자세한 내용은
+[growth-roadmap.md](./growth-roadmap.md) 참고.
+
+### 실제 계정으로 API 엔드투엔드 검증하며 발견한 버그 3건
+
+스키마를 계속 바꾸면서(학교 계층 도입, user_activities 통합 등) `portal_sync.py`의
+응답 모델이 실제 모델 필드와 어긋난 채로 방치돼 있었다. `TestClient`로 함수를
+직접 호출하는 테스트만으로는 못 잡고, 실제 `POST /me/portal-sync` 엔드포인트를
+호출해봐야 드러나는 문제들이었다.
+
+1. **`.env` 마지막 줄 줄바꿈 누락**: `CREDENTIAL_ENCRYPTION_KEY`를 `echo >>`로
+   추가했더니 이전 줄(`JWT_SECRET_KEY=...`) 끝에 그대로 붙어 두 값이 합쳐진 문자열이
+   됨 → `EncryptionKeyMissingError`. `.env` 파일을 스크립트로 수정할 때는 항상
+   마지막 줄에 개행이 있는지 먼저 확인할 것
+2. **`CourseRecordResponse.course_name`**: `StudentCourseRecord`의 실제 컬럼명은
+   `raw_course_name`인데 응답 스키마는 `course_name`을 기대해서 `model_validate`가
+   실패함 → `Field(validation_alias="raw_course_name")`로 매핑
+3. **`AcademicProgramResponse.major`**: 오늘 학교 계층 리팩토링으로
+   `UserAcademicProgram.major`(텍스트) → `major_id`(FK)로 바뀐 걸 이 응답 스키마만
+   반영 못 하고 있었음 → `major_id`로 `Major`를 조회해서 이름을 채우도록 수정
+
+**교훈**: DB 스키마를 바꿀 때 그 모델을 참조하는 Pydantic 응답 스키마까지 전부
+찾아서 고쳐야 하는데, import 에러 없이 그냥 `model_validate` 시점에만 조용히
+실패하는 필드 불일치는 실제로 엔드포인트를 호출해보기 전엔 안 잡힌다.
+
 ## 로그인 (`app/ingestion/crawlers/pnu_session.py`)
 
 - 로그인 레이어의 기본 활성 탭이 "스마트 로그인"이라 `#idpwTab > a`를 먼저 클릭해야

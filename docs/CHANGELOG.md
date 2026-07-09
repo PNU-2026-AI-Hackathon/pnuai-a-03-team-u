@@ -12,6 +12,21 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (d0won) - 4
+
+- 성장 로드맵: `category`/`credits`를 다시 스냅샷 컬럼으로 복원 (`course_roadmap_items`)
+  - 바로 전 세션(-3)에서 join 방식으로 뺐었는데, 과거 이수내역은 `course_id`가 unmatched/ambiguous인 경우가 실제로 흔해서 join만으로는 학점 자체를 못 보여주는 문제 발견
+  - 성적표 원본(`StudentCourseRecord`)엔 `course_id` 매칭 여부와 무관하게 학점/이수구분이 이미 정확히 있어서, 매칭이 필요 없는 값 → 스냅샷으로 되돌려도 안전
+  - `department_name`/`major_name`은 계속 join 방식 유지 (성적표 원본에 학과 정보 자체가 없음)
+- 성장 로드맵: `POST /me/portal-sync` 완료 시 사용자의 모든 로드맵에 이수내역 자동 반영
+  - 로드맵을 처음 만들 때만 과거 이수내역이 채워지고, 이후 크롤링해도 기존 로드맵엔 새 학기가 반영 안 되던 문제 발견·수정
+  - `GET /me/roadmaps/current`는 계속 조회만 함 — 열 때마다 매번 동기화하면 체감 지연이 생겨서, 동기화는 크롤링 시점에만 하도록 분리
+- 실제 계정으로 `POST /me/portal-sync` 엔드투엔드 테스트 중 버그 3건 발견·수정 (`app/api/portal_sync.py`)
+  - `.env` 마지막 줄 개행 누락으로 `CREDENTIAL_ENCRYPTION_KEY`가 이전 값에 붙어버린 문제
+  - `CourseRecordResponse.course_name`이 실제 컬럼명(`raw_course_name`)과 달라 검증 실패 → `Field(validation_alias=...)`로 매핑
+  - `AcademicProgramResponse.major`가 오늘 리팩토링(`major` 텍스트 → `major_id` FK)을 반영 못 해서 검증 실패 → FK로 조회해 채우도록 수정
+  - 함수 단위 테스트만으로는 못 잡고 실제 엔드포인트를 호출해봐야 드러나는 문제들이었음
+
 ## 2026-07-08 (d0won) - 3
 
 - 로드맵 항목(`course_roadmap_items`) 스냅샷 필드 축소: `department_name`/`major_name`/`category`/`credits` 컬럼 제거, `course_id` 있을 때 응답 시점에 `courses`(+`departments`+`majors`) join으로 채우는 방식으로 변경
