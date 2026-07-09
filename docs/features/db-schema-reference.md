@@ -9,7 +9,7 @@
 ## 계층 (회원가입/조회용 이름 계층)
 
 `schools → colleges → departments → majors`. AIS 편제 기준으로 시드됨
-(라이브: colleges 16 / departments 109 / majors 36 — `docs/progress/db-seed-school-hierarchy-and-courses.md`).
+(라이브: colleges 16 / departments 109 / majors 36 — `docs/CHANGELOG.md`의 최신 DB seed 항목).
 **학과 단위 조회는 `major_id IS NULL` 필터 필수** — 학부제 부모 학과 14곳은
 department_id만으로 조회하면 하위 전공 행이 섞인다.
 
@@ -144,7 +144,7 @@ category_code / match_status / recognition_status / source_note.
   (`e5a7c9d1f3b6`에서 drop).
 - codex 브랜치의 `department_academic_program_mappings` / `graduation_audits` /
   `graduation_audit_program_results` / `requirement_text_rules`는 main으로 포팅하지 않음
-  (읽는 코드 0 또는 폐기 결정 — `docs/progress/graduation-requirement-schema-redesign.md`).
+  (읽는 코드 0 또는 폐기 결정 — `docs/CHANGELOG.md`의 졸업요건 스키마 재설계 항목).
 
 ## 비교과 활동 / 기타
 

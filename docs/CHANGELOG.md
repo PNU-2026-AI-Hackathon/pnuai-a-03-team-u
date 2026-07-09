@@ -12,6 +12,51 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-09 (blackest21) - 3
+
+- **DB seed 진행 기록을 `docs/CHANGELOG.md`로 통합**
+  - 별도 `docs/progress.md` 파일과 `docs/progress/*` 폴더를 쓰지 않고, GitHub에서 바로 보이는
+    이 changelog를 DB seed/졸업요건 진행상황의 단일 기록지로 사용한다.
+  - 원칙: 2026 현행 학부/전공 계층은 AIS 2026 기준, `departments`는 학과/학부 단위,
+    `majors`는 학부 아래 세부전공 단위, 전공을 가진 부모 학과 조회 시 `major_id IS NULL`
+    조건 필수. 폐과/비학부/전문대학원 행은 별표에 졸업학점 기준이 있어도 2026 학부
+    계층에 임의 추가하지 않는다.
+  - 2026 계층/과목 seed 완료 상태: Supabase 기준 `schools` 1 / `colleges` 16 /
+    `departments` 109 / `majors` 36 / `courses` 6,402. 재현 명령은 `cd backend` 후
+    `python -m scripts.seed_school_hierarchy`, `python -m scripts.import_courses_from_ais`.
+  - 주요 배치 결정: 핀테크융합전공은 경영대학 직속, 지능형헬스사이언스융합전공은
+    자연과학대학 직속, EES융합전공은 학부대학 첨단융합학부 전공. 첨단융합학부 현행
+    전공은 `미래에너지전공`, `나노소자첨단제조전공`, `광메카트로닉스공학전공`,
+    `AI융합계산과학전공`, `EES융합전공`.
+  - 별표의 `나노에너지공학과`, `나노메카트로닉스공학과`, `광메카트로닉스공학과`는
+    2026 학과분류자료집에서 폐과로 확인되어 라이브 계층에 새 department로 추가하지 않았다.
+  - 라이브 Supabase revision `e5f6a7b8c9d0` 기준 flat `graduation_requirements`에
+    2026 주전공 졸업학점 기준 125행을 반영했다. 범위는 별표2 page 31-36 중 라이브
+    계층 매칭 123행 + 별표2-2 page 38 융합전공 중 매칭 2행
+    (`지능형헬스사이언스융합전공`, `핀테크융합전공`).
+  - flat 컬럼 매핑: 총계 → `required_total_credits`, 전공필수 → `required_major_required`,
+    전공선택+심화전공 → `required_major_elective`, 효원핵심교양 →
+    `required_general_required`, 효원균형교양+효원창의교양 →
+    `required_general_elective`, 일반선택 → `required_free_elective`.
+  - 라이브 계층에 매칭하지 않은 별표 행: 폐과 학부 행
+    (`나노에너지공학과`, `나노메카트로닉스공학과`, `광메카트로닉스공학과`,
+    `식물생명과학과`, `동물생명자원과학과`), 전문대학원 학석사통합과정 학사과정
+    (`치의학전문대학원`, `한의학전문대학원`), 라이브 계층 미존재 `미래자동차융합전공`,
+    라이브 `majors` 미존재 `의생명융합공학부 첨단바이오공학전공`.
+  - 재실행 명령: `cd backend` 후 page 31-36은
+    `python -m scripts.seed_live_flat_graduation_requirements --replace --apply`, page 38
+    융합전공은 `python -m scripts.seed_live_flat_graduation_requirements --only-annex2-2 --apply`.
+    스크립트는 같은 `(program_type, curriculum_year, department_id, major_id)` 행을 먼저
+    지우고 다시 넣어 중복을 만들지 않는다.
+  - 새 `requirement_sets` 스키마는 flat `graduation_requirements`를 장기적으로 대체하기 위한
+    작업이고 아직 라이브 DB에는 적용하지 않았다. 부전공/복수전공은
+    `requirement_sets.program_type`, 교직은 primary 요건세트의
+    `teacher_training_basic` / `teacher_training_pedagogy` 카테고리로 표현한다.
+  - 남은 일: `의생명융합공학부 첨단바이오공학전공`을 2026 현행 계층에 포함할지 확인,
+    live flat 테이블과 새 `requirement_sets` 스키마 중 PR 범위 확정, 부전공/복수전공/교직
+    세부 요건 seed 완성, 새 스키마 적용 전 현재 flat 125행을 `requirement_categories`로
+    이전하는 경로 마련.
+
 ## 2026-07-09 (blackest21) - 2
 
 - **primary(주전공) 졸업요건 시드 준비 완료** (같은 브랜치, 로컬 검증까지 — Supabase 반영은 승인 대기)
@@ -27,7 +72,7 @@
   - 로컬 검증: 두 시드 멱등(재실행 행 수 불변) / department_id 미해석은 의도된 제외 7건뿐
     (교양학부 5계열·기타모집단위·GSP) / 시드 실데이터로 엔진 스모크(핀테크융합전공 —
     학점 미달 False, 교양 영역 판정불가 None, 필수과목 10건 미이수 체크) / 골든테스트 통과
-  - 반영 순서는 `docs/progress/supabase-graduation-schema-apply-plan.md` 갱신분 참고
+  - 반영 순서와 라이브 적용 현황은 이 changelog의 최신 DB seed 항목 참고
 
 ## 2026-07-09 (blackest21)
 
@@ -48,7 +93,7 @@
   - 신규 리비전 5개(`a1c3e5b7d9f2`→`e5a7c9d1f3b6`), 전부 plain DDL + downgrade 포함
   - 검증(로컬 Postgres, Supabase 미접촉): 빈 DB 전체 체인 upgrade ✓ / downgrade 왕복 ✓ /
     `alembic check` drift 0 ✓ / 골든테스트 TC01~TC10 전부 통과 ✓
-  - 문서: `docs/progress/graduation-requirement-schema-redesign.md`(설계 근거·다음 세션 TODO),
+  - 문서: 이 changelog의 최신 DB seed 항목(설계 근거·다음 TODO),
     `docs/features/db-schema-reference.md`(스키마 레퍼런스 갱신)
 
 ## 2026-07-08 (d0won) - 3
@@ -88,10 +133,10 @@
 - 시드 파일 2개(`backend/seeds/school_hierarchy_mapping.csv`, `ais_courses_2026.csv`)와
   멱등 적재 스크립트 2개(`scripts/seed_school_hierarchy.py`, `scripts/import_courses_from_ais.py`) 추가.
 - 이상 데이터·전원 숙지 컨벤션(학과 조회 시 `major_id IS NULL` 필수 등)·추후 검토 목록은
-  `docs/progress/db-seed-school-hierarchy-and-courses.md`에 정리 — **꼭 한번 읽어주세요.**
+  이 changelog의 최신 DB seed 항목에 통합 — **꼭 한번 읽어주세요.**
 - 주의: 원본 데이터 특이사항 다수 발견 — 행정학과 PA2700143은 AIS부터 과목명 공란,
   조선·해양공학과는 AIS 동명 코드 2개(342100이 진짜), 국악학과/음악학과 동명 전공 함정 등.
-  상세는 progress 문서의 "이상 데이터 기록" 절.
+  상세는 이 changelog의 최신 DB seed 항목.
 
 ## 2026-07-07 (d0won)
 

@@ -85,10 +85,10 @@
 전부 시드되어 있다 (`backend/seeds/school_hierarchy_mapping.csv`,
 `ais_courses_2026.csv`, `scripts/seed_school_hierarchy.py`,
 `scripts/import_courses_from_ais.py`). 이상 데이터 케이스와 컨벤션(학과 조회 시
-`major_id IS NULL` 필수 등)은 [db-seed-school-hierarchy-and-courses.md](../progress/db-seed-school-hierarchy-and-courses.md) 참고.
+`major_id IS NULL` 필수 등)은 [CHANGELOG.md](../CHANGELOG.md)의 최신 DB seed 항목 참고.
 
-**`graduation_requirements`(졸업요건 기준)만 예외로 비어있다** — 위 계층/과목 데이터와
-달리 공식 학사요람 출처가 확보되지 않아 의도적으로 안 채웠다.
+**라이브 flat `graduation_requirements`에는 2026 주전공 졸업학점 기준 125행이 채워져 있다** —
+다만 새 `requirement_sets` 스키마의 부전공/복수전공/교직 세부 요건 seed는 아직 완성 전이다.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 

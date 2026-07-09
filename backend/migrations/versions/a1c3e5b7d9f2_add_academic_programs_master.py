@@ -3,7 +3,7 @@
 졸업요건 기준 학사 프로그램 마스터(academic_programs, AIS 편제 코드 기준)와
 검색/매칭용 별칭 테이블을 추가하고, 회원가입/조회용 계층(departments/majors)과
 잇는 브리지 컬럼(academic_program_code)을 계층 쪽에 추가한다.
-설계 근거는 docs/progress/graduation-requirement-schema-redesign.md 참고.
+설계 근거는 docs/CHANGELOG.md의 졸업요건 스키마 재설계 항목 참고.
 
 Revision ID: a1c3e5b7d9f2
 Revises: e5f6a7b8c9d0
