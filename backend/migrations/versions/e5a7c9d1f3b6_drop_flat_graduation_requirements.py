@@ -36,6 +36,7 @@ def downgrade() -> None:
         sa.Column('program_type', sa.String(length=20), nullable=True),
         sa.Column('curriculum_year', sa.String(length=10), nullable=True),
         sa.Column('required_total_credits', sa.Integer(), nullable=True),
+        sa.Column('required_major_foundation', sa.Integer(), nullable=True),
         sa.Column('required_major_required', sa.Integer(), nullable=True),
         sa.Column('required_major_elective', sa.Integer(), nullable=True),
         sa.Column('required_general_required', sa.Integer(), nullable=True),

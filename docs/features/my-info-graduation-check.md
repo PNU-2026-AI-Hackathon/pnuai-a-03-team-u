@@ -120,6 +120,7 @@
 `major_id IS NULL` 필수 등)은 [CHANGELOG.md](../CHANGELOG.md)의 최신 DB seed 항목 참고.
 
 **라이브 flat `graduation_requirements`에는 2026 주전공 졸업학점 기준 125행이 채워져 있다** —
+전공기초는 `required_major_foundation` 컬럼에 별도로 보존한다.
 다만 새 `requirement_sets` 스키마의 부전공/복수전공/교직 세부 요건 seed는 아직 완성 전이다.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
