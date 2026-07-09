@@ -84,9 +84,14 @@
     과목명만으로는 거르지 않고, `len(row) < _GRADE_DATA_COLUMNS`(8열 미만)로만 실제 소계/요약
     행을 구분한다
 - **재수강 가능 판정**(`_is_retake_eligible`): 성적이 C+ 이하(C+, C0, D+, D0, F)면 `is_retake=True`
-- **수강편람 매칭**(`_link_course_catalog`): 성적표 원본엔 course_code가 없어 과목명으로만
-  `courses`와 매칭. 동일 과목명이 여러 강좌로 존재하면 오매칭 방지를 위해 `course_id`는 비우고
-  `match_status="ambiguous"`로만 표시 (matched/ambiguous/unmatched)
+- **수강편람 매칭은 하지 않는다**: `StudentCourseRecord.course_id`는 항상 `null`,
+  `match_status`는 모델 기본값(`"unmatched"`)으로 고정된다. 원래는 과목명으로
+  `courses`와 매칭을 시도했었는데(`_link_course_catalog`), 과거 이수 과목은
+  크롤링 시점 기준 예전 교육과정 소속이라 현재 카탈로그(2026 교육과정 기준)에
+  아예 이름이 없는 경우가 실제로 있었다(예: 개편/폐지된 "의생명융합입문"). 실제
+  계정으로 검증했을 때도 20과목 전부 `unmatched`로 나와서 매칭 자체가 의미
+  없다고 판단해 제거했다. 로드맵에 보여주는 `course_name`/`category`/`credits`는
+  애초에 이 매칭과 무관한 성적표 원본 스냅샷이라 영향 없다
 
 ## 학교/단과대/학과/전공 계층 (`app/domains/academics/hierarchy.py`)
 

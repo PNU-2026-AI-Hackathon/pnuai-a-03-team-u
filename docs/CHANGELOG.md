@@ -12,6 +12,14 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (d0won) - 5
+
+- 성적 크롤링 시 `courses` 카탈로그 매칭 시도 제거 (`app/ingestion/normalizers/pnu_normalizer.py`)
+  - 과거 이수 과목은 크롤링 시점 기준 예전 교육과정 소속이라, 현재 카탈로그(2026 교육과정 기준)에 이름이 아예 없는 경우가 실제로 있음(예: 개편/폐지된 "의생명융합입문")
+  - 실제 계정으로 검증해보니 20과목 전부 `unmatched`로 나와서 매칭 자체가 의미 없다고 판단
+  - `_link_course_catalog` 함수와 호출 제거. `StudentCourseRecord.course_id`는 항상 null, `match_status`는 모델 기본값(`unmatched`)으로 고정
+  - `course_name`/`category`/`credits`는 애초에 이 매칭과 무관한 성적표 원본 스냅샷이라 로드맵 표시엔 영향 없음
+
 ## 2026-07-08 (d0won) - 4
 
 - 성장 로드맵: `category`/`credits`를 다시 스냅샷 컬럼으로 복원 (`course_roadmap_items`)
