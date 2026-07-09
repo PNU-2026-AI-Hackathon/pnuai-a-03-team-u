@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.domains.planning.history import sync_completed_courses_to_roadmap
+from app.domains.planning.models import CourseRoadmap
 from app.domains.users.models import User
 from app.ingestion.crawlers.graduation import fetch_graduation_requirement
 from app.ingestion.crawlers.graduation_expected_info import extract_graduation_expected_info
@@ -87,6 +90,17 @@ def sync_portal_data(
     map_student_record(db, current_user.id, student_record)
     saved_records = map_grades(db, current_user.id, grades_tables)
     saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)
+
+    # 새로 크롤링된 이수내역을 사용자의 모든 로드맵에 반영한다. 이 시점(크롤링
+    # 직후)에만 하면 되므로, 로드맵을 열 때마다(GET /me/roadmaps/current) 매번
+    # 다시 확인할 필요가 없다 — 조회는 항상 가볍게 유지된다. 로드맵 개수가 많아도
+    # 항목 수 자체가 적어서(보통 수십 개) 크롤링 자체보다 훨씬 빠르다.
+    roadmap_ids = db.scalars(
+        select(CourseRoadmap.id).where(CourseRoadmap.user_id == current_user.id)
+    ).all()
+    for roadmap_id in roadmap_ids:
+        sync_completed_courses_to_roadmap(db, user_id=current_user.id, roadmap_id=roadmap_id)
+
     db.commit()
 
     return PortalSyncResponse(

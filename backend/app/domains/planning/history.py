@@ -60,6 +60,8 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
         )
         item.course_id = record.course_id
         item.course_name = record.raw_course_name
+        item.category = record.category
+        item.credits = float(record.credits) if record.credits is not None else None
         item.planned_grade = _compute_planned_grade(curriculum_year, record.year, record.semester)
         item.status = "completed"
         item.source = "manual"
