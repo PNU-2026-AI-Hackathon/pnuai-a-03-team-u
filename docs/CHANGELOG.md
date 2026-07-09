@@ -12,6 +12,13 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-08 (d0won) - 3
+
+- 로드맵 항목(`course_roadmap_items`) 스냅샷 필드 축소: `department_name`/`major_name`/`category`/`credits` 컬럼 제거, `course_id` 있을 때 응답 시점에 `courses`(+`departments`+`majors`) join으로 채우는 방식으로 변경
+  - 실제 계정 데이터로 확인해보니 동명 과목(예: "데이터베이스"가 5개 학과에 개설)이 흔해서, 이름만으로 매칭하면 `course_id`가 자주 비거나 모호(ambiguous)함 — 이 경우 스냅샷이었으면 애초에 못 채웠을 필드들이라 join 방식이 더 안전
+  - `course_name`만 예외로 스냅샷 유지 (course_id 없어도 항상 표시해야 하는 값)
+  - `app/domains/planning/history.py`도 같이 단순화
+
 ## 2026-07-08 (d0won) - 2
 
 - 성장 로드맵 작성/수정 API 추가 (`app/api/roadmaps.py`, `app/api/courses.py`)
