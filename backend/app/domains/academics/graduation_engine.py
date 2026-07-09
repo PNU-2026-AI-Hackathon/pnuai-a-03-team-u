@@ -99,6 +99,10 @@ class ProgramEvaluation:
     curriculum_year_used: str | None
     requirement_set_id: int | None
     status: str  # "evaluated" | "no_requirement_set" | "no_reviewed_categories"
+    required_total_credits: Decimal | None = None
+    earned_total_credits: Decimal = Decimal("0")
+    remaining_total_credits: Decimal | None = None
+    satisfied: bool | None = None
     categories: list[CategoryResult] = field(default_factory=list)
     required_courses: RequiredCourseResult | None = None
     warnings: list[str] = field(default_factory=list)
@@ -127,6 +131,30 @@ def _resolve_program_display_name(db: Session, program: UserAcademicProgram) -> 
     return None
 
 
+def _resolve_program_code(db: Session, program: UserAcademicProgram) -> tuple[str | None, list[str]]:
+    """요건세트 조회용 academic_program_code.
+
+    portal-sync/signup이 아직 code를 못 채운 과거 데이터도 평가할 수 있도록
+    major/department 브리지 컬럼에서 한 번 더 보강한다.
+    """
+    if program.academic_program_code:
+        return program.academic_program_code, []
+
+    if program.major_id:
+        code = db.scalar(select(Major.academic_program_code).where(Major.id == program.major_id))
+        if code:
+            return code, ["user_academic_programs.academic_program_code가 비어 있어 major 브리지 코드로 판정함"]
+
+    if program.department_id:
+        code = db.scalar(
+            select(Department.academic_program_code).where(Department.id == program.department_id)
+        )
+        if code:
+            return code, ["user_academic_programs.academic_program_code가 비어 있어 department 브리지 코드로 판정함"]
+
+    return None, ["academic_program_code가 없어 요건 세트를 찾을 수 없음"]
+
+
 def _find_requirement_set(
     db: Session,
     academic_program_code: str | None,
@@ -135,7 +163,7 @@ def _find_requirement_set(
 ) -> tuple[RequirementSet | None, list[str]]:
     warnings: list[str] = []
     if not academic_program_code:
-        return None, ["academic_program_code가 없어 요건 세트를 찾을 수 없음"]
+        return None, []
 
     base_stmt = select(RequirementSet).where(
         RequirementSet.academic_program_code == academic_program_code,
@@ -160,6 +188,19 @@ def _find_requirement_set(
         return fallback, warnings
 
     return None, warnings
+
+
+def _sum_credits(course_records: list[StudentCourseRecord]) -> Decimal:
+    return sum(
+        (Decimal(str(rec.credits)) for rec in course_records if rec.credits is not None),
+        Decimal("0"),
+    )
+
+
+def _remaining(required: Decimal | None, earned: Decimal) -> Decimal | None:
+    if required is None:
+        return None
+    return max(required - earned, Decimal("0"))
 
 
 def _evaluate_categories(
@@ -309,18 +350,29 @@ def _evaluate_required_courses(
 def evaluate_program(
     db: Session, program: UserAcademicProgram, course_records: list[StudentCourseRecord]
 ) -> ProgramEvaluation:
+    academic_program_code, code_warnings = _resolve_program_code(db, program)
     requirement_set, warnings = _find_requirement_set(
-        db, program.academic_program_code, program.program_type, program.curriculum_year
+        db, academic_program_code, program.program_type, program.curriculum_year
     )
+    warnings = code_warnings + warnings
     display_name = _resolve_program_display_name(db, program)
+    earned_total = _sum_credits(course_records)
+    required_total = (
+        Decimal(str(requirement_set.required_total_credits))
+        if requirement_set and requirement_set.required_total_credits is not None
+        else None
+    )
 
     evaluation = ProgramEvaluation(
         user_academic_program_id=program.id,
         program_type=program.program_type,
         major=display_name,
-        academic_program_code=program.academic_program_code,
+        academic_program_code=academic_program_code,
         curriculum_year_used=requirement_set.curriculum_year if requirement_set else None,
         requirement_set_id=requirement_set.id if requirement_set else None,
+        required_total_credits=required_total,
+        earned_total_credits=earned_total,
+        remaining_total_credits=_remaining(required_total, earned_total),
         status="no_requirement_set" if requirement_set is None else "evaluated",
         warnings=warnings,
     )
@@ -337,22 +389,44 @@ def evaluate_program(
 
     if not categories:
         evaluation.status = "no_reviewed_categories"
+        evaluation.satisfied = None
         evaluation.warnings.append("검토 완료(needs_review=false)된 학점 기준 카테고리가 없어 판정 불가")
         return evaluation
 
     evaluation.categories = categories
     evaluation.required_courses = _evaluate_required_courses(db, requirement_set.id, course_records)
+    has_failed_category = any(cat.satisfied is False for cat in categories)
+    has_unknown_category = any(cat.satisfied is None for cat in categories)
+    has_missing_required = bool(evaluation.required_courses.missing_course_names)
+    has_total_shortage = (
+        evaluation.remaining_total_credits is not None and evaluation.remaining_total_credits > 0
+    )
+
+    if has_failed_category or has_missing_required or has_total_shortage:
+        evaluation.satisfied = False
+    elif has_unknown_category:
+        evaluation.satisfied = None
+    else:
+        evaluation.satisfied = True
     return evaluation
 
 
-def evaluate_graduation(db: Session, user_id: int) -> list[ProgramEvaluation]:
-    """활성 상태인 사용자의 모든 학적 프로그램(주전공/복수전공/부전공/연계전공)을 평가한다."""
+def evaluate_graduation(
+    db: Session, user_id: int, program_types: set[str] | None = None
+) -> list[ProgramEvaluation]:
+    """활성 상태인 사용자의 학적 프로그램을 평가한다.
+
+    program_types를 넘기면 해당 이수유형만 평가한다. 현재 서비스 API는
+    부전공/복수전공/교직 seed가 완성될 때까지 primary만 기본 평가한다.
+    """
     programs = db.scalars(
         select(UserAcademicProgram).where(
             UserAcademicProgram.user_id == user_id,
             UserAcademicProgram.status == "active",
         )
     ).all()
+    if program_types is not None:
+        programs = [program for program in programs if program.program_type in program_types]
     course_records = db.scalars(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
     ).all()

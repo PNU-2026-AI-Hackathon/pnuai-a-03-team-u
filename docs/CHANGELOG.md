@@ -63,6 +63,15 @@
     로컬 산출물이 필요하면 새 임의 폴더를 만들지 말고 기존 raw_data 위치만 사용한다.
   - 남아 있던 보조 worktree `.worktrees/machine-eng-subtracks`도 제거해 `git worktree list`
     기준 현재 작업폴더 하나만 남겼다.
+- **주전공 졸업요건 계산 API 추가**
+  - `GET /me/graduation`으로 현재 사용자 주전공(primary)의 졸업요건 충족 여부를 계산한다.
+  - 엔진은 `RequirementSet`/`RequirementCategory`/`RequirementCourse`와
+    `StudentCourseRecord`를 대조해 총 이수학점, 남은 총학점, 카테고리별 이수/남은 학점,
+    필수과목 충족 여부, 경고를 반환한다.
+  - `user_academic_programs.academic_program_code`가 비어 있는 과거 데이터도
+    `departments`/`majors`의 브리지 코드로 보강해 요건세트를 찾는다.
+  - 부전공/복수전공/교직은 seed 우선순위에서 밀어둔 상태라 기본 계산에서 제외한다.
+    필요 시 `include_non_primary=true`로 실험적으로 함께 조회할 수 있다.
 
 ## 2026-07-09 (blackest21) - 2
 
