@@ -14,15 +14,21 @@ course_roadmaps
 - summary          # 로드맵 전체에 대한 AI/사용자의 요약 설명
 
 course_roadmap_items
-- id, roadmap_id, course_id (null 가능 — 자리표시 항목 대응)
+- id, roadmap_id, course_id (null 가능 — course_id가 없거나 모호(동명 과목이
+  여러 학과에 걸쳐 있는 경우가 실제로 흔함)한 경우가 있어서)
 - planned_grade, planned_year, planned_semester
-- course_name, department_name, major_name, category, credits
-  # course_id join 없이 바로 표시 가능하게 스냅샷으로 저장.
-  # major_name은 "OO과"처럼 세부 전공이 없으면 null.
+- course_name      # course_id 없이도 항상 표시해야 해서 유일하게 스냅샷으로 저장
 - status (planned/completed/dropped)
 - is_confirmed     # source="ai" 제안을 사용자가 실제로 받아들였는지
 - reason, source (manual/ai)
 ```
+
+`department_name`/`major_name`/`category`/`credits`는 컬럼으로 저장하지 않는다.
+API 응답을 만들 때 `course_id`가 있으면 그때그때 `courses`(+`departments`+`majors`)를
+join해서 채운다 — 처음엔 스냅샷 컬럼으로 뒀었는데, 실제 데이터로 확인해보니
+동명 과목(예: "데이터베이스"가 5개 학과에 개설)이 흔해서 `course_id`가 비거나
+모호(ambiguous)한 경우가 스냅샷의 이점보다 더 자주 발생했다. `course_name`만은
+`course_id`가 없어도 항상 보여줘야 하는 값이라 예외로 남겼다.
 
 `course_plans`/`course_plan_items`(시간표 추천, F-03)와는 별개다 — 로드맵은
 `course_id`만 들고 있는 "큰 그림"이고, 플랜은 `offering_id`(실제 분반)까지
@@ -63,7 +69,7 @@ course_roadmap_items
 | `GET /me/roadmaps/{id}` | 단건 조회(항목 포함) |
 | `PATCH /me/roadmaps/{id}` | 제목/상태/요약 수정 |
 | `DELETE /me/roadmaps/{id}` | 삭제 |
-| `POST /me/roadmaps/{id}/items` | 항목 추가. `course_id` 필수 — 서버가 courses/departments/majors를 조회해 스냅샷을 채움, 존재하지 않는 course_id면 404 |
+| `POST /me/roadmaps/{id}/items` | 항목 추가. `course_id` 필수 — 서버가 courses에서 조회해 course_name을 채움, 존재하지 않는 course_id면 404 |
 | `PATCH /me/roadmaps/{id}/items/{item_id}` | 항목 수정(과목 교체 포함) |
 | `DELETE /me/roadmaps/{id}/items/{item_id}` | 항목 삭제 |
 
