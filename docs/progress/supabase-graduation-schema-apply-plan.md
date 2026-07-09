@@ -50,9 +50,20 @@ Alembic 리비전 5개를 `alembic upgrade head` **1회 실행**으로 반영한
 ## 반영 절차 (팀 승인 후)
 
 1. PR 리뷰/머지 (`feat/graduation-requirement-schema`)
-2. 로컬 Postgres에서 최종 리허설: 빈 DB `alembic upgrade head` + 골든테스트
-3. Supabase에 1회 실행: `cd backend && alembic upgrade head` (.env의 실제 DATABASE_URL)
+2. 로컬 Postgres에서 최종 리허설: 빈 DB `alembic upgrade head` → 시드 2개 → 골든테스트
+3. Supabase에 순서대로 1회 실행 (.env의 실제 DATABASE_URL):
+   ```
+   cd backend
+   alembic upgrade head
+   python -m scripts.seed_academic_programs        # 프로그램 마스터 151 + 별칭 335 + 계층 브리지 143
+   python -m scripts.seed_graduation_requirements  # primary 요건세트 148 + 카테고리 73 + 과목 11,321
+   ```
 4. 확인: `alembic current` = `e5a7c9d1f3b6`, 신규 테이블 7개 존재, 기존 행 수 변화 없음
+   (departments/majors는 행 수 그대로, academic_program_code 컬럼만 채워짐)
+
+두 시드 모두 멱등(재실행 시 행 수 불변, 로컬 확인 완료). 요건 시드는 기본이
+primary만이며(부전공/복수전공은 나중에 `--program-types primary,minor,dual`로 확장),
+교직(teacher_training) 행은 카테고리 어휘 재정리 전까지 적재하지 않는다.
 
 문제 시 롤백: `alembic downgrade e5f6a7b8c9d0` (신규 5개 전부 downgrade 지원,
 이 시점엔 빈 테이블이라 무손실).

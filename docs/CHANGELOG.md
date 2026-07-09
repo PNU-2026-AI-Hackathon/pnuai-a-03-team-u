@@ -12,6 +12,23 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-09 (blackest21) - 2
+
+- **primary(주전공) 졸업요건 시드 준비 완료** (같은 브랜치, 로컬 검증까지 — Supabase 반영은 승인 대기)
+  - `scripts/seed_academic_programs.py`: 프로그램 마스터 151 + 별칭 335 upsert + **계층 브리지 backfill**
+    (departments 107/majors 36, school_hierarchy_mapping.csv 기반). 코드 하나가 계층 여러 행에
+    걸치는 케이스 처리: 기계공학부(학부공통+세부전공 5행)는 학과 레벨 우선, 조선·해양공학과
+    (`U...075;U...133` 세미콜론 이중코드)는 일반과정 코드 우선
+  - `scripts/seed_graduation_requirements.py`: raw_data 후보 CSV + corrections(17,555건 검토 반영)
+    → **primary 요건세트 148 / 카테고리 73 / 과목 11,321** 적재. `--program-types` 기본 primary —
+    부전공/복수전공은 나중에 같은 스크립트로 확장, 교직 행은 어휘 재정리 전까지 제외.
+    prune는 이번 실행 범위 세트로 한정(나중에 적재된 타 유형 행 보호)
+  - 시드 CSV 4개(backend/seeds/)를 codex 브랜치에서 이관 (corrections 9.2MB 포함)
+  - 로컬 검증: 두 시드 멱등(재실행 행 수 불변) / department_id 미해석은 의도된 제외 7건뿐
+    (교양학부 5계열·기타모집단위·GSP) / 시드 실데이터로 엔진 스모크(핀테크융합전공 —
+    학점 미달 False, 교양 영역 판정불가 None, 필수과목 10건 미이수 체크) / 골든테스트 통과
+  - 반영 순서는 `docs/progress/supabase-graduation-schema-apply-plan.md` 갱신분 참고
+
 ## 2026-07-09 (blackest21)
 
 - **졸업요건 스키마 재설계: 부전공/복수전공/교직 표현 + codex 브랜치 main 통합**
