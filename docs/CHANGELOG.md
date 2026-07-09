@@ -12,6 +12,28 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-09 (blackest21)
+
+- **졸업요건 스키마 재설계: 부전공/복수전공/교직 표현 + codex 브랜치 main 통합**
+  (브랜치 `feat/graduation-requirement-schema`, 스키마+마이그레이션까지 — 엔진 확장/시드는 다음 세션)
+  - codex/graduation-academic-programs 브랜치(+stash 세션#15 정리분, 워크트리 `../planU-codex`에
+    커밋 `6465c12`로 보존)의 판정 엔진·requirement_* 스키마·골든테스트를 main 계층 위로 포팅
+  - 핵심 설계: ① 부전공/복수전공 = requirement_sets의 program_type 행(별도 테이블 아님),
+    ② 교직 = primary 세트의 teacher_training_basic(△)/teacher_training_pedagogy(□, 8학점)
+    카테고리(별도 program_type 아님), ③ 대학 공통 기본규칙 = scope='university_default' 행,
+    ④ 부전공/복수전공 불가 학과 = offering_status='not_offered' 행,
+    ⑤ 택N/M = requirement_condition_groups(+_courses) 2테이블 신규,
+    ⑥ 계층↔요건 브리지 = departments/majors/user_academic_programs.academic_program_code,
+    ⑦ flat graduation_requirements DROP
+  - **`f1a2b3c4d5e6`(reset) 동결 수리**: 라이브 모델 import+create_all 구조를 도입 당시 DDL
+    하드코딩으로 교체 — 빈 DB에서 `alembic upgrade head` 전체 체인 재생이 처음으로 성공
+    (신규 팀원 로컬 셋업/CI 셋업 가능해짐. 기존 Supabase에는 무영향)
+  - 신규 리비전 5개(`a1c3e5b7d9f2`→`e5a7c9d1f3b6`), 전부 plain DDL + downgrade 포함
+  - 검증(로컬 Postgres, Supabase 미접촉): 빈 DB 전체 체인 upgrade ✓ / downgrade 왕복 ✓ /
+    `alembic check` drift 0 ✓ / 골든테스트 TC01~TC10 전부 통과 ✓
+  - 문서: `docs/progress/graduation-requirement-schema-redesign.md`(설계 근거·다음 세션 TODO),
+    `docs/features/db-schema-reference.md`(스키마 레퍼런스 갱신)
+
 ## 2026-07-08 (d0won) - 3
 
 - 로드맵 항목(`course_roadmap_items`) 스냅샷 필드 축소: `department_name`/`major_name`/`category`/`credits` 컬럼 제거, `course_id` 있을 때 응답 시점에 `courses`(+`departments`+`majors`) join으로 채우는 방식으로 변경
@@ -29,7 +51,6 @@
   - `course_roadmap_items`에 `course_name`/`department_name`/`major_name`/`category`/`credits`(스냅샷), `status`, `is_confirmed` 필드, `course_roadmaps`에 `summary` 필드 추가
   - `course_plans`/`course_plan_items`(시간표 추천)는 나중에 별도 구현 예정이라 이번엔 건드리지 않음
   - TestClient로 전체 흐름(자동완성 → 로드맵 자동생성+이수내역 반영 → 항목 추가/수정 → 권한 체크 → 오타 방지) 검증 완료
-
 ## 2026-07-08 (d0won)
 
 - 비교과 활동/자격증/어학성적 CRUD API 추가 (`app/api/profile.py`)
