@@ -9,7 +9,7 @@
 | 메서드/경로 | 설명 |
 | --- | --- |
 | `POST /me/portal-sync` | body로 학번/포털 비밀번호를 받아 서버가 One-Stop에 직접 로그인, 학적부/성적/졸업예정정보를 크롤링해 DB에 저장. 로그인 실패 시 401 |
-| `GET /me/graduation` | (팀원 구현, `feat/graduation-requirement-schema`) 저장된 성적/학적 프로그램과 요건세트를 대조해 주전공 졸업요건 충족 여부를 계산. 기본은 primary만 평가. "내 정보" 페이지는 아래 "졸업요건" 절에서 설명하는 크롤링 방식을 우선 쓰기로 함 — 자세한 이유는 해당 절 참고 |
+| `GET /me/graduation` | (팀원 구현, `feat/graduation-requirement-schema`) 저장된 성적/학적 프로그램과 요건세트를 대조해 주전공 졸업요건 충족 여부를 계산. 기본은 primary만 평가. "내 정보" 페이지의 최종 데이터 출처는 아직 미정 — 아래 "졸업요건" 절 참고 |
 | `PATCH /me/advisor-consulted` | 지도교수 상담 여부를 사용자가 직접 체크/해제 (크롤링 대상 아님, 단순 토글) |
 
 인증은 `get_current_user`(`app/api/auth.py`) 재사용. 크롤링은 Playwright 동기 API로
@@ -115,43 +115,39 @@
 `scripts/import_courses_from_ais.py`). 이상 데이터 케이스와 컨벤션(학과 조회 시
 `major_id IS NULL` 필수 등)은 [CHANGELOG.md](../CHANGELOG.md)의 최신 DB seed 항목 참고.
 
-## 졸업요건: 학과 마스터 매칭 대신 크롤링된 결과를 그대로 저장
+## 졸업요건: "교과목구분별 이수구분" 크롤링 저장 방향 철회
 
-`graduation_requirements`(flat, 라이브에 2026 주전공 기준 125행 — 전공기초는
-`required_major_foundation` 컬럼에 별도 보존)와 팀원이 새로 만든
-`requirement_sets`/`requirement_categories`/`requirement_courses`(과목 단위 상세 규칙,
-`docs/features/db-schema-reference.md` 참고) 둘 다 **"내 정보" 졸업요건 확인 페이지
-용도로는 쓰지 않기로 했다.** 이유:
+한때 One-Stop **졸업예정정보 페이지의 "교과목구분별 이수구분" 표**(`graduation_expected_info.py`의
+테이블 1, `subject_category_completion`)를 그대로 크롤링해서 저장하는 방향을 검토했다 —
+학교가 이미 "학적신청구분(주전공/복수전공/부전공) × 사정구분(전공기초/전공필수/...) 별
+기준학점 vs 취득학점 vs 이수여부"까지 계산해서 주니 우리가 매칭/판정 로직을 짤 필요가
+없다고 판단했었다.
 
-- 학과 코드/카테고리 체계가 우리 쪽 크롤링 데이터(`student_course_records.category`:
-  전공기초/전공필수/전공선택/일반선택/교양필수/교양선택/교직과목)와 정확히 안 맞을 수 있음
-- "심화전공", "최소전공인정학점", "졸업기준평점평균" 같은 항목은 우리 크롤링 데이터만으로
-  계산이 불가능함(별도 판정 로직 필요)
-- 새 판정 엔진(`graduation_engine.py`)이 스스로 문서화한 대로 아직 미완성 상태
-  (university_default 폴백, 교직 학점 매핑, 조건그룹(택N/M) 판정 등 미구현)
+**하지만 실제 계정으로 검증한 결과 이 표의 "기준학점" 값이 실제 학과가 요구하는 기준학점과
+다른 경우가 확인되어 이 방향을 철회한다.** 이 표를 그대로 신뢰해서 저장하면 오히려 잘못된
+졸업요건 충족 여부를 사용자에게 보여줄 위험이 있다 — 크롤링 난이도가 낮다는 이유만으로
+검증 안 된 학교 페이지 계산 결과를 그대로 노출하지 않는다.
 
-대신 One-Stop **졸업예정정보 페이지의 "교과목구분별 이수구분" 표**(`graduation_expected_info.py`의
-테이블 1, `subject_category_completion`)를 그대로 크롤링해서 저장한다. 이 표는 학교가
-이미 "학적신청구분(주전공/복수전공/부전공) × 사정구분(전공기초/전공필수/...) 별 기준학점 vs
-취득학점 vs 이수여부"까지 다 계산해서 주기 때문에, 우리가 매칭/판정 로직을 짤 필요가 없다.
+- 새 테이블(`graduation_category_progress` 등) 설계는 진행하지 않는다(코드 구현 자체가
+  없었으므로 되돌릴 코드는 없음)
+- `graduation_requirements`(flat, 라이브 125행)와 팀원의 `requirement_sets`/
+  `requirement_categories`/`requirement_courses`(`docs/features/db-schema-reference.md`
+  참고) 둘 다 삭제하지 않고 유지한다 — 어느 쪽이든 "내 정보" 졸업요건 확인 페이지의
+  기준학점 출처로 다시 검토해야 한다
+- 팀원이 별도로 검토 중인 `graduation_audits`/`student_graduation_category_statuses`/
+  `student_general_education_area_statuses` 제안(One-Stop table 1/3/6 크롤링 저장 기반)도
+  **같은 "기준학점 신뢰 불가" 문제를 그대로 가지고 있을 가능성이 있다** — 실제 구현 전
+  기준학점 값이 학과 공식 요건과 일치하는지 반드시 재검증할 것
 
-**`graduation_requirements`는 삭제하지 않는다** — 팀원 마이그레이션 체인
-(`a1c3e5b7d9f2` ~ `e5a7c9d1f3b6`, `requirement_sets`로 교체하며 flat 테이블 DROP 포함)은
-지금 라이브 DB에 적용하지 않고 보류한다. 새 판정 엔진은 나중에 로드맵 AI가
-"이 과목 들으면 미달분을 채울 수 있어요" 같은 **과목 단위 추천**을 할 때 필요해질 수 있어
-스키마 자체는 유지한다.
+졸업요건 확인 페이지의 최종 설계는 아직 미정 상태로 되돌아간다. 다음 후보를 재검토해야 한다:
 
-크롤링된 "교과목구분별 이수구분" 표는 원문에 이미 `학적신청구분`(주전공/복수전공/부전공)
-컬럼이 있다 — 학생이 다중전공 중이거나(재학생) 앞으로 신청할 수 있어서(저학년), 새 테이블도
-이 값을 그대로 컬럼(`program_type`)에 보존해 **주전공/복수전공/부전공 각각의 진행 현황을
-동시에** 저장한다(테이블 하나로 여러 program_type 행 공존, 주전공 카드/복수전공 카드로
-프론트에서 나눠 보여줄 수 있게).
+1. 팀원의 `requirement_sets`/`requirement_categories`/`requirement_courses` + `graduation_engine.py`를
+   완성해서 쓰는 방향(엔진 미구현 항목 보완 필요)
+2. `graduation_requirements`(flat)를 계속 보강해서 쓰는 방향(이미 `required_major_foundation`
+   컬럼 추가 등 진행 중)
+3. 크롤링 결과를 쓰더라도 "기준학점"만은 학과 마스터 데이터로 검증/override하는 하이브리드 방식
 
-**참고**: 팀원도 별도로 이 방향(One-Stop 졸업예정정보 table 1/3/6을 그대로 저장하는 방식)을
-검토했고, `graduation_audits`/`student_graduation_category_statuses`/
-`student_general_education_area_statuses` 3개 테이블 신설을 제안하는 PR을 작성했다
-(Supabase 마이그레이션은 아직 적용 안 함). 실제 구현 시 이름/구조를 맞춰서 중복 작업을
-피할 것 — `docs/CHANGELOG.md`의 관련 항목 참고.
+`docs/CHANGELOG.md`의 관련 항목 참고.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 
