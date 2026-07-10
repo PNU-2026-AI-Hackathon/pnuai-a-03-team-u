@@ -12,6 +12,27 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-10 (d0won) - 3
+
+- **팀원의 졸업요건 스키마(PR #59, `feat/graduation-requirement-schema`) 전체 철회** —
+  팀원과 상의 후 결정. 삭제 대상: `academic_programs`/`academic_program_aliases`/
+  `requirement_sets`/`requirement_categories`/`requirement_courses`/
+  `requirement_condition_groups`/`requirement_condition_group_courses` 모델 클래스,
+  `app/domains/academics/graduation_engine.py`, `app/api/graduation.py`
+  (`GET /me/graduation`), 관련 마이그레이션 5개(`a1c3e5b7d9f2`~`e5a7c9d1f3b6`), seed
+  스크립트 3개(`seed_academic_programs.py`/`seed_graduation_requirements.py`/
+  `seed_regulation_credit_requirements.py`), seed CSV 6개, `docs/features/db-schema-reference.md`.
+- 삭제한 5개 마이그레이션은 애초에 라이브 Supabase에 한 번도 적용되지 않은 상태였다
+  (alembic head가 그 이전 리비전 `f6a7b8c9d0e1`에 머물러 있었음 — `departments.id`
+  91개, `graduation_requirements` 125행 등 실제 라이브 데이터와 대조해 확인). 그래서
+  파일만 지우면 로컬 마이그레이션 head가 라이브 DB 실제 상태와 다시 정확히 일치하고
+  (`alembic check` "No new upgrade operations detected." 확인), 별도 downgrade 마이그레이션
+  없이도 안전했다.
+  `GraduationRequirement`(flat, `graduation_requirements`) 모델 클래스는 되살려서
+  `app/domains/academics/models.py`에 유지 — 이게 지금 유일하게 남은 졸업요건 테이블이다.
+- 문서: `docs/features/my-info-graduation-check.md`의 "졸업요건" 절 전면 갱신.
+  졸업요건 확인 페이지(학생 이수내역 대조 API)는 아직 구현 전 — 다시 만들어야 함.
+
 ## 2026-07-10 (d0won)
 
 - **"교과목구분별 이수구분" 크롤링 저장 방향 철회**: 2026-07-09에 결정했던, One-Stop

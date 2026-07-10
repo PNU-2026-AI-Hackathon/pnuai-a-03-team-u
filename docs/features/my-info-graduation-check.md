@@ -9,8 +9,9 @@
 | 메서드/경로 | 설명 |
 | --- | --- |
 | `POST /me/portal-sync` | body로 학번/포털 비밀번호를 받아 서버가 One-Stop에 직접 로그인, 학적부/성적/졸업예정정보를 크롤링해 DB에 저장. 로그인 실패 시 401 |
-| `GET /me/graduation` | (팀원 구현, `feat/graduation-requirement-schema`) 저장된 성적/학적 프로그램과 요건세트를 대조해 주전공 졸업요건 충족 여부를 계산. 기본은 primary만 평가. "내 정보" 페이지의 최종 데이터 출처는 아직 미정 — 아래 "졸업요건" 절 참고 |
 | `PATCH /me/advisor-consulted` | 지도교수 상담 여부를 사용자가 직접 체크/해제 (크롤링 대상 아님, 단순 토글) |
+
+졸업요건 충족 여부를 계산하는 API는 현재 없다 — 아래 "졸업요건" 절 참고.
 
 인증은 `get_current_user`(`app/api/auth.py`) 재사용. 크롤링은 Playwright 동기 API로
 몇 초 걸리므로 엔드포인트를 `def`(동기)로 선언해 FastAPI가 스레드풀에서 처리하게 한다.
@@ -98,7 +99,8 @@
 
 `schools → colleges → departments → majors` 4단 FK 계층. `courses`, `graduation_requirements`,
 `users`, `user_academic_programs`가 전부 이 계층을 `department_id`/`major_id`로 참조한다
-(자유 텍스트 컬럼 없음).
+(자유 텍스트 컬럼 없음). 졸업요건 전용 코드 체계(`academic_programs` 마스터 + 브리지 컬럼)는
+없다 — 아래 "졸업요건" 절 참고.
 
 미리 시드하지 않는다 — `resolve_hierarchy()`가 크롤링/회원가입에서 이름이 들어올 때마다
 없으면 만들고 있으면 재사용한다(get-or-create). `_split_college_department_major()`가
@@ -115,39 +117,33 @@
 `scripts/import_courses_from_ais.py`). 이상 데이터 케이스와 컨벤션(학과 조회 시
 `major_id IS NULL` 필수 등)은 [CHANGELOG.md](../CHANGELOG.md)의 최신 DB seed 항목 참고.
 
-## 졸업요건: "교과목구분별 이수구분" 크롤링 저장 방향 철회
+## 졸업요건: flat `graduation_requirements`만 남기고 나머지 방향은 전부 철회
 
-한때 One-Stop **졸업예정정보 페이지의 "교과목구분별 이수구분" 표**(`graduation_expected_info.py`의
-테이블 1, `subject_category_completion`)를 그대로 크롤링해서 저장하는 방향을 검토했다 —
-학교가 이미 "학적신청구분(주전공/복수전공/부전공) × 사정구분(전공기초/전공필수/...) 별
-기준학점 vs 취득학점 vs 이수여부"까지 계산해서 주니 우리가 매칭/판정 로직을 짤 필요가
-없다고 판단했었다.
+지금까지 졸업요건 확인 페이지를 위해 검토했던 방향들:
 
-**하지만 실제 계정으로 검증한 결과 이 표의 "기준학점" 값이 실제 학과가 요구하는 기준학점과
-다른 경우가 확인되어 이 방향을 철회한다.** 이 표를 그대로 신뢰해서 저장하면 오히려 잘못된
-졸업요건 충족 여부를 사용자에게 보여줄 위험이 있다 — 크롤링 난이도가 낮다는 이유만으로
-검증 안 된 학교 페이지 계산 결과를 그대로 노출하지 않는다.
+1. One-Stop 졸업예정정보 페이지의 "교과목구분별 이수구분" 표를 그대로 크롤링해서 저장 —
+   실제 계정으로 검증한 결과 이 표의 "기준학점" 값이 실제 학과가 요구하는 기준학점과
+   다른 경우가 확인되어 철회
+2. 팀원이 별도 브랜치(`feat/graduation-requirement-schema`, PR #59)에서 만든
+   `academic_programs`/`academic_program_aliases`(학사 프로그램 코드 마스터) +
+   `requirement_sets`/`requirement_categories`/`requirement_courses`/
+   `requirement_condition_groups`/`requirement_condition_group_courses`(과목 단위
+   상세 규칙) + `graduation_engine.py`(판정 엔진) + `GET /me/graduation` — 팀원과
+   상의 후 **전체 철회**하기로 결정. 관련 모델 클래스, 마이그레이션 5개
+   (`a1c3e5b7d9f2`~`e5a7c9d1f3b6`), 엔진/API 코드, seed 스크립트 3개, seed CSV 6개를
+   전부 삭제했다. 이 마이그레이션들은 애초에 라이브 Supabase에 한 번도 적용된 적이
+   없어서(alembic head가 이 5개 리비전 이전인 `f6a7b8c9d0e1`에 머물러 있었음) 되돌릴
+   실제 데이터가 없었고, 그래서 파일을 삭제하는 것만으로 로컬 마이그레이션 head가
+   라이브 DB의 실제 상태와 다시 정확히 일치하게 됐다(`alembic check` 통과 확인).
 
-- 새 테이블(`graduation_category_progress` 등) 설계는 진행하지 않는다(코드 구현 자체가
-  없었으므로 되돌릴 코드는 없음)
-- `graduation_requirements`(flat, 라이브 125행)와 팀원의 `requirement_sets`/
-  `requirement_categories`/`requirement_courses`(`docs/features/db-schema-reference.md`
-  참고) 둘 다 삭제하지 않고 유지한다 — 어느 쪽이든 "내 정보" 졸업요건 확인 페이지의
-  기준학점 출처로 다시 검토해야 한다
-- 팀원이 별도로 검토 중인 `graduation_audits`/`student_graduation_category_statuses`/
-  `student_general_education_area_statuses` 제안(One-Stop table 1/3/6 크롤링 저장 기반)도
-  **같은 "기준학점 신뢰 불가" 문제를 그대로 가지고 있을 가능성이 있다** — 실제 구현 전
-  기준학점 값이 학과 공식 요건과 일치하는지 반드시 재검증할 것
+**남는 건 flat `graduation_requirements` 하나뿐이다** — `department_id`/`major_id`/
+`program_type`/`curriculum_year`별 이수구분 기준학점(전공기초/전공필수/전공선택/
+교양필수/교양선택/일반선택/총계) 테이블. 라이브에 2026 주전공 기준 125행 존재.
+`app/domains/academics/models.py`의 `GraduationRequirement` 모델로 복구해뒀다.
 
-졸업요건 확인 페이지의 최종 설계는 아직 미정 상태로 되돌아간다. 다음 후보를 재검토해야 한다:
-
-1. 팀원의 `requirement_sets`/`requirement_categories`/`requirement_courses` + `graduation_engine.py`를
-   완성해서 쓰는 방향(엔진 미구현 항목 보완 필요)
-2. `graduation_requirements`(flat)를 계속 보강해서 쓰는 방향(이미 `required_major_foundation`
-   컬럼 추가 등 진행 중)
-3. 크롤링 결과를 쓰더라도 "기준학점"만은 학과 마스터 데이터로 검증/override하는 하이브리드 방식
-
-`docs/CHANGELOG.md`의 관련 항목 참고.
+졸업요건 확인 페이지(학생 이수내역과 대조해서 졸업까지 남은 학점 보여주기)는
+**아직 구현 전** — `graduation_requirements`와 `student_course_records`를 대조하는
+API/로직을 다시 만들어야 한다. `docs/CHANGELOG.md`의 관련 항목 참고.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 

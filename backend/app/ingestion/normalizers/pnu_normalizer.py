@@ -2,7 +2,7 @@
 도메인 모델(users/academics)에 매핑/저장한다.
 
 DB 매핑만 담당하며, 졸업요건 충족 여부의 최종 판정은 domains/academics의
-RequirementSet 기준과 StudentCourseRecord를 그때그때 대조해서
+GraduationRequirement 기준과 StudentCourseRecord를 그때그때 대조해서
 계산한다(별도 스냅샷 테이블을 두지 않는다).
 """
 
