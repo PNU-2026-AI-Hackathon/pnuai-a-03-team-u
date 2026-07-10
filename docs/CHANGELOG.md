@@ -12,6 +12,23 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-10 (d0won) - 2
+
+- **`GET /me/graduation-progress` 추가**: flat `graduation_requirements`(학과별 기준학점)와
+  학생 이수내역(`student_course_records`)을 이수구분별 합계로 대조해 졸업까지 남은 학점을
+  계산하는 API. 팀원의 `requirement_sets` 기반 `GET /me/graduation`과는 독립 엔드포인트로
+  공존한다.
+- `graduation_requirements`가 팀원 마이그레이션 `e5a7c9d1f3b6`에서 DROP되도록 되어 있었는데
+  실제 라이브 DB에는 미적용 상태(head `f6a7b8c9d0e1`, 125행 보존)임을 확인. drop 후
+  재생성하면 그 사이 데이터가 삭제되는 문제가 있어, 아직 적용 안 된 `e5a7c9d1f3b6`를
+  직접 no-op으로 수정(리비전 체인은 유지, upgrade/downgrade를 pass로 변경). 새 마이그레이션을
+  추가하는 대신 미적용 마이그레이션 파일을 고친 예외 케이스 — 어디에도 적용된 적이 없어
+  안전하다고 판단함. `GraduationRequirement` 모델 클래스도 `app/domains/academics/models.py`에
+  복구했다. Supabase에는 아직 적용 안 함 — `alembic upgrade head` 직접 실행 필요.
+- 신규 파일: `app/domains/academics/graduation_progress.py`(매칭 로직),
+  `app/api/graduation_progress.py`(엔드포인트). 문서: `docs/features/my-info-graduation-check.md`
+  "졸업요건" 절의 2026-07-10 하위 항목 참고.
+
 ## 2026-07-10 (d0won)
 
 - **"교과목구분별 이수구분" 크롤링 저장 방향 철회**: 2026-07-09에 결정했던, One-Stop

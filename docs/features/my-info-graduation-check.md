@@ -149,6 +149,28 @@
 
 `docs/CHANGELOG.md`의 관련 항목 참고.
 
+### 2026-07-10: flat graduation_requirements 기준으로 재결정 + `GET /me/graduation-progress` 추가
+
+위 후보 중 **2번(flat `graduation_requirements` 보강)** 을 기준으로 진행하기로 했다.
+`graduation_requirements`는 팀원의 마이그레이션 체인(`e5a7c9d1f3b6`)에서 DROP되도록
+코드가 짜여 있었지만, 실제 라이브 Supabase DB에는 그 마이그레이션이 적용되지 않은
+상태였다(head가 한 단계 이전인 `f6a7b8c9d0e1`, 125행 보존). drop-then-recreate 방식은
+사용자가 마이그레이션을 순서대로 올릴 때 그 사이에 125행이 삭제되는 문제가 있어,
+**아직 어디에도 적용되지 않은 `e5a7c9d1f3b6`를 직접 no-op으로 수정**했다(리비전
+체인/ID는 유지, `upgrade`/`downgrade` 둘 다 `pass`). `GraduationRequirement` 모델
+클래스도 `app/domains/academics/models.py`에 되살렸다.
+
+- `app/domains/academics/graduation_progress.py` — 사용자의 활성 `UserAcademicProgram`마다
+  `program_type`+`curriculum_year`+(`major_id` 우선, 없으면 `department_id`)로 가장 맞는
+  `GraduationRequirement` 행을 찾고(정확한 연도가 없으면 같은 학과/전공의 최신 연도로
+  폴백), `student_course_records.category`별 이수학점 합계와 대조해 카테고리별/총
+  남은 학점을 계산한다. 택N/M·개별 필수과목 판정은 하지 않는 단순 합계 비교다.
+- `app/api/graduation_progress.py` — `GET /me/graduation-progress`
+  (`include_non_primary=true`로 복수전공/부전공까지 확장). 팀원의 `GET /me/graduation`과는
+  독립된 엔드포인트로 공존시킨다(같은 기능을 서로 다른 스키마 기준으로 계산 — 추후 하나로
+  통합할지는 재검토 필요).
+- 마이그레이션은 실제 DB에 적용하지 않았다 — 사용자가 직접 `alembic upgrade head` 실행 필요.
+
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 
 크롤링 대상이 아니라 사용자가 직접 CRUD로 관리하는 데이터. 전부 `get_current_user`로

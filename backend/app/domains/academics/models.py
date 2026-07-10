@@ -211,6 +211,30 @@ class StudentCourseRecord(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(20), default="crawler")
 
 
+class GraduationRequirement(TimestampMixin, Base):
+    """학과(또는 세부전공)×이수유형×교육과정연도별 졸업요건 기준학점(flat).
+
+    별표2(교육과정 편성표) 원문을 그대로 옮긴 기준학점 테이블이다. 카테고리별
+    세부 규칙(택N/M, 개별 필수과목 등)은 담지 않고, 이수구분별 기준학점만 있어
+    student_course_records.category 합계와 단순 대조하는 용도로 쓴다.
+    """
+
+    __tablename__ = "graduation_requirements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
+    program_type: Mapped[str | None] = mapped_column(String(20))
+    curriculum_year: Mapped[str | None] = mapped_column(String(10))
+    required_total_credits: Mapped[int | None] = mapped_column(Integer)
+    required_major_foundation: Mapped[int | None] = mapped_column(Integer)
+    required_major_required: Mapped[int | None] = mapped_column(Integer)
+    required_major_elective: Mapped[int | None] = mapped_column(Integer)
+    required_general_required: Mapped[int | None] = mapped_column(Integer)
+    required_general_elective: Mapped[int | None] = mapped_column(Integer)
+    required_free_elective: Mapped[int | None] = mapped_column(Integer)
+
+
 class RequirementSet(TimestampMixin, Base):
     """프로그램(학과/전공)×이수유형×교육과정연도별 졸업요건 세트.
 
