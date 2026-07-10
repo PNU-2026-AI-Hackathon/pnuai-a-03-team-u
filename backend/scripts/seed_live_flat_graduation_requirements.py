@@ -4,8 +4,9 @@ This script targets the live Supabase schema at revision e5f6a7b8c9d0, where
 graduation_requirements is still the flat table:
 
     department_id, major_id, program_type, curriculum_year,
-    required_total_credits, required_major_required, required_major_elective,
-    required_general_required, required_general_elective, required_free_elective
+    required_total_credits, required_major_foundation, required_major_required,
+    required_major_elective, required_general_required, required_general_elective,
+    required_free_elective
 
 The newer requirement_sets/categories schema is intentionally not used here.
 
@@ -15,6 +16,7 @@ Source CSV:
 Mapping from the regulation table to the live flat columns:
     required_general_required = 효원핵심교양
     required_general_elective = 효원균형교양 + 효원창의교양
+    required_major_foundation = 전공기초
     required_major_required = 전공필수
     required_major_elective = 전공선택 + 심화전공
     required_free_elective = 일반선택
@@ -150,6 +152,7 @@ def _build_insert_values(row: dict[str, str], department_id: int, major_id: int 
         "program_type": PROGRAM_TYPE,
         "curriculum_year": CURRICULUM_YEAR,
         "required_total_credits": _to_int(row.get("total")),
+        "required_major_foundation": _to_int(row.get("major_foundation")),
         "required_major_required": _to_int(row.get("major_required")),
         "required_major_elective": _credits(row, "major_elective", "deep_total"),
         "required_general_required": _to_int(row.get("hy_core")),
@@ -228,6 +231,7 @@ def seed_live_flat_graduation_requirements(
                       program_type,
                       curriculum_year,
                       required_total_credits,
+                      required_major_foundation,
                       required_major_required,
                       required_major_elective,
                       required_general_required,
@@ -242,6 +246,7 @@ def seed_live_flat_graduation_requirements(
                       :program_type,
                       :curriculum_year,
                       :required_total_credits,
+                      :required_major_foundation,
                       :required_major_required,
                       :required_major_elective,
                       :required_general_required,

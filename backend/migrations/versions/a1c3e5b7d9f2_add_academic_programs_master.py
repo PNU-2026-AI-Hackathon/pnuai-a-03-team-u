@@ -6,7 +6,7 @@
 설계 근거는 docs/CHANGELOG.md의 졸업요건 스키마 재설계 항목 참고.
 
 Revision ID: a1c3e5b7d9f2
-Revises: e5f6a7b8c9d0
+Revises: f6a7b8c9d0e1
 Create Date: 2026-07-09 12:00:00.000000
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1c3e5b7d9f2'
-down_revision: Union[str, Sequence[str], None] = 'e5f6a7b8c9d0'
+down_revision: Union[str, Sequence[str], None] = 'f6a7b8c9d0e1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

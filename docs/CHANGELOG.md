@@ -35,6 +35,37 @@
   - 문서: `docs/features/my-info-graduation-check.md`의 "졸업요건" 절 갱신
   - 다음 세션에서 실제 테이블(`graduation_category_progress`)/정규화 함수/API 구현 예정
 
+## 2026-07-09 (blackest21) - 4
+
+- **flat `graduation_requirements` 전공기초 컬럼 보강**
+  - 기존 live flat seed는 `graduation_requirements`에 전공기초 전용 컬럼이 없어 별표2의
+    `major_foundation` 값을 보존하지 못했다. 전공선택에 합산한 것이 아니라, flat 컬럼
+    구조상 빠져 있던 값이다.
+  - `required_major_foundation` 컬럼을 추가하는 Alembic 리비전
+    `f6a7b8c9d0e1`을 `e5f6a7b8c9d0` 바로 뒤에 추가했다.
+  - `scripts/seed_live_flat_graduation_requirements.py`가 이제 별표2 `전공기초`를
+    `required_major_foundation`, `전공필수`를 `required_major_required`,
+    `전공선택+심화전공`을 `required_major_elective`로 분리해 넣는다.
+  - Supabase live DB에도 `f6a7b8c9d0e1`까지 적용 후 125행을 재시드했다. 검증 결과
+    `graduation_requirements` primary/2026 125행 중 전공기초 값이 있는 행은 119행이고,
+    원본 전공기초 칸이 빈 약학/의예/의학/치의예/치의학 6행은 null로 유지된다.
+
+## 2026-07-09 (blackest21) - 5
+
+- **One-Stop 졸업예정정보 저장 구조 검토 PR 작성**
+  - 로컬 사용자 동의 크롤링으로 확인한 졸업예정정보 table 1(교과목구분별 이수구분),
+    table 3(교양선택 영역별 이수여부), table 6(비학점 졸업요건) 구조를 바탕으로,
+    어떤 데이터를 저장하고 서비스에서 어떻게 활용할지 PR 본문에 검토 요청으로 정리했다.
+  - 결론은 Supabase에 바로 테이블을 만들지 않고, 우선 `graduation_audits`,
+    `student_graduation_category_statuses`, `student_general_education_area_statuses`
+    3개 테이블 추가를 검토 대상으로 제안하는 것이다. TOPCIT/외국어/졸업과제 등 table 6
+    비학점 요건 저장은 MVP 범위에서 보류한다.
+  - 현재 서비스 코드는 `extract_graduation_expected_info(page)`로 졸업예정정보 7개 테이블을
+    이미 크롤링하지만, DB에는 table 0(주전공/복수전공/부전공/연계전공 신청 정보)만
+    저장한다는 점을 명확히 기록했다.
+  - 별도 장문 md 파일은 GitHub 문서 일관성을 위해 만들지 않고, 이번 항목은 changelog 기록과
+    PR 본문 검토 요청만 남긴다. Supabase 마이그레이션/API 동작 변경은 없다.
+
 ## 2026-07-09 (blackest21) - 3
 
 - **DB seed 진행 기록을 `docs/CHANGELOG.md`로 통합**
@@ -57,8 +88,9 @@
     2026 주전공 졸업학점 기준 125행을 반영했다. 범위는 별표2 page 31-36 중 라이브
     계층 매칭 123행 + 별표2-2 page 38 융합전공 중 매칭 2행
     (`지능형헬스사이언스융합전공`, `핀테크융합전공`).
-  - flat 컬럼 매핑: 총계 → `required_total_credits`, 전공필수 → `required_major_required`,
-    전공선택+심화전공 → `required_major_elective`, 효원핵심교양 →
+  - flat 컬럼 매핑: 총계 → `required_total_credits`, 전공기초 → `required_major_foundation`,
+    전공필수 → `required_major_required`, 전공선택+심화전공 → `required_major_elective`,
+    효원핵심교양 →
     `required_general_required`, 효원균형교양+효원창의교양 →
     `required_general_elective`, 일반선택 → `required_free_elective`.
   - 라이브 계층에 매칭하지 않은 별표 행: 폐과 학부 행

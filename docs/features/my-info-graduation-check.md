@@ -117,7 +117,8 @@
 
 ## 졸업요건: 학과 마스터 매칭 대신 크롤링된 결과를 그대로 저장
 
-`graduation_requirements`(flat, 라이브에 2026 주전공 기준 125행)와 팀원이 새로 만든
+`graduation_requirements`(flat, 라이브에 2026 주전공 기준 125행 — 전공기초는
+`required_major_foundation` 컬럼에 별도 보존)와 팀원이 새로 만든
 `requirement_sets`/`requirement_categories`/`requirement_courses`(과목 단위 상세 규칙,
 `docs/features/db-schema-reference.md` 참고) 둘 다 **"내 정보" 졸업요건 확인 페이지
 용도로는 쓰지 않기로 했다.** 이유:
@@ -145,6 +146,12 @@
 이 값을 그대로 컬럼(`program_type`)에 보존해 **주전공/복수전공/부전공 각각의 진행 현황을
 동시에** 저장한다(테이블 하나로 여러 program_type 행 공존, 주전공 카드/복수전공 카드로
 프론트에서 나눠 보여줄 수 있게).
+
+**참고**: 팀원도 별도로 이 방향(One-Stop 졸업예정정보 table 1/3/6을 그대로 저장하는 방식)을
+검토했고, `graduation_audits`/`student_graduation_category_statuses`/
+`student_general_education_area_statuses` 3개 테이블 신설을 제안하는 PR을 작성했다
+(Supabase 마이그레이션은 아직 적용 안 함). 실제 구현 시 이름/구조를 맞춰서 중복 작업을
+피할 것 — `docs/CHANGELOG.md`의 관련 항목 참고.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 
