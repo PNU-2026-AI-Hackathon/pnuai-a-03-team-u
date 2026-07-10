@@ -12,6 +12,29 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-09 (d0won) - 2
+
+- 졸업요건 확인 페이지 설계 방향 결정: 학과 마스터 요건(`graduation_requirements` flat
+  테이블, 팀원의 새 `requirement_sets`/`requirement_categories`/`requirement_courses`)을
+  우리가 직접 학생 이수내역과 매칭하는 대신, One-Stop 졸업예정정보 페이지의
+  "교과목구분별 이수구분" 표(`graduation_expected_info.py` 테이블 1,
+  `subject_category_completion`)를 그대로 크롤링해서 쓰기로 함
+  - 이 표는 학교가 이미 학적신청구분(주전공/복수전공/부전공) × 사정구분(전공기초/
+    전공필수/...)별로 기준학점 vs 취득학점 vs 이수여부까지 계산해서 줌 — 심화전공/
+    최소전공인정학점/졸업기준평점평균처럼 우리 크롤링 데이터만으론 계산 불가능한
+    항목까지 포함
+  - 팀원의 새 판정 엔진(`graduation_engine.py`)은 스스로 문서화한 대로 아직 미완성
+    (university_default 폴백, 교직 학점 매핑, 조건그룹 판정 등 미구현)이라 지금 단계에선
+    크롤링 방식이 더 정확하고 구현도 빠름
+  - `graduation_requirements`는 삭제하지 않기로 함(팀원 마이그레이션 체인의 DROP 포함
+    구간은 라이브 DB에 미적용 상태로 보류). 팀원의 요건 스키마는 나중에 로드맵 AI가
+    과목 단위로 추천할 때 필요할 수 있어 유지
+  - 크롤링 표에 학적신청구분이 이미 있어서, 새로 만들 테이블도 주전공뿐 아니라 재학 중인
+    복수전공/부전공(또는 저학년의 신청 예정 상태)까지 같은 테이블에서 program_type으로
+    구분해 동시에 저장하기로 함
+  - 문서: `docs/features/my-info-graduation-check.md`의 "졸업요건" 절 갱신
+  - 다음 세션에서 실제 테이블(`graduation_category_progress`)/정규화 함수/API 구현 예정
+
 ## 2026-07-09 (blackest21) - 4
 
 - **flat `graduation_requirements` 전공기초 컬럼 보강**
