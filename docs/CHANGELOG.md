@@ -12,6 +12,15 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-11 (d0won)
+
+- **`GET /me/graduation` 실계정 E2E 검증**: 크롤링 데이터 삭제 → `POST /me/portal-sync`
+  재크롤링 → `GET /me/graduation` 순서로 전체 플로우 확인. 매칭 로직은 정상 동작.
+  2023년 입학생 계정 테스트 중 `graduation_requirements`에 2026년 기준만 있어 정확한
+  연도 매칭이 안 되고 최신 연도 폴백으로 대체되는 게 확인됨 — **2026년 기준만 우선
+  지원하기로 결정**, 다른 연도 seed는 보류. 폴백 로직이 이미 처리 중이라 코드 변경
+  없음. 문서: `docs/features/my-info-graduation-check.md`의 "졸업요건" 절 갱신.
+
 ## 2026-07-10 (d0won) - 4
 
 - **`GET /me/graduation` 재구현**: PR #59 철회로 유일하게 남은 flat

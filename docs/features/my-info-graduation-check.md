@@ -154,6 +154,16 @@
 API는 `app/api/graduation.py`의 `GET /me/graduation`. `docs/CHANGELOG.md`의
 관련 항목 참고.
 
+### 실제 계정 E2E 테스트 (2026-07-11)
+
+크롤링 데이터를 지우고 `POST /me/portal-sync`로 재크롤링 → `GET /me/graduation` 순서로
+전체 플로우를 검증했다. 매칭 로직 자체는 정상 동작한다.
+
+2023년 입학생(`curriculum_year="2023"`) 계정으로 테스트했는데 `graduation_requirements`에는
+2026년 기준만 있어서 정확한 연도 매칭이 안 되고 최신 연도(2026) 폴백으로 대체되는 게 실제로
+확인됐다. **일단 2026년 기준 하나만 지원하기로 하고, 다른 연도 seed는 나중으로 미룬다** —
+폴백 로직이 이미 이 상황을 처리하고 있어서(경고 메시지로 노출) 추가 코드 변경은 없음.
+
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 
 크롤링 대상이 아니라 사용자가 직접 CRUD로 관리하는 데이터. 전부 `get_current_user`로
