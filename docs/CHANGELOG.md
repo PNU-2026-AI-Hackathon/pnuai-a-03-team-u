@@ -12,6 +12,17 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-10 (d0won) - 4
+
+- **`GET /me/graduation` 재구현**: PR #59 철회로 유일하게 남은 flat
+  `graduation_requirements` 테이블과 `student_course_records`를 이수구분별 합계로
+  대조해 졸업까지 남은 학점을 계산하는 API를 다시 만들었다(팀원 엔진 삭제 전
+  한 차례 만들었다가 되돌린 것과 동일한 설계 — 이번엔 유지).
+  `app/domains/academics/graduation_progress.py`(매칭 로직), `app/api/graduation.py`
+  (엔드포인트, `main.py`에 등록). 기본은 주전공만 계산하고
+  `include_non_primary=true`로 복수전공/부전공까지 확장한다. 문서:
+  `docs/features/my-info-graduation-check.md`의 "졸업요건" 절 갱신.
+
 ## 2026-07-10 (d0won) - 3
 
 - **팀원의 졸업요건 스키마(PR #59, `feat/graduation-requirement-schema`) 전체 철회** —

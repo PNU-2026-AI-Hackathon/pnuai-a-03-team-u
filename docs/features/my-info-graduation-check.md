@@ -9,9 +9,8 @@
 | 메서드/경로 | 설명 |
 | --- | --- |
 | `POST /me/portal-sync` | body로 학번/포털 비밀번호를 받아 서버가 One-Stop에 직접 로그인, 학적부/성적/졸업예정정보를 크롤링해 DB에 저장. 로그인 실패 시 401 |
+| `GET /me/graduation` | flat `graduation_requirements` 기준학점과 `student_course_records` 합계를 대조해 졸업까지 남은 학점을 계산. 기본은 주전공만(`include_non_primary=true`로 복수전공/부전공까지 확장). 자세한 내용은 아래 "졸업요건" 절 참고 |
 | `PATCH /me/advisor-consulted` | 지도교수 상담 여부를 사용자가 직접 체크/해제 (크롤링 대상 아님, 단순 토글) |
-
-졸업요건 충족 여부를 계산하는 API는 현재 없다 — 아래 "졸업요건" 절 참고.
 
 인증은 `get_current_user`(`app/api/auth.py`) 재사용. 크롤링은 Playwright 동기 API로
 몇 초 걸리므로 엔드포인트를 `def`(동기)로 선언해 FastAPI가 스레드풀에서 처리하게 한다.
@@ -141,9 +140,19 @@
 교양필수/교양선택/일반선택/총계) 테이블. 라이브에 2026 주전공 기준 125행 존재.
 `app/domains/academics/models.py`의 `GraduationRequirement` 모델로 복구해뒀다.
 
-졸업요건 확인 페이지(학생 이수내역과 대조해서 졸업까지 남은 학점 보여주기)는
-**아직 구현 전** — `graduation_requirements`와 `student_course_records`를 대조하는
-API/로직을 다시 만들어야 한다. `docs/CHANGELOG.md`의 관련 항목 참고.
+### 매칭 로직 (`app/domains/academics/graduation_progress.py`)
+
+1. 사용자의 활성 `UserAcademicProgram`(주전공/복수전공/부전공)마다
+2. `program_type` + `curriculum_year` + (`major_id` 있으면 그걸로, 없으면
+   `department_id`)로 `graduation_requirements`에서 가장 맞는 행 하나를 찾는다
+   (정확한 연도가 없으면 같은 학과/전공의 최신 연도 행으로 폴백)
+3. `student_course_records`를 `category`(전공기초/전공필수/전공선택/교양필수/
+   교양선택/일반선택)별로 학점을 합산
+4. 이수구분별로 기준학점 vs 합산학점을 대조해 카테고리별 남은 학점 + 총 남은
+   학점을 계산
+
+API는 `app/api/graduation.py`의 `GET /me/graduation`. `docs/CHANGELOG.md`의
+관련 항목 참고.
 
 ## 사용자 직접 입력 프로필 (`app/api/profile.py`)
 
