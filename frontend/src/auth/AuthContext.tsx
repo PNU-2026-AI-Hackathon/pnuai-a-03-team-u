@@ -10,6 +10,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   loginWithEmail: (email: string, password: string) => Promise<User>;
   signupWithEmail: (payload: SignupPayload) => Promise<User>;
+  refreshUser: () => Promise<User>;
   logoutUser: () => void;
 };
 
@@ -49,6 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const nextUser = await getMe();
         setUser(nextUser);
         return createdUser;
+      },
+      async refreshUser() {
+        const nextUser = await getMe();
+        setUser(nextUser);
+        return nextUser;
       },
       logoutUser() {
         logout();
