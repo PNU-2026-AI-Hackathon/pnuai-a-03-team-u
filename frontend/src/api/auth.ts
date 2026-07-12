@@ -10,8 +10,8 @@ export type User = {
   email: string;
   name: string;
   student_id: string | null;
-  school: string | null;
   department: string | null;
+  major: string | null;
   career_goal: string | null;
   academic_programs: AcademicProgram[];
 };
@@ -22,6 +22,7 @@ export type SignupPayload = {
   name: string;
   student_id?: string;
   school?: string;
+  college?: string;
   department?: string;
   career_goal?: string;
   academic_programs?: AcademicProgram[];

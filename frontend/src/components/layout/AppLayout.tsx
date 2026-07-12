@@ -106,13 +106,13 @@ export function AppLayout() {
           <a href="#advisor">상담 예약</a>
         </div>
 
-        <section className="mini-profile">
+        <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">
           <div className="avatar">{user?.name?.slice(0, 1) ?? "이"}</div>
           <div>
             <strong>{user?.name ?? "이도원"} 님</strong>
             <span>나의 프로필 보기</span>
           </div>
-        </section>
+        </NavLink>
       </aside>
 
       <main className="workspace">
@@ -156,9 +156,6 @@ export function AppLayout() {
             <button type="button" aria-label="도움말">
               ?
             </button>
-            <NavLink className="profile-link" to="/info">
-              <span aria-hidden="true">ID</span>내 정보
-            </NavLink>
             <NavLink className="user-chip logout-chip" to="/auth" onClick={logoutUser}>
               로그아웃
             </NavLink>
