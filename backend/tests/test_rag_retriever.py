@@ -66,6 +66,58 @@ class RagRetrieverTest(unittest.TestCase):
         self.assertEqual(results[0]["course_name"], "머신러닝")
         self.assertEqual(results[0]["document_type"], "curriculum")
 
+    def test_curriculum_retriever_without_major_id_still_returns_major_specific_courses(self):
+        """학부제 학과에서 전공을 아직 정하지 않은 학생(major_id=None)도 그 학과의
+        전공별 과목을 볼 수 있어야 한다 — major_id IS NULL인 행만 보이면 안 된다."""
+        db = self.make_db()
+        db.add_all(
+            [
+                Course(
+                    id=1,
+                    course_name="자료구조",
+                    department_id=10,
+                    major_id=20,
+                    category="전공필수",
+                    credits=3.0,
+                    year="2",
+                    semester="1",
+                ),
+                Course(
+                    id=2,
+                    course_name="공학수학",
+                    department_id=10,
+                    major_id=None,
+                    category="전공기초",
+                    credits=3.0,
+                    year="1",
+                    semester="1",
+                ),
+                Course(
+                    id=3,
+                    course_name="타학과 과목",
+                    department_id=99,
+                    major_id=None,
+                    category="전공기초",
+                    credits=3.0,
+                    year="1",
+                    semester="1",
+                ),
+            ]
+        )
+        db.commit()
+
+        results = CurriculumRetriever(db).search(
+            query="",
+            department_id=10,
+            major_id=None,
+            curriculum_year=2026,
+        )
+
+        course_ids = {result["course_id"] for result in results}
+        self.assertIn(1, course_ids)  # 전공별 과목도 포함돼야 함
+        self.assertIn(2, course_ids)  # 학과 공통 과목도 포함
+        self.assertNotIn(3, course_ids)  # 타학과는 여전히 제외
+
     def test_graduation_requirement_retriever_returns_rag_shaped_requirements(self):
         db = self.make_db()
         db.add(

@@ -59,7 +59,7 @@
   (`ACCESS_TOKEN_EXPIRE_MINUTES`)
 - **모델 변경 없음**: `User.email`/`password_hash`가 이미 있어서 마이그레이션 불필요
 
-## 방향 (`docs/architecture.md` "Authentication Direction" 기반)
+## 방향 (`docs/backend/architecture.md` "Authentication Direction" 기반)
 
 - 이메일/비밀번호 인증 완료, 이후 소셜 로그인(Google/Kakao/Naver)을 provider 계정으로 추가 예정
 - 소셜 로그인을 위한 `auth_accounts` 테이블 설계는 되어 있으나 아직 마이그레이션에 반영 안 됨

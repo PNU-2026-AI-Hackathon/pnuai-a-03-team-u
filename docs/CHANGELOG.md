@@ -2,14 +2,16 @@
 
 바이브코딩 세션이 끝날 때마다 맨 위에 새 항목을 추가하세요. 형식은 아래 예시 참고.
 
-"기능이 지금 어떻게 동작하는지"는 여기가 아니라 `docs/features/`에 기능별로 정리합니다.
+"기능이 지금 어떻게 동작하는지"는 여기가 아니라 `docs/backend/features/`(백엔드)
+또는 `docs/frontend/`(프론트엔드)에 기능별로 정리합니다.
 이 파일은 "언제 무엇을 왜 했는지" 시간순 기록입니다.
 
 <!--
 ## YYYY-MM-DD (github아이디)
 
 - 무엇을 했는지, 왜 했는지, 막혔던 부분/해결법 (필요한 만큼만)
-- 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
+- 관련 기능 문서를 바꿨다면 `docs/backend/features/xxx.md`(백엔드) 또는
+  `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
 ## 2026-07-12 (d0won)
@@ -24,7 +26,53 @@
   단순 파이프라인이라 그래프 엔진이 필요 없다고 판단.
   RAG 담당자가 만든 `CurriculumRetriever`(`app/ai/rag/curriculum_retriever.py`)를
   `search_courses` 도구에 그대로 연결해 과목 후보 검색을 맡겼다.
-  문서: `docs/features/growth-roadmap.md`의 "AI 로드맵 상담" 절 추가.
+  문서: `docs/backend/features/growth-roadmap.md`의 "AI 로드맵 상담" 절 추가.
+
+## 2026-07-13 (d0won) - 2
+
+- **RAG pgvector 임베딩 검색을 기본으로 끔**: `courses`/`graduation_requirements`가
+  이미 학과/전공/학년/학기/이수구분이 정형 컬럼으로 있는 카탈로그 데이터라, 자유
+  텍스트 의미 검색이 필요한 상황이 아니라고 판단. `CurriculumRetriever.search`/
+  `GraduationRequirementRetriever.search`와 `RagSearchRequest`의 `use_vector`
+  기본값을 `false`로 변경 — 구조화 DB 필터 + 진로 키워드 랭킹만 기본 경로로 쓴다.
+  `RagChunk`/pgvector 스키마는 지우지 않고 남겨둠(나중에 필요해지면 `use_vector=true`로
+  다시 켤 수 있음). 이 결정으로 벡터 검색 관련 미해결 이슈 3건(테스트 부재, 예외 처리,
+  `embed_missing` 연도 미scope)은 우선순위에서 빠지고, `career_keywords.py` 진로
+  키워드 확장이 랭킹 품질을 좌우하는 유일한 경로가 되어 우선순위가 올라감. 문서:
+  `docs/backend/features/roadmap-rag.md` 갱신.
+
+## 2026-07-13 (blackest21)
+
+- **RAG / 학사 지식 기반 구축 PR #69 반영 및 Supabase 적용**
+  - 수강 로드맵 Agent가 `courses`와 `graduation_requirements`를 구조화된 검색 결과로
+    받을 수 있도록 DB-first Retriever를 추가했다. 입력은 `query`, `department_id`,
+    `major_id`, `curriculum_year`, `filters`이고, 출력은 `course_id`, `course_name`,
+    `category`, `credits`, `grade`, `semester`, `evidence`와 보조 필드 `source`, `score`,
+    `document_type`이다.
+  - `POST /rag/curriculum/search`, `POST /rag/graduation-requirements/search`,
+    `POST /rag/ingest` API를 추가했다. Agent 담당자는 우선 `use_vector=false`로 안정적인
+    DB-first 검색을 사용하고, embedding 생성 후 `use_vector=true`로 pgvector 검색을 함께
+    사용할 수 있다.
+  - pgvector 확장을 위해 `rag_chunks` 테이블을 추가했다. `courses`와
+    `graduation_requirements`를 읽어 `document_type`, `department_id`, `major_id`,
+    `curriculum_year`, `category`, `grade`, `semester`, `course_id`, `content`, `evidence`,
+    `source`, `metadata`, `embedding`을 저장한다. 마이그레이션 리비전은
+    `a3b4c5d6e7f8`.
+  - `CurriculumRagIngestionService`와 `scripts.build_rag_chunks`를 추가했다. 재실행 시 해당
+    교육과정연도의 기존 chunk를 지우고 다시 생성한다. `OPENAI_API_KEY`가 있으면 embedding을
+    생성하고, 없으면 `--skip-embeddings`로 chunk만 생성할 수 있다.
+  - 진로 질의 1차 ranking을 위해 `AI 개발자`, `백엔드 개발자`, `데이터 분석가` 같은 표현을
+    관련 키워드로 확장하는 `career_keywords.py`를 추가했다. DB-first 검색에서도 관련 과목이
+    우선 정렬되고, pgvector 검색 시 query embedding에도 확장 키워드를 반영한다.
+  - 로컬 검증: `compileall` 통과, `tests.test_rag_retriever` 3개 통과, OpenAI
+    `text-embedding-3-small` 호출 결과가 1536차원임을 확인해 `VECTOR(1536)` 설계와 일치함을
+    확인했다. API 키는 코드/커밋/PR 본문에 저장하지 않았다.
+  - Supabase 적용: `alembic upgrade head`로 `a3b4c5d6e7f8`까지 적용했고,
+    `python -m scripts.build_rag_chunks --curriculum-year 2026 --skip-embeddings`로
+    `rag_chunks` 7,298개를 생성했다. 세부 수량은 curriculum 6,444개,
+    graduation_requirement 854개, embedding 0개다. 현재는 embedding 미생성 상태라
+    vector 검색은 DB-first fallback으로 동작한다. `OPENAI_API_KEY` 설정 후
+    `python -m scripts.build_rag_chunks --curriculum-year 2026`을 실행하면 embedding까지 생성된다.
 
 ## 2026-07-11 (d0won)
 

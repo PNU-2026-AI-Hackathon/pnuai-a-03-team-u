@@ -1,6 +1,6 @@
 """이메일/비밀번호 회원가입·로그인.
 
-docs/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 아직 없음.
+docs/backend/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 아직 없음.
 """
 
 from __future__ import annotations
