@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.ai.embeddings.openai_client import embed_text
@@ -54,8 +54,15 @@ def _normalize_semester(value: str | None) -> str | None:
 
 
 def _major_scope_filter(model: type[Course] | type[GraduationRequirement], major_id: int | None):
+    """major_id가 없으면(전공 미확정/미세분 학과) 전공 조건으로 좁히지 않는다.
+
+    major_id가 있을 때는 "그 전공 것 + 학과 공통(major_id NULL) 것"을 모두 보여주는데,
+    major_id가 없다고 해서 major_id IS NULL인 행만 보여주면 학부제 학과에서 전공을
+    아직 정하지 않은 학생은 전공별 과목을 하나도 못 보는 비대칭이 생긴다(department_id는
+    이미 상위에서 걸러졌으므로 여기서는 제한을 두지 않는 것이 맞다).
+    """
     if major_id is None:
-        return model.major_id.is_(None)
+        return true()
     return or_(model.major_id == major_id, model.major_id.is_(None))
 
 
@@ -71,8 +78,9 @@ def _keyword_score(query: str, text: str) -> float:
 
 
 def _chunk_scope_filter(model: type[RagChunk], major_id: int | None):
+    """_major_scope_filter와 동일한 이유로 major_id 미지정 시 제한을 두지 않는다."""
     if major_id is None:
-        return model.major_id.is_(None)
+        return true()
     return or_(model.major_id == major_id, model.major_id.is_(None))
 
 
