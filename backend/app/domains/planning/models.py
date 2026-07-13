@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -73,3 +73,46 @@ class CourseRoadmapItem(TimestampMixin, Base):
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     reason: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(20), default="manual")
+
+
+class CourseRoadmapChatMessage(TimestampMixin, Base):
+    """로드맵 AI 상담 대화 기록.
+
+    로드맵당 하나의 연속된 대화로 취급한다(멀티 세션/스레드 없음). 매 요청마다
+    클라이언트가 전체 히스토리를 다시 보내는 대신 서버가 이 테이블에서 복원해
+    Anthropic Messages API에 넘긴다.
+    """
+
+    __tablename__ = "course_roadmap_chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    roadmap_id: Mapped[int] = mapped_column(ForeignKey("course_roadmaps.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+
+
+class PendingRoadmapChange(TimestampMixin, Base):
+    """Agent가 제안했지만 아직 사용자가 승인/거절하지 않은 로드맵 변경안.
+
+    Agent는 course_roadmap_items를 직접 쓰지 않는다 — 항상 이 테이블에 제안을
+    먼저 쌓고, 사용자가 confirm 엔드포인트로 승인한 항목만 실제 반영한다
+    (human-in-the-loop). action="create"는 item_id가 null이고 course_id/
+    planned_year 등 after_* 값으로 새 항목을 만든다. action="update"/"delete"는
+    기존 item_id를 가리키며, before_snapshot에 변경 전 값을 남겨 사용자가 대화창에서
+    "무엇이 바뀌는지" 확인할 수 있게 한다.
+    """
+
+    __tablename__ = "pending_roadmap_changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    roadmap_id: Mapped[int] = mapped_column(ForeignKey("course_roadmaps.id"), index=True)
+    item_id: Mapped[int | None] = mapped_column(ForeignKey("course_roadmap_items.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(20))  # create | update | delete
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
+    planned_grade: Mapped[int | None] = mapped_column()
+    planned_year: Mapped[str | None] = mapped_column(String(10))
+    planned_semester: Mapped[str | None] = mapped_column(String(20))
+    before_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    reason: Mapped[str | None] = mapped_column(Text)
+    # pending: 답변 대기 / approved·rejected: 사용자가 confirm에서 선택한 결과
+    status: Mapped[str] = mapped_column(String(20), default="pending")

@@ -3,7 +3,7 @@
 사용자가 1~4학년 전체 학사 계획을 직접 짜고 수정하는 기능. "AI 자동 생성 버튼"은
 따로 두지 않기로 했다 — 대신 로드맵은 항상 존재(없으면 자동 생성)하고, 사용자는
 "수정하기" 버튼 하나로 항상 편집할 수 있다. AI 채팅으로 로드맵을 짜거나 고치는
-기능은 이 CRUD 위에 나중에 얹을 예정 (아직 미구현).
+기능은 이 CRUD 위에 human-in-the-loop 방식으로 얹었다 — 아래 "AI 로드맵 상담" 절 참고.
 
 ## 스키마 (`app/domains/planning/models.py`)
 
@@ -90,10 +90,57 @@ course_roadmap_items
 모든 엔드포인트가 `get_current_user`로 본인 로드맵만 접근 가능 — 남의 로드맵/항목
 요청 시 404.
 
+## AI 로드맵 상담 (`app/domains/planning/roadmap_chat.py`, `app/api/roadmap_agent.py`)
+
+Anthropic tool-calling으로 로드맵 변경을 "제안"받는 채팅 기능. **Agent는
+`course_roadmap_items`를 절대 직접 쓰지 않는다** — 항상 `pending_roadmap_changes`에
+제안만 쌓고, 사용자가 승인한 항목만 실제로 반영된다(human-in-the-loop). 최초 로드맵
+생성이든 기존 항목 수정/삭제든 전부 같은 절차를 거친다.
+
+LangGraph 같은 그래프 오케스트레이션은 쓰지 않는다 — tool 호출 루프 한 번 →
+제안 저장 → (별도 API 호출로) 확인 대기 → 반영, 순서가 고정된 단순 파이프라인이라
+그래프 엔진 없이 Anthropic SDK의 tool loop만으로 충분하다.
+
+### 스키마
+
+```text
+course_roadmap_chat_messages
+- id, roadmap_id, role(user/assistant), content
+  # 로드맵당 하나의 연속 대화로 취급. 클라이언트가 매번 히스토리를 다시 보내는
+  # 대신 서버가 이 테이블에서 복원해 Anthropic Messages API에 넘긴다.
+
+pending_roadmap_changes
+- id, roadmap_id, item_id(update/delete 대상, null 가능)
+- action (create/update/delete)
+- course_id, planned_year, planned_semester, planned_grade  # create/update용
+- before_snapshot (JSON)  # update/delete 전 값 — 대화창에 "뭐가 바뀌는지" 보여주기용
+- reason
+- status (pending/approved/rejected)
+```
+
+### Agent 도구
+
+- `get_graduation_progress` — `GET /me/graduation`과 같은 로직(`graduation_progress.py`)
+  으로 남은 이수구분별 학점을 조회
+- `get_roadmap_items` — 현재 로드맵 항목 전체 조회(중복 추천 방지용)
+- `search_courses` — 과목명 검색. **임시 구현**: `courses` 카탈로그를 사용자
+  `department_id`로 필터링만 한다. RAG 담당자의 교육과정표 검색 서비스가 준비되면
+  이걸로 교체 예정
+- `propose_change` — 유일한 쓰기 도구. `pending_roadmap_changes`에 제안 1건을
+  만들 뿐, `course_roadmap_items`는 건드리지 않는다
+
+### API
+
+| 메서드/경로 | 설명 |
+| --- | --- |
+| `POST /me/roadmaps/{id}/agent/chat` | 메시지를 보내면 AI 답변 + 이번 턴에 생긴 `pending_changes` 목록을 반환. **이 호출만으로는 아무것도 저장되지 않는다** |
+| `POST /me/roadmaps/{id}/agent/confirm` | `{"approved": [...], "rejected": [...]}`로 pending change id를 승인/거절. 승인된 것만 `course_roadmap_items`에 반영(`source="ai"`, `is_confirmed=true`), 거절된 것은 `status="rejected"`로 남기고 버림 |
+
 ## 알려진 한계 / TODO
 
-- AI가 로드맵을 짜거나 채팅으로 수정하는 기능 미구현 (지금은 순수 수동 CRUD만)
-- `graduation_requirements`가 비어있어서, AI가 짤 때든 사용자가 직접 짤 때든
-  "졸업까지 몇 학점 남았는지" 기준으로 안내할 방법이 없음
+- `search_courses`가 학과 카탈로그 필터링뿐이라 아직 진짜 RAG(교육과정표+졸업요건
+  임베딩 검색)가 아님 — 담당자 1의 RAG 서비스 완성 후 교체 필요
+- 대화형 부분 수정("전공필수 먼저", "4학년은 가볍게" 등)은 시스템 프롬프트로만
+  유도 — 실제 정확도는 검증 전
 - 시간표 추천(`course_plans`/`course_plan_items`, F-03)과의 연결 로직 미구현 —
   로드맵 항목을 실제 개설 분반(`course_offerings`)으로 구체화하는 흐름 필요

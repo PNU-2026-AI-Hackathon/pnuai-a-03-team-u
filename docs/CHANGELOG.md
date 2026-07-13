@@ -12,6 +12,20 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-12 (d0won)
+
+- **AI 로드맵 상담(human-in-the-loop) 추가**: `POST /me/roadmaps/{id}/agent/chat`
+  (Anthropic tool-calling으로 로드맵 변경 "제안") + `POST /me/roadmaps/{id}/agent/confirm`
+  (사용자가 승인한 것만 실제 반영). Agent는 `course_roadmap_items`를 절대 직접
+  쓰지 않고 항상 `pending_roadmap_changes`에 제안만 쌓는다 — 생성/수정/삭제 모두
+  동일한 승인 절차를 거친다. 신규 테이블: `course_roadmap_chat_messages`(대화
+  히스토리, 로드맵당 하나의 연속 대화), `pending_roadmap_changes`. LangGraph는
+  쓰지 않음 — tool 호출 루프 한 번 → 제안 저장 → confirm 별도 호출, 순서가 고정된
+  단순 파이프라인이라 그래프 엔진이 필요 없다고 판단.
+  RAG 담당자가 만든 `CurriculumRetriever`(`app/ai/rag/curriculum_retriever.py`)를
+  `search_courses` 도구에 그대로 연결해 과목 후보 검색을 맡겼다.
+  문서: `docs/features/growth-roadmap.md`의 "AI 로드맵 상담" 절 추가.
+
 ## 2026-07-11 (d0won)
 
 - **`GET /me/graduation` 실계정 E2E 검증**: 크롤링 데이터 삭제 → `POST /me/portal-sync`
