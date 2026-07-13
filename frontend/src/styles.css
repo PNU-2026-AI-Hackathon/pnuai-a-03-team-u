@@ -919,8 +919,8 @@ body.theme-dark .activity-tags span {
 
 .hero-panel {
   display: grid;
-  grid-template-columns: minmax(520px, 1.08fr) minmax(390px, 0.92fr);
-  gap: 34px;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: clamp(18px, 2.4vw, 34px);
   margin: 34px auto 22px;
   padding: 30px 34px;
   max-width: 1280px;
@@ -928,6 +928,7 @@ body.theme-dark .activity-tags span {
 
 .student-card {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 24px;
 }
@@ -954,6 +955,7 @@ body.theme-dark .activity-tags span {
 
 .student-card h2 {
   margin-bottom: 10px;
+  overflow-wrap: anywhere;
   font-size: 28px;
 }
 
@@ -970,9 +972,9 @@ body.theme-dark .activity-tags span {
 .program-progress {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.9fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.9fr);
   align-items: end;
-  gap: 28px;
+  gap: clamp(16px, 2vw, 28px);
   padding-top: 4px;
 }
 
@@ -1021,7 +1023,7 @@ body.theme-dark .activity-tags span {
 
 .credit-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
   gap: 12px;
 }
 
@@ -1052,12 +1054,14 @@ body.theme-dark .activity-tags span {
 
 .profile-facts {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
 .profile-facts article {
   display: grid;
+  min-width: 0;
   align-content: center;
   min-height: 82px;
   padding: 18px;
@@ -1074,7 +1078,10 @@ body.theme-dark .activity-tags span {
 }
 
 .profile-facts strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 15px;
+  line-height: 1.35;
 }
 
 .overview-grid {
