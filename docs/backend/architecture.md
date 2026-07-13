@@ -38,8 +38,8 @@ This keeps the agreed principle intact: AI must not decide graduation satisfacti
 > `domains/planning` and `domains/content` were added; the extracurricular
 > recommendation stack (`domains/activities`, `ai/recommendations`,
 > `ai/embeddings/activity_embeddings.py`, `ai/evaluation`) was removed until it
-> is redesigned. See [docs/CHANGELOG.md](./CHANGELOG.md) 2026-07-07 entry and
-> [docs/features/activity-recommendations.md](./features/activity-recommendations.md).
+> is redesigned. See [docs/CHANGELOG.md](../CHANGELOG.md) 2026-07-07 entry and
+> [docs/backend/features/activity-recommendations.md](./features/activity-recommendations.md).
 
 ```text
 backend/
@@ -171,7 +171,7 @@ auth_accounts
 >   seeded with real requirement data.
 > - `course_offerings`/`course_times` exist in a simplified shape (no
 >   change-tracking columns like `offering_status`/`change_status` yet).
-> - See [docs/features/my-info-graduation-check.md](./features/my-info-graduation-check.md)
+> - See [docs/backend/features/my-info-graduation-check.md](./features/my-info-graduation-check.md)
 >   for the schema that's actually live.
 >
 > Keep this section for the long-term design intent, but don't assume any
