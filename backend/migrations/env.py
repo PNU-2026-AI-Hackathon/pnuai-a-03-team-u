@@ -14,6 +14,7 @@ from app.core.db import Base  # noqa: E402
 
 # Base.metadata에 테이블이 등록되도록 모든 도메인 모델 모듈을 import한다.
 import app.domains.academics.models  # noqa: E402,F401
+import app.ai.rag.models  # noqa: E402,F401
 import app.domains.content.models  # noqa: E402,F401
 import app.domains.courses.models  # noqa: E402,F401
 import app.domains.planning.models  # noqa: E402,F401
