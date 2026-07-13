@@ -12,6 +12,39 @@
 - 관련 기능 문서를 바꿨다면 `docs/features/xxx.md` 갱신도 같이
 -->
 
+## 2026-07-13 (blackest21)
+
+- **RAG / 학사 지식 기반 구축 PR #69 반영 및 Supabase 적용**
+  - 수강 로드맵 Agent가 `courses`와 `graduation_requirements`를 구조화된 검색 결과로
+    받을 수 있도록 DB-first Retriever를 추가했다. 입력은 `query`, `department_id`,
+    `major_id`, `curriculum_year`, `filters`이고, 출력은 `course_id`, `course_name`,
+    `category`, `credits`, `grade`, `semester`, `evidence`와 보조 필드 `source`, `score`,
+    `document_type`이다.
+  - `POST /rag/curriculum/search`, `POST /rag/graduation-requirements/search`,
+    `POST /rag/ingest` API를 추가했다. Agent 담당자는 우선 `use_vector=false`로 안정적인
+    DB-first 검색을 사용하고, embedding 생성 후 `use_vector=true`로 pgvector 검색을 함께
+    사용할 수 있다.
+  - pgvector 확장을 위해 `rag_chunks` 테이블을 추가했다. `courses`와
+    `graduation_requirements`를 읽어 `document_type`, `department_id`, `major_id`,
+    `curriculum_year`, `category`, `grade`, `semester`, `course_id`, `content`, `evidence`,
+    `source`, `metadata`, `embedding`을 저장한다. 마이그레이션 리비전은
+    `a3b4c5d6e7f8`.
+  - `CurriculumRagIngestionService`와 `scripts.build_rag_chunks`를 추가했다. 재실행 시 해당
+    교육과정연도의 기존 chunk를 지우고 다시 생성한다. `OPENAI_API_KEY`가 있으면 embedding을
+    생성하고, 없으면 `--skip-embeddings`로 chunk만 생성할 수 있다.
+  - 진로 질의 1차 ranking을 위해 `AI 개발자`, `백엔드 개발자`, `데이터 분석가` 같은 표현을
+    관련 키워드로 확장하는 `career_keywords.py`를 추가했다. DB-first 검색에서도 관련 과목이
+    우선 정렬되고, pgvector 검색 시 query embedding에도 확장 키워드를 반영한다.
+  - 로컬 검증: `compileall` 통과, `tests.test_rag_retriever` 3개 통과, OpenAI
+    `text-embedding-3-small` 호출 결과가 1536차원임을 확인해 `VECTOR(1536)` 설계와 일치함을
+    확인했다. API 키는 코드/커밋/PR 본문에 저장하지 않았다.
+  - Supabase 적용: `alembic upgrade head`로 `a3b4c5d6e7f8`까지 적용했고,
+    `python -m scripts.build_rag_chunks --curriculum-year 2026 --skip-embeddings`로
+    `rag_chunks` 7,298개를 생성했다. 세부 수량은 curriculum 6,444개,
+    graduation_requirement 854개, embedding 0개다. 현재는 embedding 미생성 상태라
+    vector 검색은 DB-first fallback으로 동작한다. `OPENAI_API_KEY` 설정 후
+    `python -m scripts.build_rag_chunks --curriculum-year 2026`을 실행하면 embedding까지 생성된다.
+
 ## 2026-07-11 (d0won)
 
 - **`GET /me/graduation` 실계정 E2E 검증**: 크롤링 데이터 삭제 → `POST /me/portal-sync`
