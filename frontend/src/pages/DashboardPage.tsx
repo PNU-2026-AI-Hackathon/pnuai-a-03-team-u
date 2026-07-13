@@ -1,14 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 type ConsultationStatus = "scheduled" | "completed";
-
-type ConsultationTerm = {
-  id: string;
-  label: string;
-  year: number;
-  semester: 1 | 2;
-  status: ConsultationStatus;
-};
 
 const studentId = "2023662247";
 
@@ -41,32 +33,6 @@ function getCurrentAcademicTerm(date = new Date()) {
   return { year, semester: 2 as const };
 }
 
-function getAdmissionYear(studentNumber: string) {
-  const parsed = Number(studentNumber.slice(0, 4));
-  return Number.isFinite(parsed) ? parsed : new Date().getFullYear();
-}
-
-function buildConsultationTerms(admissionYear: number, currentTerm: { year: number; semester: 1 | 2 }) {
-  const terms: ConsultationTerm[] = [];
-
-  for (let year = admissionYear; year <= currentTerm.year; year += 1) {
-    ([1, 2] as const).forEach((semester) => {
-      if (year === currentTerm.year && semester > currentTerm.semester) return;
-
-      const id = `${year}-${semester}`;
-      terms.push({
-        id,
-        year,
-        semester,
-        label: `${year}년 ${semester}학기`,
-        status: year === currentTerm.year && semester === currentTerm.semester ? "scheduled" : "completed",
-      });
-    });
-  }
-
-  return terms;
-}
-
 const statusLabels: Record<ConsultationStatus, string> = {
   scheduled: "상담예정",
   completed: "상담 완료",
@@ -80,48 +46,28 @@ function isConsultationStatus(status: string): status is ConsultationStatus {
   return status === "scheduled" || status === "completed";
 }
 
-function loadStoredConsultationStatuses(studentNumber: string) {
+function loadCurrentConsultationStatus(
+  studentNumber: string,
+  currentTerm: { year: number; semester: 1 | 2 },
+): ConsultationStatus {
   try {
     const saved = window.localStorage.getItem(getConsultationStorageKey(studentNumber));
-    if (!saved) return {};
+    if (!saved) return "scheduled";
 
     const parsed = JSON.parse(saved) as Record<string, string>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, status]) => isConsultationStatus(status)),
-    ) as Record<string, ConsultationStatus>;
+    const status = parsed[`${currentTerm.year}-${currentTerm.semester}`];
+    return status && isConsultationStatus(status) ? status : "scheduled";
   } catch {
-    return {};
+    return "scheduled";
   }
-}
-
-function mergeStoredConsultationStatuses(terms: ConsultationTerm[], studentNumber: string) {
-  const savedStatuses = loadStoredConsultationStatuses(studentNumber);
-  return terms.map((term) => ({
-    ...term,
-    status: savedStatuses[term.id] ?? term.status,
-  }));
 }
 
 export function DashboardPage() {
   const currentTerm = useMemo(() => getCurrentAcademicTerm(), []);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [consultations, setConsultations] = useState(() => {
-    const defaultTerms = buildConsultationTerms(getAdmissionYear(studentId), currentTerm);
-    return mergeStoredConsultationStatuses(defaultTerms, studentId);
-  });
-
-  const currentConsultation = consultations.find(
-    (term) => term.year === currentTerm.year && term.semester === currentTerm.semester,
+  const currentConsultationStatus = useMemo(
+    () => loadCurrentConsultationStatus(studentId, currentTerm),
+    [currentTerm],
   );
-
-  useEffect(() => {
-    const statuses = Object.fromEntries(consultations.map((term) => [term.id, term.status]));
-    window.localStorage.setItem(getConsultationStorageKey(studentId), JSON.stringify(statuses));
-  }, [consultations]);
-
-  function updateConsultationStatus(termId: string, status: ConsultationStatus) {
-    setConsultations((current) => current.map((term) => (term.id === termId ? { ...term, status } : term)));
-  }
 
   return (
     <>
@@ -181,43 +127,15 @@ export function DashboardPage() {
               <p className="eyebrow">지도 교수</p>
               <h3>김도현 교수</h3>
             </div>
-            <span className="status blue">{currentConsultation ? statusLabels[currentConsultation.status] : "상담예정"}</span>
+            <span className="status blue">{statusLabels[currentConsultationStatus]}</span>
           </div>
           <p>
             {currentTerm.year}년 {currentTerm.semester}학기 상담 여부만 홈에서 확인합니다.
           </p>
           <div className="advisor-current-status" aria-label="현재 학기 상담 상태">
             <span>{currentTerm.year}년 {currentTerm.semester}학기</span>
-            <strong>{currentConsultation ? statusLabels[currentConsultation.status] : "상담예정"}</strong>
+            <strong>{statusLabels[currentConsultationStatus]}</strong>
           </div>
-          <button
-            className="advisor-history-toggle"
-            type="button"
-            aria-expanded={isHistoryOpen}
-            onClick={() => setIsHistoryOpen((open) => !open)}
-          >
-            상담 기록 내역
-          </button>
-          {isHistoryOpen ? (
-            <div className="advisor-term-list" aria-label="입학년도부터 현재 학기까지 상담 여부">
-              {consultations.map((term) => (
-                <div className={term.status === "completed" ? "completed" : ""} key={term.id}>
-                  <span className="advisor-term-check" aria-hidden="true">
-                    {term.status === "completed" ? "✓" : ""}
-                  </span>
-                  <span className="advisor-term-label">{term.label}</span>
-                  <select
-                    aria-label={`${term.label} 상담 상태`}
-                    value={term.status}
-                    onChange={(event) => updateConsultationStatus(term.id, event.target.value as ConsultationStatus)}
-                  >
-                    <option value="scheduled">상담예정</option>
-                    <option value="completed">상담 완료</option>
-                  </select>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </article>
 
         <article className="card certificate-card">
