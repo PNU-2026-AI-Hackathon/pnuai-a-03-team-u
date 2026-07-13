@@ -9,6 +9,7 @@ from app.api.graduation import router as graduation_router
 from app.api.portal_sync import router as portal_sync_router
 from app.api.profile import router as profile_router
 from app.api.rag import router as rag_router
+from app.api.roadmap_agent import router as roadmap_agent_router
 from app.api.roadmaps import router as roadmaps_router
 from app.core.config import settings
 from app.core.scheduler import scheduler
@@ -37,6 +38,7 @@ app.include_router(portal_sync_router)
 app.include_router(profile_router)
 app.include_router(courses_router)
 app.include_router(roadmaps_router)
+app.include_router(roadmap_agent_router)
 app.include_router(graduation_router)
 app.include_router(rag_router)
 
