@@ -14,6 +14,19 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-13 (d0won) - 2
+
+- **RAG pgvector 임베딩 검색을 기본으로 끔**: `courses`/`graduation_requirements`가
+  이미 학과/전공/학년/학기/이수구분이 정형 컬럼으로 있는 카탈로그 데이터라, 자유
+  텍스트 의미 검색이 필요한 상황이 아니라고 판단. `CurriculumRetriever.search`/
+  `GraduationRequirementRetriever.search`와 `RagSearchRequest`의 `use_vector`
+  기본값을 `false`로 변경 — 구조화 DB 필터 + 진로 키워드 랭킹만 기본 경로로 쓴다.
+  `RagChunk`/pgvector 스키마는 지우지 않고 남겨둠(나중에 필요해지면 `use_vector=true`로
+  다시 켤 수 있음). 이 결정으로 벡터 검색 관련 미해결 이슈 3건(테스트 부재, 예외 처리,
+  `embed_missing` 연도 미scope)은 우선순위에서 빠지고, `career_keywords.py` 진로
+  키워드 확장이 랭킹 품질을 좌우하는 유일한 경로가 되어 우선순위가 올라감. 문서:
+  `docs/backend/features/roadmap-rag.md` 갱신.
+
 ## 2026-07-13 (blackest21)
 
 - **RAG / 학사 지식 기반 구축 PR #69 반영 및 Supabase 적용**

@@ -21,7 +21,10 @@ class RagSearchRequest(BaseModel):
     major_id: int | None = None
     curriculum_year: int | str = 2026
     filters: dict[str, Any] = Field(default_factory=dict)
-    use_vector: bool = True
+    # 기본 false: 정형 courses/graduation_requirements를 그대로 구조화 필터링하면
+    # 되는 데이터라 pgvector 임베딩 검색을 굳이 앞단에 둘 필요가 없다고 판단했다.
+    # 벡터 검색 코드/rag_chunks.embedding 컬럼 자체는 남겨둔다(필요해지면 true로 켬).
+    use_vector: bool = False
 
 
 class GraduationRequirementSearchRequest(RagSearchRequest):

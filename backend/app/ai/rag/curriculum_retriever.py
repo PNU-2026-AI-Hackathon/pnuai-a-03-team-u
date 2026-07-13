@@ -103,7 +103,7 @@ class CurriculumRetriever:
         major_id: int | None,
         curriculum_year: int | str,
         filters: RagSearchFilters | dict[str, Any] | None = None,
-        use_vector: bool = True,
+        use_vector: bool = False,
     ) -> list[dict[str, Any]]:
         parsed_filters = filters if isinstance(filters, RagSearchFilters) else RagSearchFilters.from_dict(filters)
         if use_vector and query.strip():
@@ -254,7 +254,7 @@ class GraduationRequirementRetriever:
         curriculum_year: int | str,
         filters: RagSearchFilters | dict[str, Any] | None = None,
         program_type: str | None = "primary",
-        use_vector: bool = True,
+        use_vector: bool = False,
     ) -> list[dict[str, Any]]:
         parsed_filters = filters if isinstance(filters, RagSearchFilters) else RagSearchFilters.from_dict(filters)
         if use_vector and query.strip():
