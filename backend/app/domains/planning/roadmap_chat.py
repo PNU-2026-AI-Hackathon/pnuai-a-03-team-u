@@ -431,6 +431,13 @@ def apply_pending_changes(
         elif change.action == "delete":
             item = db.get(CourseRoadmapItem, change.item_id)
             if item is not None:
+                # pending_roadmap_changes.item_id가 이 item을 가리키고 있으면(이번
+                # change 자신 포함, 같은 item을 겨냥한 다른 미해결 제안도 포함) FK
+                # 제약 때문에 item을 못 지운다 — 실제로 재현된 버그. 참조를 먼저
+                # 끊어준다(item은 어차피 사라지므로 다른 제안의 item_id도 null이 맞다).
+                db.query(PendingRoadmapChange).filter(
+                    PendingRoadmapChange.item_id == item.id
+                ).update({"item_id": None})
                 db.delete(item)
 
         change.status = "approved"
