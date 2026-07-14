@@ -14,6 +14,20 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-13 (d0won) - 4
+
+- **로드맵 Agent update/delete/멀티턴 E2E 테스트, delete FK 위반 버그 수정**:
+  실계정으로 `action="update"`(과목 학기 변경), `action="delete"`(과목 제거),
+  멀티턴 대화("방금 제안한 과목을 4학년 1학기로 옮겨줘" 같은 이전 턴 참조)까지
+  마저 테스트했다. `confirm`에서 `action="delete"`를 승인하면
+  `course_roadmap_items`를 지우는데, 그 항목을 가리키는
+  `pending_roadmap_changes.item_id`(승인 대상 change 자신 포함)가 남아있어서
+  FK 제약 위반(`ForeignKeyViolation`)으로 confirm 자체가 실패하는 버그를 발견 —
+  삭제 직전에 해당 item을 가리키는 모든 `pending_roadmap_changes.item_id`를
+  null로 끊어준 뒤 삭제하도록 고쳤다. 테스트 중 쌓인 더미 로드맵 항목/pending
+  change/채팅 기록은 정리함.
+
+
 ## 2026-07-13 (d0won) - 3
 
 - **AI 로드맵 상담 Agent를 OpenAI로 전환 + 실계정 E2E 테스트, 신뢰성 버그 수정**:
