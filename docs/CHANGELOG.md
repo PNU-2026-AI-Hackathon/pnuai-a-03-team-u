@@ -14,6 +14,19 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-13 (d0won) - 3
+
+- **AI 로드맵 상담 Agent를 OpenAI로 전환 + 실계정 E2E 테스트, 신뢰성 버그 수정**:
+  `.env`에 `ANTHROPIC_API_KEY`가 없어서 `roadmap_chat.py`를 OpenAI(`gpt-4o`)
+  tool-calling으로 다시 짜서 실제 채팅 흐름을 처음부터 끝까지 테스트했다.
+  테스트 중 `gpt-4o`가 `search_courses`/`propose_change` 없이 그냥 텍스트로
+  과목명을 나열하고 끝내버려 `pending_changes`가 비어있는 경우를 발견 —
+  매 턴 `tool_choice="required"`를 강제하고, 사용자에게 보이는 답변도
+  `finish_response` 도구 호출로만 나가게 만들어(일반 텍스트 응답 자체를
+  차단) 고쳤다. 실계정으로 반복 테스트해서 매번 과목 제안 → `pending_roadmap_changes`
+  생성 → 부분 승인/거절(`POST .../agent/confirm`)까지 정상 동작 확인.
+  문서: `docs/backend/features/growth-roadmap.md`의 "AI 로드맵 상담" 절 갱신.
+
 ## 2026-07-12 (d0won)
 
 - **AI 로드맵 상담(human-in-the-loop) 추가**: `POST /me/roadmaps/{id}/agent/chat`
