@@ -1,14 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { getMe, login, logout, signup } from "../api/auth";
+import { getMe, hasAuthSession, login, logout, signup } from "../api/auth";
 import type { SignupPayload, User } from "../api/auth";
-import { ACCESS_TOKEN_KEY } from "../api/client";
 
 type AuthContextValue = {
   user: User | null;
   isBootstrapping: boolean;
   isAuthenticated: boolean;
-  loginWithEmail: (email: string, password: string) => Promise<User>;
+  loginWithEmail: (email: string, password: string, rememberLogin?: boolean) => Promise<User>;
   signupWithEmail: (payload: SignupPayload) => Promise<User>;
   refreshUser: () => Promise<User>;
   logoutUser: () => void;
@@ -21,8 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   useEffect(() => {
-    const token = window.localStorage.getItem(ACCESS_TOKEN_KEY);
-    if (!token) {
+    if (!hasAuthSession()) {
       setIsBootstrapping(false);
       return;
     }
@@ -38,8 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isBootstrapping,
       isAuthenticated: Boolean(user),
-      async loginWithEmail(email, password) {
-        await login(email, password);
+      async loginWithEmail(email, password, rememberLogin = false) {
+        await login(email, password, rememberLogin);
         const nextUser = await getMe();
         setUser(nextUser);
         return nextUser;
