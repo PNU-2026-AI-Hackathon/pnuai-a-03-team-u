@@ -16,6 +16,21 @@
 
 ## 2026-07-14 (d0won)
 
+- **로그인/회원가입 식별자를 이메일 → 학번(student_id)으로 변경**: 프론트 팀이
+  공유한 "1b. 로그인 → 학생정보 입력(포털 계정 자동 크롤링 온보딩)" 와이어프레임에
+  맞춤. 앱 계정(학번+비밀번호)과 One-Stop 포털 크롤링 자격증명(`POST /me/portal-sync`)은
+  계속 분리 유지하되, 로그인 화면 자체는 학번 하나로 통일. `SignupRequest`/
+  `LoginRequest`/`UserResponse`에서 `email` 필드 제거. `User.email` 컬럼은 지우지
+  않고 nullable로만 바꿈(과거 데이터 호환, 마이그레이션 `d0e1f2a3b4c5`).
+  `student_id`는 원래도 nullable+unique 컬럼이라 DB 스키마 변경 없이 애플리케이션
+  레벨에서 필수로 강제. **주의**: 기존 라이브 유저 중 `student_id`가 비어있는 계정은
+  로그인 식별자가 없어져서 로그인이 불가능해짐(현재 4명 중 3명 — 테스트 계정으로
+  추정, 확인 후 정리 필요). **브레이킹 체인지 — 프론트엔드 `AuthPage.tsx`의 이메일
+  입력칸을 학번 입력칸으로 바꿔야 함.** 문서: `docs/backend/features/core-auth.md`,
+  `docs/frontend/frontend-api-guide.md` 갱신.
+
+## 2026-07-14 (d0won)
+
 - **로드맵 Agent가 요청 범위를 벗어나 제안을 남발하던 문제 수정**: "이 과목
   4학년 1학기로 옮겨줘"처럼 기존 항목 하나만 콕 집어 요청해도, gpt-4o가 물어보지
   않은 과목을 3개씩 추가로 `propose_change`하다가 `MAX_TOOL_ITERATIONS`를 다 써서

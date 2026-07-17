@@ -10,7 +10,9 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # 로그인 식별자는 학번(student_id)이다 — 이메일은 더 이상 회원가입/로그인에
+    # 쓰지 않아 nullable로 남겨둔다(과거 데이터 호환용, 신규 가입은 항상 null).
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(100))
     student_id: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)

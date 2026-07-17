@@ -1,13 +1,15 @@
-"""이메일/비밀번호 회원가입·로그인.
+"""학번/비밀번호 회원가입·로그인.
 
-docs/backend/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 아직 없음.
+로그인 식별자는 학번(student_id)이다 — 이메일은 쓰지 않는다(2026-07-14 변경,
+와이어프레임 "1b. 로그인 → 학생정보 입력" 참고). docs/backend/features/core-auth.md
+참고. 소셜 로그인(auth_accounts)은 아직 없음.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -42,10 +44,9 @@ class AcademicProgramInput(BaseModel):
 
 
 class SignupRequest(BaseModel):
-    email: EmailStr
+    student_id: str
     password: str
     name: str
-    student_id: str | None = None
     school: str | None = None
     college: str | None = None
     department: str | None = None
@@ -55,7 +56,7 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    student_id: str
     password: str
 
 
@@ -73,7 +74,6 @@ class AcademicProgramResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    email: str
     name: str
     student_id: str | None
     department: str | None
@@ -104,7 +104,6 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
     ).all()
     return UserResponse(
         id=user.id,
-        email=user.email,
         name=user.name,
         student_id=user.student_id,
         department=_department_name(db, user.department_id),
@@ -125,16 +124,15 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
 
-    existing = db.scalar(select(User).where(User.email == payload.email))
+    existing = db.scalar(select(User).where(User.student_id == payload.student_id))
     if existing is not None:
-        raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다")
+        raise HTTPException(status_code=409, detail="이미 가입된 학번입니다")
 
     top_department_id, _ = resolve_hierarchy(
         db, payload.school, payload.college, payload.department, None
     )
 
     user = User(
-        email=payload.email,
         password_hash=hash_password(payload.password),
         name=payload.name,
         student_id=payload.student_id,
@@ -170,9 +168,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email))
+    user = db.scalar(select(User).where(User.student_id == payload.student_id))
     if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
+        raise HTTPException(status_code=401, detail="학번 또는 비밀번호가 올바르지 않습니다")
 
     return TokenResponse(access_token=create_access_token(user.id))
 
