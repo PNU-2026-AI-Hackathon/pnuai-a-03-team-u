@@ -14,6 +14,20 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-14 (d0won) - 2
+
+- **로그인 식별자를 학번에서 다시 이메일로 되돌림**: PR #81(학번 전환) 머지 후
+  프론트엔드(`AuthPage.tsx`, `api/auth.ts`)가 여전히 이메일 기반 계약을 쓰고
+  있어서(목업 로직도 `mock@plan-u.local` 등 이메일 전제) `POST /auth/login`이
+  422로 깨지는 걸 실제로 확인했다. 학번 기반으로 바꾸려면 프론트도 같이 바꿔야
+  하는데 지금은 조율이 안 된 상태라, 백엔드를 원래 이메일 방식으로 되돌렸다.
+  `SignupRequest`/`LoginRequest`/`UserResponse`에 `email` 필드 복구,
+  `User.email` 컬럼 다시 NOT NULL로. PR #81이 추가한 마이그레이션
+  (`d0e1f2a3b4c5`, email nullable화)은 라이브 DB에 한 번도 적용되지 않은 상태였어서
+  파일째로 삭제 — 안전하게 되돌릴 수 있었다. 문서: `docs/backend/features/core-auth.md`,
+  `docs/frontend/frontend-api-guide.md` 갱신. 나중에 학번 방식으로 다시 갈 땐 프론트
+  작업과 같이 진행할 것.
+
 ## 2026-07-14 (d0won)
 
 - **로그인/회원가입 식별자를 이메일 → 학번(student_id)으로 변경**: 프론트 팀이
