@@ -5,6 +5,7 @@ import { AppLayout } from "../components/layout/AppLayout";
 import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { AuthPage } from "../pages/AuthPage";
 import { DashboardPage } from "../pages/DashboardPage";
+import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
 import { RoadmapPage } from "../pages/RoadmapPage";
 
@@ -33,6 +34,7 @@ export function AppRouter() {
       <BrowserRouter>
         <Routes>
           <Route path="/auth" element={<GuestOnly><AuthPage /></GuestOnly>} />
+          <Route path="/forgot-password" element={<GuestOnly><ForgotPasswordPage /></GuestOnly>} />
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />

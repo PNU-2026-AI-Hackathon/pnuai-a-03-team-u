@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
+import {
+  STUDENT_PROFILE_UPDATED_EVENT,
+  readProfileOverrides,
+} from "../../data/studentProfileStorage";
 import { BrandMark } from "./BrandMark";
 
 const themeLabels = {
@@ -48,6 +52,7 @@ export function AppLayout() {
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
   const [collapsed, setCollapsed] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
+  const [profileOverrides, setProfileOverrides] = useState(readProfileOverrides);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = window.localStorage.getItem("planUThemeMode");
     return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
@@ -59,6 +64,14 @@ export function AppLayout() {
     document.body.dataset.themeMode = themeMode;
     window.localStorage.setItem("planUThemeMode", themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    const refreshProfile = () => setProfileOverrides(readProfileOverrides());
+    window.addEventListener(STUDENT_PROFILE_UPDATED_EVENT, refreshProfile);
+    return () => window.removeEventListener(STUDENT_PROFILE_UPDATED_EVENT, refreshProfile);
+  }, []);
+
+  const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
 
   return (
     <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
@@ -107,9 +120,9 @@ export function AppLayout() {
         </div>
 
         <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">
-          <div className="avatar">{user?.name?.slice(0, 1) ?? "이"}</div>
+          <div className="avatar">{displayName.slice(0, 1)}</div>
           <div>
-            <strong>{user?.name ?? "이도원"} 님</strong>
+            <strong>{displayName} 님</strong>
             <span>나의 프로필 보기</span>
           </div>
         </NavLink>
