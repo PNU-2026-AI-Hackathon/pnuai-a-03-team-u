@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Send, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 
@@ -20,16 +20,20 @@ type RequirementGroup = {
 
 type TimelineStatus = "수강 중" | "이수 예정" | "준비 중";
 
+type TimelineItem = {
+  name: string;
+  category: string;
+  status: TimelineStatus;
+};
+
 type TimelineTerm = {
   term: string;
   period: string;
   summary: string;
-  items: Array<{
-    name: string;
-    category: string;
-    status: TimelineStatus;
-  }>;
+  items: TimelineItem[];
 };
+
+type NewTimelineItem = TimelineItem;
 
 type ChatMessage = {
   id: string;
@@ -68,6 +72,22 @@ const timelineStatusClassNames: Record<TimelineStatus, string> = {
   "이수 예정": "status-planned",
   "준비 중": "status-preparing",
 };
+
+const timelineCategoryOptions = ["전공 기초", "전공 필수", "전공 선택", "교양 필수", "교양 선택", "자격증", "진로 활동", "학사 일정"];
+const timelineStatusOptions: TimelineStatus[] = ["수강 중", "이수 예정", "준비 중"];
+const emptyTimelineItem: NewTimelineItem = { name: "", category: "전공 선택", status: "이수 예정" };
+
+function cloneTimeline(timeline: TimelineTerm[]): TimelineTerm[] {
+  return timeline.map((timelineTerm) => ({
+    ...timelineTerm,
+    items: timelineTerm.items.map((item) => ({ ...item })),
+  }));
+}
+
+function summarizeTimelineItems(items: TimelineItem[]) {
+  const academicItems = items.filter((item) => item.category.startsWith("전공") || item.category.startsWith("교양"));
+  return academicItems.length === items.length ? `${academicItems.length * 3}학점 계획` : `${items.length}개 계획`;
+}
 
 const initialTimeline: TimelineTerm[] = [
   {
@@ -357,6 +377,10 @@ export function RoadmapPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [failedPrompt, setFailedPrompt] = useState("");
   const [requirementScrollState, setRequirementScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [draftTimeline, setDraftTimeline] = useState<TimelineTerm[] | null>(null);
+  const [addingTerm, setAddingTerm] = useState<string | null>(null);
+  const [newTimelineItem, setNewTimelineItem] = useState<NewTimelineItem>(emptyTimelineItem);
+  const [roadmapEditError, setRoadmapEditError] = useState("");
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
@@ -399,6 +423,95 @@ export function RoadmapPage() {
       left: direction === "right" ? strip.clientWidth * 0.72 : strip.clientWidth * -0.72,
       behavior: "smooth",
     });
+  }
+
+  function startRoadmapEditing() {
+    setDraftTimeline(cloneTimeline(roadmapTimeline));
+    setAddingTerm(null);
+    setNewTimelineItem(emptyTimelineItem);
+    setRoadmapEditError("");
+    setActiveTab("semester");
+  }
+
+  function cancelRoadmapEditing() {
+    setDraftTimeline(null);
+    setAddingTerm(null);
+    setNewTimelineItem(emptyTimelineItem);
+    setRoadmapEditError("");
+  }
+
+  function saveRoadmapEditing() {
+    if (!draftTimeline) return;
+    const hasEmptyName = draftTimeline.some((timelineTerm) => timelineTerm.items.some((item) => !item.name.trim()));
+    if (hasEmptyName) {
+      setRoadmapEditError("항목 이름을 입력한 뒤 저장해 주세요.");
+      return;
+    }
+
+    setRoadmapTimeline(cloneTimeline(draftTimeline));
+    setDraftTimeline(null);
+    setAddingTerm(null);
+    setNewTimelineItem(emptyTimelineItem);
+    setRoadmapEditError("");
+  }
+
+  function updateDraftTimelineItem(term: string, itemIndex: number, patch: Partial<TimelineItem>) {
+    setDraftTimeline((current) => current?.map((timelineTerm) => {
+      if (timelineTerm.term !== term) return timelineTerm;
+      const items = timelineTerm.items.map((item, index) => index === itemIndex ? { ...item, ...patch } : item);
+      return { ...timelineTerm, items, summary: summarizeTimelineItems(items) };
+    }) ?? null);
+    setRoadmapEditError("");
+  }
+
+  function moveDraftTimelineItem(sourceTerm: string, itemIndex: number, targetTerm: string) {
+    if (sourceTerm === targetTerm) return;
+    setDraftTimeline((current) => {
+      if (!current) return null;
+      const source = current.find((timelineTerm) => timelineTerm.term === sourceTerm);
+      const movedItem = source?.items[itemIndex];
+      if (!movedItem) return current;
+
+      return current.map((timelineTerm) => {
+        const items = timelineTerm.term === sourceTerm
+          ? timelineTerm.items.filter((_, index) => index !== itemIndex)
+          : timelineTerm.term === targetTerm
+            ? [...timelineTerm.items, movedItem]
+            : timelineTerm.items;
+        return { ...timelineTerm, items, summary: summarizeTimelineItems(items) };
+      });
+    });
+  }
+
+  function deleteDraftTimelineItem(term: string, itemIndex: number) {
+    setDraftTimeline((current) => current?.map((timelineTerm) => {
+      if (timelineTerm.term !== term) return timelineTerm;
+      const items = timelineTerm.items.filter((_, index) => index !== itemIndex);
+      return { ...timelineTerm, items, summary: summarizeTimelineItems(items) };
+    }) ?? null);
+  }
+
+  function beginAddingTimelineItem(term: string) {
+    setAddingTerm(term);
+    setNewTimelineItem(emptyTimelineItem);
+    setRoadmapEditError("");
+  }
+
+  function addDraftTimelineItem(term: string) {
+    const name = newTimelineItem.name.trim();
+    if (!name) {
+      setRoadmapEditError("추가할 항목 이름을 입력해 주세요.");
+      return;
+    }
+
+    setDraftTimeline((current) => current?.map((timelineTerm) => {
+      if (timelineTerm.term !== term) return timelineTerm;
+      const items = [...timelineTerm.items, { ...newTimelineItem, name }];
+      return { ...timelineTerm, items, summary: summarizeTimelineItems(items) };
+    }) ?? null);
+    setAddingTerm(null);
+    setNewTimelineItem(emptyTimelineItem);
+    setRoadmapEditError("");
   }
 
   async function sendMessage(value: string, appendUserMessage = true) {
@@ -454,7 +567,11 @@ export function RoadmapPage() {
 
   function handleApplyProposal() {
     if (!proposal) return;
-    setRoadmapTimeline((current) => applyProposalToTimeline(current, proposal.kind));
+    if (draftTimeline) {
+      setDraftTimeline((current) => current ? applyProposalToTimeline(current, proposal.kind) : null);
+    } else {
+      setRoadmapTimeline((current) => applyProposalToTimeline(current, proposal.kind));
+    }
     setMessages((current) => [
       ...current,
       {
@@ -491,6 +608,9 @@ export function RoadmapPage() {
     setFailedPrompt("");
   }
 
+  const isEditingRoadmap = draftTimeline !== null;
+  const visibleTimeline = draftTimeline ?? roadmapTimeline;
+
   return (
     <section className="roadmap-shell" data-current-tab={activeTab}>
       <section className="roadmap-head">
@@ -499,10 +619,31 @@ export function RoadmapPage() {
           <h2>데이터사이언스전공 로드맵</h2>
           <p>졸업 요건, 전공 심화, 진로 준비를 한 화면에서 추적합니다.</p>
         </div>
-        <div className="roadmap-score">
-          <span>완료율 72%</span>
-          <strong>남은 학점 18</strong>
-          <small>2026-1 적용</small>
+        <div className="roadmap-head-tools">
+          <div className="roadmap-score">
+            <span>완료율 72%</span>
+            <strong>남은 학점 18</strong>
+            <small>2026-1 적용</small>
+          </div>
+          <div className="roadmap-edit-actions">
+            {isEditingRoadmap ? (
+              <>
+                <button type="button" onClick={cancelRoadmapEditing}>
+                  <X size={15} aria-hidden="true" />
+                  취소
+                </button>
+                <button className="save-roadmap-button" type="button" onClick={saveRoadmapEditing}>
+                  <Save size={15} aria-hidden="true" />
+                  저장
+                </button>
+              </>
+            ) : (
+              <button className="edit-roadmap-button" type="button" onClick={startRoadmapEditing}>
+                <Pencil size={15} aria-hidden="true" />
+                로드맵 편집
+              </button>
+            )}
+          </div>
         </div>
       </section>
 
@@ -525,6 +666,7 @@ export function RoadmapPage() {
           role="tab"
           aria-selected={activeTab === "requirements"}
           aria-controls="requirements-panel"
+          disabled={isEditingRoadmap}
           onClick={() => setActiveTab("requirements")}
         >
           요건별
@@ -536,6 +678,7 @@ export function RoadmapPage() {
           role="tab"
           aria-selected={activeTab === "curriculum"}
           aria-controls="curriculum-panel"
+          disabled={isEditingRoadmap}
           onClick={() => setActiveTab("curriculum")}
         >
           학과 이수체계도
@@ -605,8 +748,10 @@ export function RoadmapPage() {
                 ) : null}
               </div>
 
+              {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
+
               <section className="semester-timeline">
-                {roadmapTimeline.map((timelineTerm) => (
+                {visibleTimeline.map((timelineTerm) => (
                   <article className="semester-timeline-card" key={timelineTerm.term}>
                     <div className="semester-timeline-head">
                       <div>
@@ -616,7 +761,54 @@ export function RoadmapPage() {
                       <strong>{timelineTerm.summary}</strong>
                     </div>
                     <ul className="semester-course-list">
-                      {timelineTerm.items.map((item) => (
+                      {timelineTerm.items.map((item, itemIndex) => isEditingRoadmap ? (
+                        <li className="semester-course-edit-row" key={`${timelineTerm.term}-${itemIndex}`}>
+                          <label className="semester-edit-name">
+                            <span>항목 이름</span>
+                            <input
+                              value={item.name}
+                              type="text"
+                              onChange={(event) => updateDraftTimelineItem(timelineTerm.term, itemIndex, { name: event.target.value })}
+                            />
+                          </label>
+                          <label>
+                            <span>이수구분</span>
+                            <select
+                              value={item.category}
+                              onChange={(event) => updateDraftTimelineItem(timelineTerm.term, itemIndex, { category: event.target.value })}
+                            >
+                              {timelineCategoryOptions.map((category) => <option value={category} key={category}>{category}</option>)}
+                            </select>
+                          </label>
+                          <label>
+                            <span>배치 학기</span>
+                            <select
+                              value={timelineTerm.term}
+                              onChange={(event) => moveDraftTimelineItem(timelineTerm.term, itemIndex, event.target.value)}
+                            >
+                              {visibleTimeline.map((targetTerm) => <option value={targetTerm.term} key={targetTerm.term}>{targetTerm.term}</option>)}
+                            </select>
+                          </label>
+                          <label>
+                            <span>상태</span>
+                            <select
+                              value={item.status}
+                              onChange={(event) => updateDraftTimelineItem(timelineTerm.term, itemIndex, { status: event.target.value as TimelineStatus })}
+                            >
+                              {timelineStatusOptions.map((status) => <option value={status} key={status}>{status}</option>)}
+                            </select>
+                          </label>
+                          <button
+                            className="delete-roadmap-item-button"
+                            type="button"
+                            aria-label={`${item.name || "항목"} 삭제`}
+                            title="항목 삭제"
+                            onClick={() => deleteDraftTimelineItem(timelineTerm.term, itemIndex)}
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                          </button>
+                        </li>
+                      ) : (
                         <li className="semester-course-row" key={item.name}>
                           <div>
                             <strong>{item.name}</strong>
@@ -628,6 +820,56 @@ export function RoadmapPage() {
                         </li>
                       ))}
                     </ul>
+                    {isEditingRoadmap ? (
+                      addingTerm === timelineTerm.term ? (
+                        <div className="add-roadmap-item-form">
+                          <label className="semester-edit-name">
+                            <span>새 항목 이름</span>
+                            <input
+                              value={newTimelineItem.name}
+                              type="text"
+                              placeholder="예: 알고리즘"
+                              onChange={(event) => setNewTimelineItem((current) => ({ ...current, name: event.target.value }))}
+                            />
+                          </label>
+                          <label>
+                            <span>이수구분</span>
+                            <select
+                              value={newTimelineItem.category}
+                              onChange={(event) => setNewTimelineItem((current) => ({ ...current, category: event.target.value }))}
+                            >
+                              {timelineCategoryOptions.map((category) => <option value={category} key={category}>{category}</option>)}
+                            </select>
+                          </label>
+                          <label>
+                            <span>상태</span>
+                            <select
+                              value={newTimelineItem.status}
+                              onChange={(event) => setNewTimelineItem((current) => ({ ...current, status: event.target.value as TimelineStatus }))}
+                            >
+                              {timelineStatusOptions.map((status) => <option value={status} key={status}>{status}</option>)}
+                            </select>
+                          </label>
+                          <div className="add-roadmap-item-actions">
+                            <button type="button" onClick={() => {
+                              setAddingTerm(null);
+                              setNewTimelineItem(emptyTimelineItem);
+                            }}>
+                              취소
+                            </button>
+                            <button className="confirm-add-roadmap-item" type="button" onClick={() => addDraftTimelineItem(timelineTerm.term)}>
+                              <Check size={14} aria-hidden="true" />
+                              추가
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button className="add-roadmap-item-button" type="button" onClick={() => beginAddingTimelineItem(timelineTerm.term)}>
+                          <Plus size={15} aria-hidden="true" />
+                          항목 추가
+                        </button>
+                      )
+                    ) : null}
                   </article>
                 ))}
               </section>

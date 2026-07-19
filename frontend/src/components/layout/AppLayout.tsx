@@ -162,9 +162,6 @@ export function AppLayout() {
                 ))}
               </div>
             </div>
-            <button type="button" aria-label="도움말">
-              ?
-            </button>
             <NavLink className="user-chip logout-chip" to="/auth" onClick={logoutUser}>
               로그아웃
             </NavLink>

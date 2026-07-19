@@ -1579,6 +1579,42 @@ body.theme-dark .password-reset-icon {
   font-weight: 800;
 }
 
+.roadmap-head-tools {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.roadmap-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.roadmap-edit-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #d5deea;
+  border-radius: 6px;
+  background: #fff;
+  color: #5e6b7e;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.roadmap-edit-actions .edit-roadmap-button,
+.roadmap-edit-actions .save-roadmap-button {
+  border-color: transparent;
+  background: var(--blue);
+  color: #fff;
+}
+
 .roadmap-filters {
   display: flex;
   flex-wrap: wrap;
@@ -3895,6 +3931,11 @@ body.theme-dark .password-reset-icon {
   color: #fff;
 }
 
+.roadmap-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .roadmap-tabs button:focus-visible {
   outline: 3px solid rgba(51, 133, 255, 0.26);
   outline-offset: 2px;
@@ -4348,6 +4389,130 @@ body.theme-dark .password-reset-icon {
 .semester-course-status.status-preparing {
   background: #fff3df;
   color: #a86313;
+}
+
+.roadmap-edit-feedback {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #f2c8cf;
+  border-radius: 6px;
+  background: #fff5f6;
+  color: #b23a4b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.semester-course-edit-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.3fr) repeat(3, minmax(88px, 0.8fr)) 34px;
+  align-items: end;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.semester-course-edit-row label,
+.add-roadmap-item-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.semester-course-edit-row label > span,
+.add-roadmap-item-form label > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.semester-course-edit-row input,
+.semester-course-edit-row select,
+.add-roadmap-item-form input,
+.add-roadmap-item-form select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  outline: 0;
+}
+
+.semester-course-edit-row input:focus,
+.semester-course-edit-row select:focus,
+.add-roadmap-item-form input:focus,
+.add-roadmap-item-form select:focus {
+  border-color: #8dbbfa;
+  box-shadow: 0 0 0 3px rgba(51, 133, 255, 0.12);
+}
+
+.delete-roadmap-item-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #fff0f2;
+  color: #c44758;
+  cursor: pointer;
+}
+
+.add-roadmap-item-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.add-roadmap-item-form {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, 0.75fr) minmax(90px, 0.75fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f5;
+}
+
+.add-roadmap-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  grid-column: 1 / -1;
+}
+
+.add-roadmap-item-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #657184;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.add-roadmap-item-actions .confirm-add-roadmap-item {
+  border-color: transparent;
+  background: var(--blue);
+  color: #fff;
 }
 
 .activity-card-tags span {
@@ -5845,8 +6010,45 @@ body.theme-dark .activity-card-tags span {
 }
 
 body.theme-dark .semester-timeline-head,
-body.theme-dark .semester-course-row {
+body.theme-dark .semester-course-row,
+body.theme-dark .semester-course-edit-row,
+body.theme-dark .add-roadmap-item-form {
   border-color: #2c394d;
+}
+
+body.theme-dark .roadmap-edit-actions button,
+body.theme-dark .add-roadmap-item-actions button {
+  border-color: #34435a;
+  background: #111a28;
+  color: var(--muted);
+}
+
+body.theme-dark .roadmap-edit-actions .edit-roadmap-button,
+body.theme-dark .roadmap-edit-actions .save-roadmap-button,
+body.theme-dark .add-roadmap-item-actions .confirm-add-roadmap-item {
+  border-color: transparent;
+  background: var(--blue);
+  color: #fff;
+}
+
+body.theme-dark .semester-course-edit-row input,
+body.theme-dark .semester-course-edit-row select,
+body.theme-dark .add-roadmap-item-form input,
+body.theme-dark .add-roadmap-item-form select {
+  border-color: #34435a;
+  background: #111a28;
+  color: var(--ink);
+}
+
+body.theme-dark .delete-roadmap-item-button {
+  background: #3a232d;
+  color: #ff9caa;
+}
+
+body.theme-dark .roadmap-edit-feedback {
+  border-color: #713745;
+  background: #321e27;
+  color: #ffabb7;
 }
 
 body.theme-dark .semester-timeline-head > strong,
@@ -5980,6 +6182,39 @@ body.theme-dark .evidence-list strong {
   .semester-timeline-head,
   .semester-course-row {
     align-items: flex-start;
+  }
+
+  .roadmap-head-tools {
+    width: 100%;
+  }
+
+  .roadmap-edit-actions {
+    width: 100%;
+  }
+
+  .roadmap-edit-actions button {
+    flex: 1 1 auto;
+  }
+
+  .semester-course-edit-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .semester-course-edit-row .semester-edit-name,
+  .add-roadmap-item-form .semester-edit-name {
+    grid-column: 1 / -1;
+  }
+
+  .delete-roadmap-item-button {
+    justify-self: end;
+  }
+
+  .add-roadmap-item-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .add-roadmap-item-actions {
+    grid-column: auto;
   }
 
   .activity-results,
