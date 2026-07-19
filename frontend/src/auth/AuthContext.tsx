@@ -7,7 +7,7 @@ type AuthContextValue = {
   user: User | null;
   isBootstrapping: boolean;
   isAuthenticated: boolean;
-  loginWithEmail: (email: string, password: string, rememberLogin?: boolean) => Promise<User>;
+  loginWithStudentId: (studentId: string, password: string, rememberLogin?: boolean) => Promise<User>;
   signupWithEmail: (payload: SignupPayload) => Promise<User>;
   refreshUser: () => Promise<User>;
   logoutUser: () => void;
@@ -36,15 +36,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isBootstrapping,
       isAuthenticated: Boolean(user),
-      async loginWithEmail(email, password, rememberLogin = false) {
-        await login(email, password, rememberLogin);
+      async loginWithStudentId(studentId, password, rememberLogin = false) {
+        await login(studentId, password, rememberLogin);
         const nextUser = await getMe();
         setUser(nextUser);
         return nextUser;
       },
       async signupWithEmail(payload) {
         const createdUser = await signup(payload);
-        await login(payload.email, payload.password);
+        await login(payload.student_id, payload.password);
         const nextUser = await getMe();
         setUser(nextUser);
         return createdUser;

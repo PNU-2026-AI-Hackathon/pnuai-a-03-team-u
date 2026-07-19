@@ -1,13 +1,11 @@
 # Core (로그인/회원가입)
 
-이메일/비밀번호 회원가입·로그인 + JWT 발급/검증까지 구현됨. 소셜 로그인은 아직 없음.
+이메일 기반 회원가입, 학번/비밀번호 로그인 + JWT 발급/검증까지 구현됨.
+이메일은 계정 연락처와 향후 비밀번호 재설정에 사용하고, 로그인 식별자는 학번을 사용한다.
+소셜 로그인은 아직 없음.
 
-**2026-07-14에 로그인 식별자를 학번(student_id)으로 바꿨다가 다시 이메일로 되돌렸다.**
-프론트 와이어프레임("1b. 로그인 → 학생정보 입력")에 맞춰 한 번 바꿨는데, 프론트엔드
-`AuthPage.tsx`/`api/auth.ts`가 여전히 이메일 기반 계약을 쓰고 있어서(수정 안 됨,
-`mock@plan-u.local` 같은 목업 로직도 이메일 전제) 실제 로그인이 깨지는 걸 확인하고
-백엔드를 다시 이메일 방식으로 되돌렸다. 학번 기반으로 바꾸려면 프론트엔드도 같이
-바꿔야 하니, 다음에 다시 시도할 땐 프론트 작업과 같이 조율할 것.
+**2026-07-19에 프론트와 백엔드 로그인 계약을 함께 학번(`student_id`) 기준으로 변경했다.**
+회원가입에는 이메일과 학번이 모두 필요하며, 회원가입 직후 자동 로그인도 학번을 사용한다.
 
 [내 정보 페이지(졸업요건 확인)](./my-info-graduation-check.md)의 `POST /me/portal-sync`,
 `PATCH /me/advisor-consulted`가 `get_current_user`를 재사용하는 첫 사례다.
@@ -16,8 +14,8 @@
 
 | 메서드/경로 | 설명 |
 | --- | --- |
-| `POST /auth/signup` | 이메일/비밀번호/이름(+선택적으로 학번/학교/학과/진로/복수전공·부전공) 가입. 비밀번호 8자 미만이면 400, 이메일 중복이면 409 |
-| `POST /auth/login` | 이메일/비밀번호 검증 후 JWT access token 발급 |
+| `POST /auth/signup` | 이메일/학번/비밀번호/이름(+선택적으로 학교/학과/진로/복수전공·부전공) 가입. 비밀번호 8자 미만이면 400, 이메일·학번 중복이면 409 |
+| `POST /auth/login` | 학번/비밀번호 검증 후 JWT access token 발급 |
 | `GET /auth/me` | `Authorization: Bearer <token>` 헤더로 현재 유저 + 전공 목록 조회 |
 
 `get_current_user` 의존성(`app/api/auth.py`)이 다른 라우터에서도 재사용 가능 —
@@ -64,11 +62,11 @@
     평문이 다시 필요할 일이 없으므로 단방향 해시(bcrypt)를 쓴다
 - **JWT**: `python-jose`. `JWT_SECRET_KEY`(`.env`, 각자 로컬에서 생성)로 서명, 기본 만료 7일
   (`ACCESS_TOKEN_EXPIRE_MINUTES`)
-- **모델 변경 없음**: `User.email`/`password_hash`가 이미 있어서 마이그레이션 불필요
+- **모델 변경 없음**: `User.student_id`에 이미 unique index가 있어서 마이그레이션 불필요
 
 ## 방향 (`docs/backend/architecture.md` "Authentication Direction" 기반)
 
-- 이메일/비밀번호 인증 완료, 이후 소셜 로그인(Google/Kakao/Naver)을 provider 계정으로 추가 예정
+- 학번/비밀번호 인증 완료, 이후 소셜 로그인(Google/Kakao/Naver)을 provider 계정으로 추가 예정
 - 소셜 로그인을 위한 `auth_accounts` 테이블 설계는 되어 있으나 아직 마이그레이션에 반영 안 됨
   (`provider`, `provider_user_id`, `email`로 로컬/소셜 계정을 함께 식별)
 

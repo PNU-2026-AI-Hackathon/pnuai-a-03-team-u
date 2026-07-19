@@ -1,4 +1,4 @@
-"""이메일/비밀번호 회원가입·로그인.
+"""이메일 기반 회원가입과 학번/비밀번호 로그인.
 
 docs/backend/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 아직 없음.
 """
@@ -45,7 +45,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
-    student_id: str | None = None
+    student_id: str
     school: str | None = None
     college: str | None = None
     department: str | None = None
@@ -53,10 +53,26 @@ class SignupRequest(BaseModel):
     # 주전공 하나, 복수전공/부전공 여러 개까지 한 번에 등록 가능
     academic_programs: list[AcademicProgramInput] = []
 
+    @field_validator("student_id")
+    @classmethod
+    def _check_student_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("학번을 입력해야 합니다")
+        return value
+
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    student_id: str
     password: str
+
+    @field_validator("student_id")
+    @classmethod
+    def _check_student_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("학번을 입력해야 합니다")
+        return value
 
 
 class TokenResponse(BaseModel):
@@ -129,6 +145,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if existing is not None:
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다")
 
+    existing_student = db.scalar(select(User).where(User.student_id == payload.student_id))
+    if existing_student is not None:
+        raise HTTPException(status_code=409, detail="이미 가입된 학번입니다")
+
     top_department_id, _ = resolve_hierarchy(
         db, payload.school, payload.college, payload.department, None
     )
@@ -170,9 +190,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email))
+    user = db.scalar(select(User).where(User.student_id == payload.student_id))
     if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
+        raise HTTPException(status_code=401, detail="학번 또는 비밀번호가 올바르지 않습니다")
 
     return TokenResponse(access_token=create_access_token(user.id))
 
