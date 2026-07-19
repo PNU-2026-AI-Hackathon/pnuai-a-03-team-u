@@ -15,26 +15,22 @@ const themeLabels = {
 
 type ThemeMode = keyof typeof themeLabels;
 
-const pageMeta: Record<string, { eyebrow: string; title: string; search: string }> = {
+const pageMeta: Record<string, { eyebrow: string; title: string }> = {
   "/": {
     eyebrow: "2026학년도 1학기",
     title: "Home",
-    search: "로드맵, 자격증, 활동 검색",
   },
   "/roadmap": {
     eyebrow: "데이터사이언스전공",
     title: "성장 로드맵",
-    search: "과목, 활동, 자격증 검색",
   },
   "/activities": {
     eyebrow: "개인별 추천",
     title: "추천 활동",
-    search: "공모전, 인턴십, 비교과 검색",
   },
   "/info": {
     eyebrow: "Student Data",
     title: "내 정보",
-    search: "내 활동, 과목, 증빙 검색",
   },
 };
 
@@ -70,6 +66,10 @@ export function AppLayout() {
     window.addEventListener(STUDENT_PROFILE_UPDATED_EVENT, refreshProfile);
     return () => window.removeEventListener(STUDENT_PROFILE_UPDATED_EVENT, refreshProfile);
   }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [location.pathname]);
 
   const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
 
@@ -134,10 +134,6 @@ export function AppLayout() {
             <p className="eyebrow">{meta.eyebrow}</p>
             <h1>{meta.title}</h1>
           </div>
-          <label className="search">
-            <span>⌕</span>
-            <input type="search" placeholder={meta.search} />
-          </label>
           <div className="top-actions">
             <div className={`theme-picker${themeOpen ? " open" : ""}`}>
               <button
