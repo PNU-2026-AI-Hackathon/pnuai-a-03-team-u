@@ -4,19 +4,18 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
-import { isMockAuthEnabled } from "../api/auth";
 import type { AcademicProgram } from "../api/auth";
 
 type AuthMode = "login" | "signup";
 
 export function AuthPage() {
   const navigate = useNavigate();
-  const { loginWithEmail, signupWithEmail } = useAuth();
+  const { loginWithStudentId, signupWithEmail } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [message, setMessage] = useState("");
   const [loginMessage, setLoginMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("");
+  const [loginStudentId, setLoginStudentId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberLogin, setRememberLogin] = useState(false);
   const [signupPassword, setSignupPassword] = useState("");
@@ -43,7 +42,7 @@ export function AuthPage() {
     setLoginMessage("");
     setIsSubmitting(true);
     try {
-      await loginWithEmail(loginEmail, loginPassword, rememberLogin);
+      await loginWithStudentId(loginStudentId, loginPassword, rememberLogin);
       navigate("/", { replace: true });
     } catch (error) {
       setLoginMessage(getErrorMessage(error));
@@ -83,7 +82,7 @@ export function AuthPage() {
         email: signupEmail,
         password: signupPassword,
         name: signupName,
-        student_id: studentId || undefined,
+        student_id: studentId,
         school: "부산대학교",
         department: department || undefined,
         career_goal: careerGoal || undefined,
@@ -144,12 +143,13 @@ export function AuthPage() {
             <p>Plan U 계정으로 내 정보를 이어서 확인합니다.</p>
           </div>
           <label>
-            <span>{isMockAuthEnabled ? "아이디" : "이메일"}</span>
+            <span>학번</span>
             <input
-              type={isMockAuthEnabled ? "text" : "email"}
-              placeholder={isMockAuthEnabled ? undefined : "이메일을 입력하세요"}
-              value={loginEmail}
-              onChange={(event) => setLoginEmail(event.target.value)}
+              type="text"
+              inputMode="numeric"
+              autoComplete="username"
+              value={loginStudentId}
+              onChange={(event) => setLoginStudentId(event.target.value)}
               required
             />
           </label>
@@ -157,7 +157,7 @@ export function AuthPage() {
             <span>비밀번호</span>
             <input
               type="password"
-              placeholder={isMockAuthEnabled ? undefined : "비밀번호를 입력하세요"}
+              autoComplete="current-password"
               value={loginPassword}
               onChange={(event) => setLoginPassword(event.target.value)}
               required
@@ -204,7 +204,7 @@ export function AuthPage() {
           </label>
           <label>
             <span>학번</span>
-            <input type="text" inputMode="numeric" placeholder="학번을 입력하세요" value={studentId} onChange={(event) => setStudentId(event.target.value)} />
+            <input type="text" inputMode="numeric" placeholder="학번을 입력하세요" value={studentId} onChange={(event) => setStudentId(event.target.value)} required />
           </label>
           <label>
             <span>학과</span>

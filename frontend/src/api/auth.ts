@@ -27,7 +27,7 @@ export type SignupPayload = {
   email: string;
   password: string;
   name: string;
-  student_id?: string;
+  student_id: string;
   school?: string;
   college?: string;
   department?: string;
@@ -35,12 +35,12 @@ export type SignupPayload = {
   academic_programs?: AcademicProgram[];
 };
 
-function createMockUser(identifier: string, name = "테스트 학생"): User {
+function createMockUser(studentId: string, name = "테스트 학생", email = "mock@plan-u.local"): User {
   return {
     id: 0,
-    email: identifier.includes("@") ? identifier : "mock@plan-u.local",
+    email,
     name,
-    student_id: "2023662247",
+    student_id: studentId.trim() || "2023662247",
     department: "의생명융합공학부",
     major: "데이터사이언스전공",
     career_goal: "데이터 사이언티스트",
@@ -63,16 +63,16 @@ export function hasAuthSession() {
 
 export async function signup(payload: SignupPayload) {
   if (isMockAuthEnabled) {
-    return createMockUser(payload.email, payload.name);
+    return createMockUser(payload.student_id, payload.name, payload.email);
   }
 
   const { data } = await apiClient.post<User>("/auth/signup", payload);
   return data;
 }
 
-export async function login(email: string, password: string, rememberLogin = false) {
+export async function login(studentId: string, password: string, rememberLogin = false) {
   if (isMockAuthEnabled) {
-    const mockUser = createMockUser(email.trim());
+    const mockUser = createMockUser(studentId);
     const storage = rememberLogin ? window.localStorage : window.sessionStorage;
     const temporaryStorage = rememberLogin ? window.sessionStorage : window.localStorage;
     temporaryStorage.removeItem(MOCK_ACCESS_TOKEN_KEY);
@@ -83,7 +83,7 @@ export async function login(email: string, password: string, rememberLogin = fal
   }
 
   const { data } = await apiClient.post<{ access_token: string; token_type: string }>("/auth/login", {
-    email,
+    student_id: studentId,
     password,
   });
   const storage = rememberLogin ? window.localStorage : window.sessionStorage;
