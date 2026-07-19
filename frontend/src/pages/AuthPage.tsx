@@ -174,7 +174,7 @@ export function AuthPage() {
                 onChange={(event) => setRememberLogin(event.target.checked)}
               /> 로그인 유지
             </label>
-            <a href="#forgot">비밀번호 찾기</a>
+            <Link to="/forgot-password">비밀번호 찾기</Link>
           </div>
           <button className="auth-submit" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "로그인 중..." : "로그인"}

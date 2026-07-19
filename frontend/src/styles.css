@@ -642,6 +642,15 @@ body.theme-dark .semester-pill {
   color: #8dc7ff;
 }
 
+body.theme-dark .dashboard-record-list li {
+  border-color: #2c394d;
+  background: #141e2d;
+}
+
+body.theme-dark .dashboard-record-list li > strong {
+  color: var(--ink);
+}
+
 body.theme-dark .activity-tags span {
   border-color: #2bbd75;
   color: #74dc9a;
@@ -907,6 +916,57 @@ body.theme-dark .activity-tags span {
   font-weight: 900;
   text-decoration: none;
   cursor: pointer;
+}
+
+.auth-submit:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.password-reset-brand-panel {
+  min-height: 560px;
+}
+
+.password-reset-back,
+.password-reset-mobile-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  color: #526071;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.password-reset-card {
+  padding: 34px;
+}
+
+.password-reset-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: #e8f2ff;
+  color: var(--blue);
+}
+
+.password-reset-mobile-back {
+  display: none;
+  justify-self: center;
+  margin-top: 2px;
+}
+
+body.theme-dark .password-reset-back,
+body.theme-dark .password-reset-mobile-back {
+  color: var(--muted);
+}
+
+body.theme-dark .password-reset-icon {
+  background: #253247;
+  color: #8fc5ff;
 }
 
 .hero-panel,
@@ -1236,6 +1296,60 @@ body.theme-dark .activity-tags span {
   font-weight: 800;
 }
 
+.dashboard-summary-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-record-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dashboard-record-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #e4e9f1;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.dashboard-record-list li > span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.dashboard-record-list li > strong {
+  overflow-wrap: anywhere;
+  color: #303846;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dashboard-record-list li.empty {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.dashboard-more-link {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 14px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .activity-list {
   display: grid;
   gap: 16px;
@@ -1340,6 +1454,13 @@ body.theme-dark .activity-tags span {
 .credit-chart strong {
   color: var(--ink);
   font-size: 22px;
+}
+
+.credit-chart strong span {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .term-options {
@@ -3470,6 +3591,18 @@ body.theme-dark .activity-tags span {
 
   .auth-brand-panel h1 {
     font-size: 30px;
+  }
+
+  .password-reset-brand-panel {
+    display: none;
+  }
+
+  .password-reset-card {
+    padding: 24px 22px;
+  }
+
+  .password-reset-mobile-back {
+    display: inline-flex;
   }
 
   .sidebar {

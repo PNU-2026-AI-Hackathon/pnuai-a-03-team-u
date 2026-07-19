@@ -27,11 +27,18 @@ import type {
 import { getGraduationProgress, isMockStudentDataEnabled, syncPortalData } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { useAuth } from "../auth/AuthContext";
-
-const COURSE_RECORDS_KEY = "planUCourseRecords";
-const STUDENT_RECORD_KEY = "planUStudentRecord";
-const PROFILE_OVERRIDES_KEY = "planUProfileOverrides";
-const GRADUATION_OVERRIDE_KEY = "planUGraduationOverride";
+import {
+  COURSE_RECORDS_KEY,
+  GRADUATION_OVERRIDE_KEY,
+  PROFILE_OVERRIDES_KEY,
+  STUDENT_RECORD_KEY,
+  notifyStudentProfileUpdated,
+  readGraduationOverride,
+  readProfileOverrides,
+  readStoredCourses,
+  readStoredStudentRecord,
+} from "../data/studentProfileStorage";
+import type { ProfileOverrides } from "../data/studentProfileStorage";
 
 const gradePointMap: Record<string, number> = {
   "A+": 4.5,
@@ -68,13 +75,6 @@ type DeleteTarget = {
   label: string;
 };
 
-type ProfileOverrides = {
-  name: string;
-  department?: string;
-  major: string;
-  academicYear: number;
-};
-
 type CourseDraft = {
   courseName: string;
   category: string;
@@ -92,42 +92,6 @@ const emptyCourseDraft = (): CourseDraft => ({
   semester: "1",
   grade: "A0",
 });
-
-function readStoredCourses() {
-  try {
-    const saved = window.sessionStorage.getItem(COURSE_RECORDS_KEY);
-    return saved ? (JSON.parse(saved) as CourseRecord[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function readStoredStudentRecord() {
-  try {
-    const saved = window.sessionStorage.getItem(STUDENT_RECORD_KEY);
-    return saved ? (JSON.parse(saved) as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function readProfileOverrides(): ProfileOverrides | null {
-  try {
-    const saved = window.sessionStorage.getItem(PROFILE_OVERRIDES_KEY);
-    return saved ? (JSON.parse(saved) as ProfileOverrides) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readGraduationOverride(): GraduationProgram | null {
-  try {
-    const saved = window.sessionStorage.getItem(GRADUATION_OVERRIDE_KEY);
-    return saved ? (JSON.parse(saved) as GraduationProgram) : null;
-  } catch {
-    return null;
-  }
-}
 
 function getErrorMessage(error: unknown) {
   if (isAxiosError(error)) {
@@ -404,6 +368,7 @@ export function InfoPage() {
     } else {
       window.sessionStorage.removeItem(GRADUATION_OVERRIDE_KEY);
     }
+    notifyStudentProfileUpdated();
     cancelProfileEditor();
   }
 
@@ -777,7 +742,7 @@ export function InfoPage() {
             {displayedGraduation?.warnings.map((warning) => <p className="graduation-warning" key={warning}>{warning}</p>)}
           </article>
 
-          <article className="card info-section-card">
+          <article className="card info-section-card" id="grades">
             <div className="card-title">
               <div>
                 <p className="eyebrow">Grades</p>
@@ -910,7 +875,7 @@ export function InfoPage() {
             </div>
           ) : null}
 
-          <article className="card info-section-card">
+          <article className="card info-section-card" id="activities">
             <div className="card-title profile-section-title">
               <div>
                 <p className="eyebrow">Non-Curricular</p>
@@ -998,7 +963,7 @@ export function InfoPage() {
             </div>
           </article>
 
-          <article className="card info-section-card">
+          <article className="card info-section-card" id="credentials">
             <div className="card-title profile-section-title">
               <div><p className="eyebrow">Certificate</p><h3>자격증</h3></div>
               <button className="profile-add-button" type="button" onClick={() => openCertificationEditor()} disabled={isProfileSaving || editingCertificationId !== null}>
