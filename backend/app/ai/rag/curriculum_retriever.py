@@ -216,6 +216,7 @@ class CurriculumRetriever:
             "source": "courses:2026_curriculum",
             "score": _keyword_score(query, evidence),
             "document_type": "curriculum",
+            "description": course.description,
         }
 
     @staticmethod
@@ -226,7 +227,11 @@ class CurriculumRetriever:
             course.category,
             f"{course.course_name}({course.credits}학점)" if course.credits is not None else course.course_name,
         ]
-        return " ".join(part for part in parts if part)
+        evidence = " ".join(part for part in parts if part)
+        if course.description:
+            snippet = course.description if len(course.description) <= 150 else f"{course.description[:150]}…"
+            evidence = f"{evidence} — {snippet} (※ 과목명이 같은 개편 이전 자료 기반 설명, 현재 내용과 다를 수 있음)"
+        return evidence
 
 
 class GraduationRequirementRetriever:
