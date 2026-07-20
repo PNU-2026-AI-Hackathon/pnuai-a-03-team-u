@@ -3,9 +3,12 @@ import { ACCESS_TOKEN_KEY, apiClient } from "./client";
 const MOCK_ACCESS_TOKEN_KEY = "planUMockAccessToken";
 const MOCK_USER_KEY = "planUMockUser";
 
+const hasConfiguredApi = Boolean(import.meta.env.VITE_API_BASE_URL?.trim());
+
 export const isMockAuthEnabled =
-  import.meta.env.DEV &&
-  (import.meta.env.VITE_USE_MOCK_AUTH === "true" || import.meta.env.VITE_USE_MOCK_STUDENT_DATA === "true");
+  import.meta.env.VITE_USE_MOCK_AUTH === "true" ||
+  (import.meta.env.DEV && import.meta.env.VITE_USE_MOCK_STUDENT_DATA === "true") ||
+  (import.meta.env.PROD && !hasConfiguredApi);
 
 export type AcademicProgram = {
   major: string;
