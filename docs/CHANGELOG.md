@@ -14,6 +14,21 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-20 (d0won)
+
+- **로드맵 상담 에이전트를 OpenAI SDK 직접 호출 → langchain으로 전환(멀티 LLM 지원)**:
+  `roadmap_chat.py`의 LLM 호출부를 langchain `init_chat_model` + `bind_tools`로
+  바꿔서, `settings.ROADMAP_AGENT_MODEL`("provider:model", 기본 `openai:gpt-4o`)
+  한 줄만 바꾸면 OpenAI/Anthropic/Google 프로바이더가 교체되게 함. tool 스키마
+  (`_TOOLS`, OpenAI function-schema dict를 langchain이 그대로 수용)·`_ToolContext`·
+  tool 루프·HITL(제안→confirm) 구조는 그대로 유지. `tool_choice="required"`도
+  프로바이더 무관한 `"any"`로 바꿈(langchain이 각 SDK 형식으로 변환).
+  `config.py`에 `GOOGLE_API_KEY`/`ROADMAP_AGENT_MODEL` 추가, requirements.txt에
+  `langchain-anthropic`/`langchain-google-genai`를 주석 옵션으로 명시(쓸 때 설치).
+  실계정으로 chat→propose→confirm 전체 플로우 재검증 완료, 프로바이더 스왑
+  (anthropic 지정 시 패키지 없으면 명확한 에러) 동작 확인. 문서:
+  `docs/backend/features/growth-roadmap.md` 갱신 + 발표자료 `docs/presentation.md` 추가.
+
 ## 2026-07-14 (d0won) - 2
 
 - **로그인 식별자를 학번에서 다시 이메일로 되돌림**: PR #81(학번 전환) 머지 후
