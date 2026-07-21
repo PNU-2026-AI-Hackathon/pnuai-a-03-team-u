@@ -2,6 +2,7 @@ import { ACCESS_TOKEN_KEY, apiClient } from "./client";
 
 const MOCK_ACCESS_TOKEN_KEY = "planUMockAccessToken";
 const MOCK_USER_KEY = "planUMockUser";
+const AUTH_REQUEST_TIMEOUT_MS = 15_000;
 
 export const isMockAuthEnabled =
   import.meta.env.DEV &&
@@ -9,6 +10,12 @@ export const isMockAuthEnabled =
 
 export type AcademicProgram = {
   major: string;
+  program_type: "primary" | "dual" | "minor" | "interdisciplinary";
+};
+
+export type AcademicProgramInput = {
+  major?: string;
+  department?: string;
   program_type: "primary" | "dual" | "minor" | "interdisciplinary";
 };
 
@@ -32,7 +39,7 @@ export type SignupPayload = {
   college?: string;
   department?: string;
   career_goal?: string;
-  academic_programs?: AcademicProgram[];
+  academic_programs?: AcademicProgramInput[];
 };
 
 function createMockUser(studentId: string, name = "테스트 학생", email = "mock@plan-u.local"): User {
@@ -66,7 +73,9 @@ export async function signup(payload: SignupPayload) {
     return createMockUser(payload.student_id, payload.name, payload.email);
   }
 
-  const { data } = await apiClient.post<User>("/auth/signup", payload);
+  const { data } = await apiClient.post<User>("/auth/signup", payload, {
+    timeout: AUTH_REQUEST_TIMEOUT_MS,
+  });
   return data;
 }
 
@@ -82,10 +91,14 @@ export async function login(studentId: string, password: string, rememberLogin =
     return { access_token: "mock-access-token", token_type: "bearer" };
   }
 
-  const { data } = await apiClient.post<{ access_token: string; token_type: string }>("/auth/login", {
-    student_id: studentId,
-    password,
-  });
+  const { data } = await apiClient.post<{ access_token: string; token_type: string }>(
+    "/auth/login",
+    {
+      student_id: studentId,
+      password,
+    },
+    { timeout: AUTH_REQUEST_TIMEOUT_MS },
+  );
   const storage = rememberLogin ? window.localStorage : window.sessionStorage;
   const temporaryStorage = rememberLogin ? window.sessionStorage : window.localStorage;
   temporaryStorage.removeItem(ACCESS_TOKEN_KEY);
@@ -102,7 +115,9 @@ export async function getMe() {
     return JSON.parse(savedUser) as User;
   }
 
-  const { data } = await apiClient.get<User>("/auth/me");
+  const { data } = await apiClient.get<User>("/auth/me", {
+    timeout: AUTH_REQUEST_TIMEOUT_MS,
+  });
   return data;
 }
 

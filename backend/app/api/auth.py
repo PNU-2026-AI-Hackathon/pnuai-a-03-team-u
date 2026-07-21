@@ -26,7 +26,8 @@ _VALID_PROGRAM_TYPES = {"primary", "dual", "minor", "interdisciplinary"}
 
 
 class AcademicProgramInput(BaseModel):
-    major: str
+    # 학과 자체가 전공 단위인 경우에는 major를 만들지 않고 department만 저장한다.
+    major: str | None = None
     # 비워두면 SignupRequest의 최상위 school/college/department를 사용한다.
     school: str | None = None
     college: str | None = None

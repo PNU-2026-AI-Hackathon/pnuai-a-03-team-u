@@ -4515,6 +4515,156 @@ body.theme-dark .password-reset-icon {
   color: #fff;
 }
 
+.add-roadmap-item-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.roadmap-api-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 280px;
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.roadmap-api-state button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--blue);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.roadmap-inline-empty {
+  margin: 0;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.semester-course-status.status-completed {
+  background: #e8edf5;
+  color: #5d6b7f;
+}
+
+.api-roadmap-edit-row {
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.55fr) 34px;
+  align-items: center;
+}
+
+.api-roadmap-course-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.api-roadmap-course-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-roadmap-course-copy span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.api-course-picker {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.course-search-status,
+.selected-course-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.selected-course-summary {
+  color: #188653;
+}
+
+.course-search-results {
+  display: grid;
+  max-height: 210px;
+  overflow-y: auto;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 24px rgba(25, 35, 55, 0.12);
+}
+
+.course-search-results button {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #edf0f5;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.course-search-results button:last-child {
+  border-bottom: 0;
+}
+
+.course-search-results button:hover {
+  background: #f3f7fd;
+}
+
+.course-search-results strong {
+  font-size: 12px;
+}
+
+.course-search-results span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+body.theme-dark .roadmap-api-state,
+body.theme-dark .course-search-results,
+body.theme-dark .roadmap-api-state button {
+  border-color: #35445a;
+  background: #141e2d;
+}
+
+body.theme-dark .course-search-results button {
+  border-bottom-color: #2c394d;
+}
+
+body.theme-dark .course-search-results button:hover {
+  background: #1b2a3d;
+}
+
+body.theme-dark .semester-course-status.status-completed {
+  background: #283548;
+  color: #bec9d8;
+}
+
 .activity-card-tags span {
   padding: 7px 10px;
   border-radius: 999px;

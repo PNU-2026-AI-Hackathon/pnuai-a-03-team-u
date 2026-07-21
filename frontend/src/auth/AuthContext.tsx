@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { getMe, hasAuthSession, login, logout, signup } from "../api/auth";
 import type { SignupPayload, User } from "../api/auth";
+import { AUTH_EXPIRED_EVENT } from "../api/client";
 
 type AuthContextValue = {
   user: User | null;
@@ -31,23 +32,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setIsBootstrapping(false));
   }, []);
 
+  useEffect(() => {
+    function handleAuthExpired() {
+      logout();
+      setUser(null);
+    }
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       isBootstrapping,
       isAuthenticated: Boolean(user),
       async loginWithStudentId(studentId, password, rememberLogin = false) {
-        await login(studentId, password, rememberLogin);
-        const nextUser = await getMe();
-        setUser(nextUser);
-        return nextUser;
+        try {
+          await login(studentId, password, rememberLogin);
+          const nextUser = await getMe();
+          setUser(nextUser);
+          return nextUser;
+        } catch (error) {
+          logout();
+          setUser(null);
+          throw error;
+        }
       },
       async signupWithEmail(payload) {
-        const createdUser = await signup(payload);
-        await login(payload.student_id, payload.password);
-        const nextUser = await getMe();
-        setUser(nextUser);
-        return createdUser;
+        return signup(payload);
       },
       async refreshUser() {
         const nextUser = await getMe();

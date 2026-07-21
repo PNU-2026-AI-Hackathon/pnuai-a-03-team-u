@@ -1,6 +1,21 @@
 import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
+import { getApiErrorMessage } from "../api/client";
+import {
+  chatWithRoadmapAgent,
+  confirmRoadmapChanges,
+  createRoadmapItem,
+  deleteRoadmapItem,
+  getCurrentRoadmap,
+  searchCourses,
+  updateRoadmapItem,
+} from "../api/roadmaps";
+import type { CourseSearchResult, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
+import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
+import type { GraduationProgram } from "../api/studentInfo";
+import { isMockAuthEnabled } from "../api/auth";
+import { useAuth } from "../auth/AuthContext";
 
 type RoadmapTab = "semester" | "requirements" | "curriculum";
 
@@ -366,7 +381,7 @@ const curriculumFlow = [
   },
 ] as const;
 
-export function RoadmapPage() {
+function MockRoadmapPage() {
   const [activeTab, setActiveTab] = useState<RoadmapTab>("semester");
   const [roadmapTimeline, setRoadmapTimeline] = useState(initialTimeline);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -1060,4 +1075,656 @@ export function RoadmapPage() {
       </section>
     </section>
   );
+}
+
+type ApiTimelineTerm = {
+  key: string;
+  term: string;
+  period: string;
+  grade: number | null;
+  year: string | null;
+  semester: string | null;
+  items: RoadmapItem[];
+};
+
+const apiInitialMessages: ChatMessage[] = [
+  {
+    id: "api-initial-message",
+    speaker: "AI",
+    text: "현재 로드맵과 졸업요건을 확인해 과목 배치를 함께 조정할 수 있어요.",
+  },
+];
+
+const apiStatusLabels: Record<string, RequirementCourse["status"]> = {
+  completed: "이수 완료",
+  planned: "이수 예정",
+};
+
+function normalizeSemester(value: string | null) {
+  if (!value) return null;
+  if (value === "1" || value === "1학기") return "1학기";
+  if (value === "2" || value === "2학기") return "2학기";
+  return value;
+}
+
+function displayCategory(value: string | null) {
+  const compact = value?.replace(/\s/g, "") ?? "이수구분 미정";
+  const labels: Record<string, string> = {
+    전공기초: "전공 기초",
+    전공필수: "전공 필수",
+    전공선택: "전공 선택",
+    교양필수: "교양 필수",
+    교양선택: "교양 선택",
+    일반선택: "일반 선택",
+    교직과목: "교직 과목",
+  };
+  return labels[compact] ?? value ?? "이수구분 미정";
+}
+
+function sameCategory(left: string | null, right: string | null) {
+  return (left ?? "").replace(/\s/g, "") === (right ?? "").replace(/\s/g, "");
+}
+
+function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
+  const regularTerms: ApiTimelineTerm[] = [];
+  for (let grade = 1; grade <= 4; grade += 1) {
+    for (const semester of ["1학기", "2학기"]) {
+      regularTerms.push({
+        key: `${grade}-${semester}`,
+        term: `${grade}학년 ${semester}`,
+        period: "계획 없음",
+        grade,
+        year: null,
+        semester,
+        items: [],
+      });
+    }
+  }
+
+  const terms = new Map(regularTerms.map((term) => [term.key, term]));
+  items.filter((item) => item.status !== "dropped").forEach((item) => {
+    const semester = normalizeSemester(item.planned_semester);
+    const regularKey = item.planned_grade && (semester === "1학기" || semester === "2학기")
+      ? `${item.planned_grade}-${semester}`
+      : null;
+    const key = regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
+    const existing = terms.get(key);
+
+    if (existing) {
+      existing.items.push(item);
+      if (!existing.year && item.planned_year) existing.year = item.planned_year;
+      return;
+    }
+
+    terms.set(key, {
+      key,
+      term: [item.planned_year ? `${item.planned_year}년` : null, semester ?? "학기 미정"].filter(Boolean).join(" "),
+      period: "기타 이수 내역",
+      grade: item.planned_grade,
+      year: item.planned_year,
+      semester,
+      items: [item],
+    });
+  });
+
+  return [...terms.values()].map((term) => {
+    const hasPlanned = term.items.some((item) => item.status !== "completed");
+    const hasCompleted = term.items.some((item) => item.status === "completed");
+    return {
+      ...term,
+      period: hasPlanned ? "계획 학기" : hasCompleted ? "이수 내역" : term.period,
+    };
+  });
+}
+
+function summarizeApiTerm(items: RoadmapItem[]) {
+  const credits = items.reduce((sum, item) => sum + (item.credits ?? 0), 0);
+  if (items.length === 0) return "등록된 과목 없음";
+  return credits > 0 ? `${Number.isInteger(credits) ? credits : credits.toFixed(1)}학점` : `${items.length}개 과목`;
+}
+
+function buildApiRequirementGroups(program: GraduationProgram | null, items: RoadmapItem[]): RequirementGroup[] {
+  const categories = program?.categories ?? [];
+  return categories
+    .filter((category) => category.required_credits !== null)
+    .map((category) => ({
+      category: displayCategory(category.category_name),
+      earned: category.earned_credits,
+      required: category.required_credits ?? 0,
+      courses: items
+        .filter((item) => item.status !== "dropped" && sameCategory(item.category, category.category_name))
+        .map((item) => ({
+          name: item.course_name ?? "과목명 없음",
+          credits: item.credits ?? 0,
+          term: item.planned_grade
+            ? `${item.planned_grade}학년 ${normalizeSemester(item.planned_semester) ?? "학기 미정"}`
+            : [item.planned_year, normalizeSemester(item.planned_semester)].filter(Boolean).join(" ") || "학기 미정",
+          status: apiStatusLabels[item.status] ?? "이수 예정",
+        })),
+    }));
+}
+
+function plannedYearForGrade(roadmap: Roadmap, studentId: string | null | undefined, grade: number | null) {
+  if (!grade) return null;
+  const startYear = Number(roadmap.start_year ?? studentId?.slice(0, 4));
+  return Number.isFinite(startYear) ? String(startYear + grade - 1) : null;
+}
+
+function pendingChangeLabel(change: PendingRoadmapChange) {
+  const actionLabels = { create: "과목 추가", update: "과목 이동", delete: "과목 삭제" };
+  const term = change.planned_grade
+    ? `${change.planned_grade}학년 ${normalizeSemester(change.planned_semester) ?? "학기 미정"}`
+    : normalizeSemester(change.planned_semester);
+  return [actionLabels[change.action], term, change.reason].filter(Boolean).join(" · ");
+}
+
+function ConnectedRoadmapPage() {
+  const { user } = useAuth();
+  const [roadmap, setRoadmap] = useState<Roadmap | null>(null);
+  const [graduation, setGraduation] = useState<GraduationProgram | null>(null);
+  const [activeTab, setActiveTab] = useState<RoadmapTab>("semester");
+  const [isPageLoading, setIsPageLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+  const [draftItems, setDraftItems] = useState<RoadmapItem[] | null>(null);
+  const [addingTerm, setAddingTerm] = useState<string | null>(null);
+  const [courseQuery, setCourseQuery] = useState("");
+  const [courseResults, setCourseResults] = useState<CourseSearchResult[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<CourseSearchResult | null>(null);
+  const [isCourseSearching, setIsCourseSearching] = useState(false);
+  const [isRoadmapSaving, setIsRoadmapSaving] = useState(false);
+  const [roadmapEditError, setRoadmapEditError] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>(apiInitialMessages);
+  const [suggestedActions, setSuggestedActions] = useState(initialSuggestedActions);
+  const [pendingChanges, setPendingChanges] = useState<PendingRoadmapChange[]>([]);
+  const [prompt, setPrompt] = useState("");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [failedPrompt, setFailedPrompt] = useState("");
+  const [requirementScrollState, setRequirementScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const requirementStripRef = useRef<HTMLElement>(null);
+
+  async function reloadRoadmap() {
+    const nextRoadmap = await getCurrentRoadmap();
+    setRoadmap(nextRoadmap);
+    return nextRoadmap;
+  }
+
+  async function loadPage() {
+    setIsPageLoading(true);
+    setPageError("");
+    try {
+      const [nextRoadmap, graduationResult] = await Promise.all([
+        getCurrentRoadmap(),
+        getGraduationProgress().catch(() => null),
+      ]);
+      setRoadmap(nextRoadmap);
+      const primaryProgram = graduationResult?.programs.find((program) => program.program_type === "primary")
+        ?? graduationResult?.programs[0]
+        ?? null;
+      setGraduation(primaryProgram);
+    } catch (error) {
+      setPageError(getApiErrorMessage(error, "로드맵을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
+    } finally {
+      setIsPageLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadPage();
+  }, []);
+
+  useEffect(() => {
+    const chatLog = chatLogRef.current;
+    if (!chatLog) return;
+    chatLog.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
+  }, [messages, isAiLoading, aiError, pendingChanges]);
+
+  useEffect(() => {
+    if (!addingTerm || selectedCourse?.course_name === courseQuery || courseQuery.trim().length < 2) {
+      setCourseResults([]);
+      setIsCourseSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setIsCourseSearching(true);
+      searchCourses(courseQuery.trim())
+        .then((results) => {
+          if (!cancelled) setCourseResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setCourseResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsCourseSearching(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [addingTerm, courseQuery, selectedCourse]);
+
+  useEffect(() => {
+    if (activeTab !== "semester") return;
+    const strip = requirementStripRef.current;
+    if (!strip) return;
+
+    function updateScrollState() {
+      const element = requirementStripRef.current;
+      if (!element) return;
+      const maxScrollLeft = element.scrollWidth - element.clientWidth;
+      setRequirementScrollState({
+        canScrollLeft: element.scrollLeft > 4,
+        canScrollRight: element.scrollLeft < maxScrollLeft - 4,
+      });
+    }
+
+    updateScrollState();
+    strip.addEventListener("scroll", updateScrollState, { passive: true });
+    const resizeObserver = new ResizeObserver(updateScrollState);
+    resizeObserver.observe(strip);
+    return () => {
+      strip.removeEventListener("scroll", updateScrollState);
+      resizeObserver.disconnect();
+    };
+  }, [activeTab, roadmap, graduation]);
+
+  const visibleItems = useMemo(() => draftItems ?? roadmap?.items ?? [], [draftItems, roadmap]);
+  const timeline = useMemo(() => buildApiTimeline(visibleItems), [visibleItems]);
+  const requirementGroups = useMemo(
+    () => buildApiRequirementGroups(graduation, roadmap?.items ?? []),
+    [graduation, roadmap],
+  );
+  const isEditingRoadmap = draftItems !== null;
+  const requiredCredits = graduation?.required_total_credits ?? null;
+  const earnedCredits = graduation?.earned_total_credits ?? 0;
+  const remainingCredits = graduation?.remaining_total_credits ?? null;
+  const completionRate = requiredCredits ? Math.min(100, Math.round((earnedCredits / requiredCredits) * 100)) : 0;
+  const roadmapTitle = roadmap?.title?.trim() || `${user?.major ?? "전공"} 로드맵`;
+
+  function scrollRequirementCards(direction: "left" | "right") {
+    const strip = requirementStripRef.current;
+    if (!strip) return;
+    strip.scrollBy({
+      left: direction === "right" ? strip.clientWidth * 0.72 : strip.clientWidth * -0.72,
+      behavior: "smooth",
+    });
+  }
+
+  function resetCoursePicker() {
+    setAddingTerm(null);
+    setCourseQuery("");
+    setCourseResults([]);
+    setSelectedCourse(null);
+    setIsCourseSearching(false);
+  }
+
+  function startRoadmapEditing() {
+    setDraftItems((roadmap?.items ?? []).map((item) => ({ ...item })));
+    setRoadmapEditError("");
+    setActiveTab("semester");
+    resetCoursePicker();
+  }
+
+  function cancelRoadmapEditing() {
+    setDraftItems(null);
+    setRoadmapEditError("");
+    resetCoursePicker();
+  }
+
+  function moveDraftItem(itemId: number, targetTermKey: string) {
+    const target = timeline.find((term) => term.key === targetTermKey);
+    if (!target || !roadmap) return;
+    setDraftItems((current) => current?.map((item) => item.id === itemId ? {
+      ...item,
+      planned_grade: target.grade,
+      planned_year: target.year ?? plannedYearForGrade(roadmap, user?.student_id, target.grade),
+      planned_semester: target.semester,
+    } : item) ?? null);
+    setRoadmapEditError("");
+  }
+
+  function removeDraftItem(item: RoadmapItem) {
+    if (item.status === "completed") return;
+    setDraftItems((current) => current?.filter((candidate) => candidate.id !== item.id) ?? null);
+  }
+
+  function beginAddingCourse(termKey: string) {
+    setAddingTerm(termKey);
+    setCourseQuery("");
+    setSelectedCourse(null);
+    setCourseResults([]);
+    setRoadmapEditError("");
+  }
+
+  function addSelectedCourse(term: ApiTimelineTerm) {
+    if (!selectedCourse || !roadmap) {
+      setRoadmapEditError("검색 결과에서 추가할 과목을 선택해 주세요.");
+      return;
+    }
+
+    const temporaryId = Math.min(-1, ...((draftItems ?? []).map((item) => item.id - 1)));
+    const newItem: RoadmapItem = {
+      id: temporaryId,
+      course_id: selectedCourse.id,
+      planned_grade: term.grade,
+      planned_year: term.year ?? plannedYearForGrade(roadmap, user?.student_id, term.grade),
+      planned_semester: term.semester,
+      course_name: selectedCourse.course_name,
+      department_name: null,
+      major_name: null,
+      category: selectedCourse.category,
+      credits: selectedCourse.credits,
+      status: "planned",
+      is_confirmed: false,
+      reason: null,
+      source: "manual",
+    };
+    setDraftItems((current) => [...(current ?? []), newItem]);
+    resetCoursePicker();
+    setRoadmapEditError("");
+  }
+
+  async function saveRoadmapEditing() {
+    if (!roadmap || !draftItems) return;
+    setIsRoadmapSaving(true);
+    setRoadmapEditError("");
+
+    const originalItems = roadmap.items;
+    const draftIds = new Set(draftItems.filter((item) => item.id > 0).map((item) => item.id));
+    const deletedItems = originalItems.filter((item) => item.id > 0 && item.status !== "completed" && !draftIds.has(item.id));
+    const createdItems = draftItems.filter((item) => item.id < 0);
+    const updatedItems = draftItems.filter((item) => {
+      if (item.id < 0 || item.status === "completed") return false;
+      const original = originalItems.find((candidate) => candidate.id === item.id);
+      return original && (
+        original.course_id !== item.course_id
+        || original.planned_grade !== item.planned_grade
+        || original.planned_year !== item.planned_year
+        || normalizeSemester(original.planned_semester) !== normalizeSemester(item.planned_semester)
+      );
+    });
+
+    try {
+      await Promise.all([
+        ...deletedItems.map((item) => deleteRoadmapItem(roadmap.id, item.id)),
+        ...createdItems.map((item) => {
+          if (!item.course_id) throw new Error("선택되지 않은 과목이 있습니다.");
+          return createRoadmapItem(roadmap.id, {
+            course_id: item.course_id,
+            planned_grade: item.planned_grade,
+            planned_year: item.planned_year,
+            planned_semester: item.planned_semester,
+          });
+        }),
+        ...updatedItems.map((item) => updateRoadmapItem(roadmap.id, item.id, {
+          course_id: item.course_id ?? undefined,
+          planned_grade: item.planned_grade,
+          planned_year: item.planned_year,
+          planned_semester: item.planned_semester,
+        })),
+      ]);
+      await reloadRoadmap();
+      setDraftItems(null);
+      resetCoursePicker();
+    } catch (error) {
+      setRoadmapEditError(getApiErrorMessage(error, "로드맵 변경사항을 저장하지 못했습니다."));
+      await reloadRoadmap().catch(() => undefined);
+      setDraftItems(null);
+      resetCoursePicker();
+    } finally {
+      setIsRoadmapSaving(false);
+    }
+  }
+
+  async function sendMessage(value: string, appendUserMessage = true) {
+    const trimmedValue = value.trim();
+    if (!trimmedValue || isAiLoading || !roadmap) return;
+    if (appendUserMessage) {
+      setMessages((current) => [...current, { id: `user-${Date.now()}`, speaker: "나", text: trimmedValue }]);
+    }
+    setPrompt("");
+    setPendingChanges([]);
+    setAiError("");
+    setFailedPrompt("");
+    setIsAiLoading(true);
+    if (promptRef.current) promptRef.current.style.height = "auto";
+
+    try {
+      const response = await chatWithRoadmapAgent(roadmap.id, trimmedValue);
+      setMessages((current) => [...current, { id: `ai-${Date.now()}`, speaker: "AI", text: response.reply }]);
+      setPendingChanges(response.pending_changes);
+      setSuggestedActions([
+        { label: "남은 요건 확인", prompt: "현재 계획에서 아직 부족한 졸업요건을 정리해줘." },
+        { label: "학점 부담 조정", prompt: "학기별 예정 학점을 균형 있게 조정해줘." },
+        { label: "필수 과목 점검", prompt: "남은 전공 필수 과목을 우선해서 점검해줘." },
+      ]);
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "AI 답변을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
+      setFailedPrompt(trimmedValue);
+    } finally {
+      setIsAiLoading(false);
+    }
+  }
+
+  async function resolvePendingChanges(approve: boolean) {
+    if (!roadmap || pendingChanges.length === 0 || isAiLoading) return;
+    const ids = pendingChanges.map((change) => change.change_id);
+    setIsAiLoading(true);
+    setAiError("");
+    try {
+      await confirmRoadmapChanges(roadmap.id, approve ? ids : [], approve ? [] : ids);
+      if (approve) {
+        await reloadRoadmap();
+        setMessages((current) => [...current, {
+          id: `applied-${Date.now()}`,
+          speaker: "AI",
+          text: "승인한 변경사항을 로드맵에 반영했습니다.",
+        }]);
+        setActiveTab("semester");
+      }
+      setPendingChanges([]);
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "AI 변경안을 처리하지 못했습니다."));
+    } finally {
+      setIsAiLoading(false);
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(prompt);
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
+
+  function handleResetConversation() {
+    setMessages(apiInitialMessages);
+    setSuggestedActions(initialSuggestedActions);
+    setPendingChanges([]);
+    setPrompt("");
+    setAiError("");
+    setFailedPrompt("");
+  }
+
+  if (isPageLoading) {
+    return (
+      <section className="roadmap-api-state" aria-live="polite">
+        <LoaderCircle size={22} aria-hidden="true" />
+        <strong>로드맵을 불러오는 중입니다.</strong>
+      </section>
+    );
+  }
+
+  if (pageError || !roadmap) {
+    return (
+      <section className="roadmap-api-state" role="alert">
+        <strong>{pageError || "로드맵 정보가 없습니다."}</strong>
+        <button type="button" onClick={() => void loadPage()}>
+          <RefreshCw size={15} aria-hidden="true" />
+          다시 시도
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="roadmap-shell" data-current-tab={activeTab}>
+      <section className="roadmap-head">
+        <div>
+          <p className="eyebrow">남은 요건</p>
+          <h2>{roadmapTitle}</h2>
+          <p>{roadmap.summary || "졸업 요건과 앞으로 이수할 과목을 한 화면에서 관리합니다."}</p>
+        </div>
+        <div className="roadmap-head-tools">
+          <div className="roadmap-score">
+            <span>완료율 {completionRate}%</span>
+            <strong>{remainingCredits === null ? "기준 확인 필요" : `남은 학점 ${remainingCredits}`}</strong>
+            <small>{graduation?.curriculum_year ? `${graduation.curriculum_year} 교육과정` : "교육과정 확인 필요"}</small>
+          </div>
+          <div className="roadmap-edit-actions">
+            {isEditingRoadmap ? (
+              <>
+                <button type="button" disabled={isRoadmapSaving} onClick={cancelRoadmapEditing}>
+                  <X size={15} aria-hidden="true" /> 취소
+                </button>
+                <button className="save-roadmap-button" type="button" disabled={isRoadmapSaving} onClick={() => void saveRoadmapEditing()}>
+                  {isRoadmapSaving ? <LoaderCircle size={15} aria-hidden="true" /> : <Save size={15} aria-hidden="true" />}
+                  저장
+                </button>
+              </>
+            ) : (
+              <button className="edit-roadmap-button" type="button" onClick={startRoadmapEditing}>
+                <Pencil size={15} aria-hidden="true" /> 로드맵 편집
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div className="roadmap-tabs" role="tablist" aria-label="로드맵 보기 방식">
+        <button id="semester-tab" className={activeTab === "semester" ? "selected" : ""} type="button" role="tab" aria-selected={activeTab === "semester"} onClick={() => setActiveTab("semester")}>학기별</button>
+        <button id="requirements-tab" className={activeTab === "requirements" ? "selected" : ""} type="button" role="tab" aria-selected={activeTab === "requirements"} disabled={isEditingRoadmap} onClick={() => setActiveTab("requirements")}>요건별</button>
+        <button id="curriculum-tab" className={activeTab === "curriculum" ? "selected" : ""} type="button" role="tab" aria-selected={activeTab === "curriculum"} disabled={isEditingRoadmap} onClick={() => setActiveTab("curriculum")}>학과 이수체계도</button>
+      </div>
+
+      <section className="roadmap-layout">
+        <div className="roadmap-main">
+          {activeTab === "semester" ? (
+            <div id="semester-panel" role="tabpanel" aria-labelledby="semester-tab">
+              <div className="requirement-strip-shell">
+                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공 및 교양 이수 요건">
+                  {requirementGroups.length > 0 ? requirementGroups.map((group) => {
+                    const remaining = Math.max(group.required - group.earned, 0);
+                    const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
+                    return (
+                      <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
+                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong>{progress}%</strong></div>
+                        <p className="requirement-credit-status"><strong>{group.required}학점 중</strong><span>{remaining === 0 ? "모두 이수" : `${remaining}학점 남음`}</span></p>
+                        <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
+                        <small>{group.earned} / {group.required}학점 이수</small>
+                      </article>
+                    );
+                  }) : <p className="roadmap-inline-empty">학생지원시스템 동기화 후 이수 현황이 표시됩니다.</p>}
+                </section>
+                {requirementScrollState.canScrollLeft ? <button className="requirement-scroll-button scroll-left" type="button" aria-label="이전 학점 현황 보기" onClick={() => scrollRequirementCards("left")}><ChevronLeft size={18} aria-hidden="true" /></button> : null}
+                {requirementScrollState.canScrollRight ? <button className="requirement-scroll-button scroll-right" type="button" aria-label="다음 학점 현황 보기" onClick={() => scrollRequirementCards("right")}><ChevronRight size={18} aria-hidden="true" /></button> : null}
+              </div>
+
+              {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
+              <section className="semester-timeline">
+                {timeline.map((term) => (
+                  <article className="semester-timeline-card" key={term.key}>
+                    <div className="semester-timeline-head">
+                      <div><span>{term.period}</span><h3>{term.term}</h3></div>
+                      <strong>{summarizeApiTerm(term.items)}</strong>
+                    </div>
+                    <ul className="semester-course-list">
+                      {term.items.map((item) => isEditingRoadmap ? (
+                        <li className="semester-course-edit-row api-roadmap-edit-row" key={item.id}>
+                          <div className="api-roadmap-course-copy"><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
+                          {item.status === "completed" ? (
+                            <span className="semester-course-status status-completed">이수 완료</span>
+                          ) : (
+                            <>
+                              <label><span>배치 학기</span><select value={term.key} onChange={(event) => moveDraftItem(item.id, event.target.value)}>{timeline.filter((candidate) => candidate.grade && candidate.semester).map((candidate) => <option value={candidate.key} key={candidate.key}>{candidate.term}</option>)}</select></label>
+                              <button className="delete-roadmap-item-button" type="button" aria-label={`${item.course_name ?? "과목"} 삭제`} title="과목 삭제" onClick={() => removeDraftItem(item)}><Trash2 size={16} aria-hidden="true" /></button>
+                            </>
+                          )}
+                        </li>
+                      ) : (
+                        <li className="semester-course-row" key={item.id}>
+                          <div><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
+                          <span className={`semester-course-status ${item.status === "completed" ? "status-completed" : "status-planned"}`}>{item.status === "completed" ? "이수 완료" : "이수 예정"}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {isEditingRoadmap && term.grade && term.semester ? (
+                      addingTerm === term.key ? (
+                        <div className="add-roadmap-item-form api-course-picker">
+                          <label className="semester-edit-name"><span>과목 검색</span><input value={courseQuery} type="search" autoComplete="off" placeholder="과목명을 2글자 이상 입력" onChange={(event) => { setCourseQuery(event.target.value); setSelectedCourse(null); }} /></label>
+                          {isCourseSearching ? <p className="course-search-status"><LoaderCircle size={14} aria-hidden="true" /> 검색 중</p> : null}
+                          {courseResults.length > 0 ? <div className="course-search-results">{courseResults.map((course) => <button type="button" key={course.id} onClick={() => { setSelectedCourse(course); setCourseQuery(course.course_name); setCourseResults([]); }}><strong>{course.course_name}</strong><span>{displayCategory(course.category)} · {course.credits ?? 0}학점{course.course_code ? ` · ${course.course_code}` : ""}</span></button>)}</div> : null}
+                          {selectedCourse ? <p className="selected-course-summary"><Check size={14} aria-hidden="true" /> {selectedCourse.course_name}</p> : null}
+                          <div className="add-roadmap-item-actions"><button type="button" onClick={resetCoursePicker}>취소</button><button className="confirm-add-roadmap-item" type="button" disabled={!selectedCourse} onClick={() => addSelectedCourse(term)}><Check size={14} aria-hidden="true" /> 추가</button></div>
+                        </div>
+                      ) : (
+                        <button className="add-roadmap-item-button" type="button" onClick={() => beginAddingCourse(term.key)}><Plus size={15} aria-hidden="true" /> 과목 추가</button>
+                      )
+                    ) : null}
+                  </article>
+                ))}
+              </section>
+            </div>
+          ) : activeTab === "requirements" ? (
+            <section id="requirements-panel" className="requirements-overview" role="tabpanel" aria-labelledby="requirements-tab">
+              {requirementGroups.length > 0 ? requirementGroups.map((group) => {
+                const remaining = Math.max(group.required - group.earned, 0);
+                const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
+                return (
+                  <article className="requirement-group" key={group.category}>
+                    <div className="requirement-group-head"><div><h3>{group.category}</h3><p>{remaining === 0 ? "요건 충족" : `${remaining}학점 추가 이수 필요`}</p></div><strong>{group.earned} / {group.required}학점</strong></div>
+                    <div className="requirement-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
+                    <ul className="requirement-course-list">{group.courses.map((course, index) => <li key={`${group.category}-${course.name}-${index}`}><div><strong>{course.name}</strong><span>{course.term} · {course.credits}학점</span></div><span className={`requirement-course-status ${requirementStatusClassNames[course.status]}`}>{course.status}</span></li>)}</ul>
+                  </article>
+                );
+              }) : <p className="roadmap-inline-empty">졸업요건 데이터가 아직 없습니다.</p>}
+            </section>
+          ) : (
+            <section id="curriculum-panel" className="curriculum-map course-system" role="tabpanel" aria-labelledby="curriculum-tab">
+              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{user?.major ?? "학과"} 이수 흐름</h2></div><span>{graduation?.curriculum_year ? `${graduation.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
+              <div className="curriculum-flow">{curriculumFlow.map((group) => <article key={group.title}><span className="flow-step">{group.step}</span><h3>{group.title}</h3><ul>{group.courses.map(([course, status]) => <li className={status} key={course}>{course}</li>)}</ul></article>)}</div>
+              <div className="curriculum-legend" aria-label="과목 이수 상태 범례"><span className="done">이수 완료</span><span className="doing">수강 중</span><span className="planned">이수 예정</span></div>
+            </section>
+          )}
+        </div>
+
+        <aside className="ai-roadmap-panel">
+          <div className="ai-panel-head"><div className="ai-panel-copy"><p className="eyebrow">AI와 같이 요건 맞추기</p><h3>AI와 같이 로드맵 짜기</h3><p>남은 요건과 실제 로드맵을 기준으로 변경안을 제안합니다.</p></div><button className="ai-reset-button" type="button" aria-label="화면 대화 초기화" title="화면 대화 초기화" disabled={isAiLoading || pendingChanges.length > 0} onClick={handleResetConversation}><RotateCcw size={16} aria-hidden="true" /></button></div>
+          <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading}>
+            {messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
+            {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}
+            {aiError ? <div className="ai-chat-error" role="alert"><p>{aiError}</p>{failedPrompt ? <button type="button" onClick={() => void sendMessage(failedPrompt, false)}><RefreshCw size={13} aria-hidden="true" /> 다시 시도</button> : null}</div> : null}
+          </div>
+          {pendingChanges.length > 0 ? <section className="ai-roadmap-proposal" aria-label="AI 로드맵 변경 제안"><div><span>변경 제안</span><h4>{pendingChanges.length}개의 변경사항</h4><p>승인한 뒤에만 실제 로드맵에 저장됩니다.</p></div><ul>{pendingChanges.map((change) => <li key={change.change_id}>{pendingChangeLabel(change)}</li>)}</ul><div className="proposal-actions"><button type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(false)}><X size={14} aria-hidden="true" /> 거절</button><button className="apply-proposal-button" type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(true)}><Check size={14} aria-hidden="true" /> 모두 승인</button></div></section> : null}
+          <div className="suggested-actions"><span>다음 추천 행동</span><div className="quick-prompts">{suggestedActions.map((action) => <button type="button" key={action.label} disabled={isAiLoading || pendingChanges.length > 0} onClick={() => void sendMessage(action.prompt)}>{action.label}</button>)}</div></div>
+          <form className="ai-input" onSubmit={handleSubmit}><textarea ref={promptRef} value={prompt} rows={1} aria-label="AI에게 메시지 보내기" placeholder="예: 다음 학기 전공 필수를 먼저 배치해줘" disabled={isAiLoading || pendingChanges.length > 0} onChange={(event) => { setPrompt(event.target.value); event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`; }} onKeyDown={handlePromptKeyDown} /><button type="submit" aria-label="메시지 전송" title="메시지 전송" disabled={!prompt.trim() || isAiLoading || pendingChanges.length > 0}>{isAiLoading ? <LoaderCircle size={17} aria-hidden="true" /> : <Send size={17} aria-hidden="true" />}</button></form>
+        </aside>
+      </section>
+    </section>
+  );
+}
+
+export function RoadmapPage() {
+  return isMockStudentDataEnabled || isMockAuthEnabled ? <MockRoadmapPage /> : <ConnectedRoadmapPage />;
 }

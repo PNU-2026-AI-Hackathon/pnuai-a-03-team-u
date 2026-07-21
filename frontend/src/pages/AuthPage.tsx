@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
 import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
-import type { AcademicProgram } from "../api/auth";
+import type { AcademicProgramInput } from "../api/auth";
+import { getApiErrorMessage } from "../api/client";
 
 type AuthMode = "login" | "signup";
+type MessageKind = "error" | "success";
 
 export function AuthPage() {
   const navigate = useNavigate();
@@ -14,7 +15,9 @@ export function AuthPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [message, setMessage] = useState("");
   const [loginMessage, setLoginMessage] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loginMessageKind, setLoginMessageKind] = useState<MessageKind>("error");
+  const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
+  const [isSignupSubmitting, setIsSignupSubmitting] = useState(false);
   const [loginStudentId, setLoginStudentId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberLogin, setRememberLogin] = useState(false);
@@ -27,27 +30,18 @@ export function AuthPage() {
   const [minorMajor, setMinorMajor] = useState("");
   const [dualMajor, setDualMajor] = useState("");
 
-  function getErrorMessage(error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const detail = error.response?.data?.detail;
-      if (typeof detail === "string") return detail;
-      if (Array.isArray(detail)) return detail.map((item) => item.msg ?? JSON.stringify(item)).join(", ");
-      return error.message;
-    }
-    return "요청 중 오류가 발생했습니다.";
-  }
-
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoginMessage("");
-    setIsSubmitting(true);
+    setLoginMessageKind("error");
+    setIsLoginSubmitting(true);
     try {
       await loginWithStudentId(loginStudentId, loginPassword, rememberLogin);
       navigate("/", { replace: true });
     } catch (error) {
-      setLoginMessage(getErrorMessage(error));
+      setLoginMessage(getApiErrorMessage(error, "로그인에 실패했습니다. 입력한 정보를 확인해 주세요."));
     } finally {
-      setIsSubmitting(false);
+      setIsLoginSubmitting(false);
     }
   }
 
@@ -65,18 +59,18 @@ export function AuthPage() {
       return;
     }
 
-    const academicPrograms: AcademicProgram[] = [];
+    const academicPrograms: AcademicProgramInput[] = [];
     if (department.trim()) {
-      academicPrograms.push({ major: department.trim(), program_type: "primary" });
+      academicPrograms.push({ department: department.trim(), program_type: "primary" });
     }
     if (minorMajor.trim()) {
-      academicPrograms.push({ major: minorMajor.trim(), program_type: "minor" });
+      academicPrograms.push({ department: minorMajor.trim(), program_type: "minor" });
     }
     if (dualMajor.trim()) {
-      academicPrograms.push({ major: dualMajor.trim(), program_type: "dual" });
+      academicPrograms.push({ department: dualMajor.trim(), program_type: "dual" });
     }
 
-    setIsSubmitting(true);
+    setIsSignupSubmitting(true);
     try {
       await signupWithEmail({
         email: signupEmail,
@@ -88,11 +82,15 @@ export function AuthPage() {
         career_goal: careerGoal || undefined,
         academic_programs: academicPrograms,
       });
-      navigate("/");
+      setLoginStudentId(studentId.trim());
+      setLoginPassword("");
+      setLoginMessage("회원가입이 완료되었습니다. 로그인해 주세요.");
+      setLoginMessageKind("success");
+      setMode("login");
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      setMessage(getApiErrorMessage(error, "회원가입에 실패했습니다. 입력한 정보를 확인해 주세요."));
     } finally {
-      setIsSubmitting(false);
+      setIsSignupSubmitting(false);
     }
   }
 
@@ -148,6 +146,7 @@ export function AuthPage() {
               type="text"
               inputMode="numeric"
               autoComplete="username"
+              placeholder="예: 202312345"
               value={loginStudentId}
               onChange={(event) => setLoginStudentId(event.target.value)}
               required
@@ -163,7 +162,10 @@ export function AuthPage() {
               required
             />
           </label>
-          <div className={`auth-message${loginMessage ? " error" : ""}`} aria-live="polite">
+          <div
+            className={`auth-message${loginMessage ? ` ${loginMessageKind}` : ""}`}
+            aria-live={loginMessageKind === "error" ? "assertive" : "polite"}
+          >
             {loginMessage}
           </div>
           <div className="auth-options">
@@ -176,8 +178,8 @@ export function AuthPage() {
             </label>
             <Link to="/forgot-password">비밀번호 찾기</Link>
           </div>
-          <button className="auth-submit" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "로그인 중..." : "로그인"}
+          <button className="auth-submit" type="submit" disabled={isLoginSubmitting}>
+            {isLoginSubmitting ? "로그인 중..." : "로그인"}
           </button>
         </form>
 
@@ -187,7 +189,7 @@ export function AuthPage() {
             <h2>회원가입</h2>
             <p>필수 계정 정보와 선택 전공 정보를 바탕으로 개인 로드맵을 만듭니다.</p>
           </div>
-          <div className={`auth-message${message.includes("Bad") || message.includes("Conflict") ? " error" : message ? " success" : ""}`} aria-live="polite">
+          <div className={`auth-message${message ? " error" : ""}`} aria-live="assertive">
             {message}
           </div>
           <label>
@@ -204,7 +206,7 @@ export function AuthPage() {
           </label>
           <label>
             <span>학번</span>
-            <input type="text" inputMode="numeric" placeholder="학번을 입력하세요" value={studentId} onChange={(event) => setStudentId(event.target.value)} required />
+            <input type="text" inputMode="numeric" placeholder="예: 202312345" value={studentId} onChange={(event) => setStudentId(event.target.value)} required />
           </label>
           <label>
             <span>학과</span>
@@ -236,8 +238,8 @@ export function AuthPage() {
               <input type="text" placeholder="예: 컴퓨터공학과" value={dualMajor} onChange={(event) => setDualMajor(event.target.value)} />
             </label>
           </div>
-          <button className="auth-submit signup-submit" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "가입 중..." : "회원가입"}
+          <button className="auth-submit signup-submit" type="submit" disabled={isSignupSubmitting}>
+            {isSignupSubmitting ? "가입 중..." : "회원가입"}
           </button>
         </form>
       </section>
