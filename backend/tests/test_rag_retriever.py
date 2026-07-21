@@ -186,6 +186,46 @@ class RagRetrieverTest(unittest.TestCase):
 
         self.assertEqual(results[0]["course_name"], "머신러닝")
 
+    def test_curriculum_retriever_enriches_evidence_with_course_description_column(self):
+        """courses.description이 채워진 과목만 evidence에 내용이 붙는다. description이
+        없는 과목(id=2)은 평소처럼 정상 동작해야 한다."""
+        db = self.make_db()
+        db.add_all(
+            [
+                Course(
+                    id=1,
+                    course_name="자료구조",
+                    department_id=10,
+                    major_id=None,
+                    category="전공필수",
+                    credits=3.0,
+                    year="2",
+                    semester="1",
+                    description="적절한 자료구조를 선정하고 구현하는 능력을 배양한다.",
+                ),
+                Course(
+                    id=2,
+                    course_name="이름이바뀐과목",
+                    department_id=10,
+                    major_id=None,
+                    category="전공필수",
+                    credits=3.0,
+                    year="2",
+                    semester="1",
+                ),
+            ]
+        )
+        db.commit()
+
+        results = CurriculumRetriever(db).search(
+            query="", department_id=10, major_id=None, curriculum_year=2026
+        )
+        by_id = {result["course_id"]: result for result in results}
+
+        self.assertIn("적절한 자료구조를", by_id[1]["evidence"])
+        self.assertEqual(by_id[1]["description"], "적절한 자료구조를 선정하고 구현하는 능력을 배양한다.")
+        self.assertIsNone(by_id[2]["description"])
+
 
 if __name__ == "__main__":
     unittest.main()
