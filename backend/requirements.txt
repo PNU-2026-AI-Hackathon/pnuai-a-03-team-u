@@ -18,6 +18,10 @@ langchain
 langchain-openai
 langchain-community
 langchain-postgres
+# 멀티 LLM 프로바이더 스왑용(ROADMAP_AGENT_MODEL="provider:model"). 쓰려는 프로바이더만
+# 주석 해제하면 됨 — langchain init_chat_model이 해당 통합 패키지를 lazy import 한다.
+# langchain-anthropic
+# langchain-google-genai
 anthropic
 openai
 

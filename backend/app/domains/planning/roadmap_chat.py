@@ -1,15 +1,17 @@
-"""로드맵 AI 상담. OpenAI tool-calling으로 로드맵 변경안을 "제안"한다.
+"""로드맵 AI 상담. langchain tool-calling으로 로드맵 변경안을 "제안"한다.
 
-(ANTHROPIC_API_KEY가 없어 OpenAI로 구현 — .env에 ANTHROPIC_API_KEY가 채워지면
-Anthropic Messages API로 다시 바꿔도 된다. tool 스키마/ToolContext 로직은 그대로
-재사용 가능, client 호출부만 SDK별로 다르다.)
+LLM 호출은 langchain의 init_chat_model + bind_tools로 추상화한다 — settings의
+ROADMAP_AGENT_MODEL("provider:model") 한 줄만 바꾸면 OpenAI/Anthropic/Google 등
+프로바이더가 교체되고, tool 스키마·ToolContext 로직·아래 루프는 그대로 재사용된다.
+tool_choice="any"(반드시 도구를 호출)와 finish_response 강제 규약도 프로바이더
+무관하게 langchain이 각 SDK 형식으로 변환해준다.
 
 Agent는 course_roadmap_items를 절대 직접 쓰지 않는다 — 항상 pending_roadmap_changes에
 제안만 쌓고, 사용자가 confirm 엔드포인트(POST /me/roadmaps/{id}/agent/confirm)로
 승인한 항목만 실제로 반영된다(human-in-the-loop). 생성/수정/삭제 모두 이 절차를 거친다.
 
 LangGraph 같은 그래프 오케스트레이션은 쓰지 않는다 — 단일 에이전트가 도구 몇 개를
-반복 호출하다 최종 텍스트로 답하는 단순 루프라서 SDK의 tool loop만으로 충분하다.
+반복 호출하다 최종 텍스트로 답하는 단순 루프라서 bind_tools + 직접 루프만으로 충분하다.
 대화 상태는 클라이언트가 매번 들고 있는 게 아니라 course_roadmap_chat_messages에
 서버가 영속화한다(로드맵당 하나의 연속 대화).
 
@@ -22,7 +24,9 @@ from __future__ import annotations
 
 import json
 
-from openai import OpenAI
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -41,7 +45,6 @@ from app.domains.users.models import User
 
 _DEFAULT_CURRICULUM_YEAR = 2026
 
-MODEL = "gpt-4o"
 MAX_TOOL_ITERATIONS = 8
 
 _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함께 짜주는 상담 AI다.
@@ -149,10 +152,29 @@ _TOOLS = [
 ]
 
 
-def _get_client() -> OpenAI:
-    if not settings.OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY가 설정되지 않았습니다 (.env 확인)")
-    return OpenAI(api_key=settings.OPENAI_API_KEY)
+def _build_llm() -> BaseChatModel:
+    """ROADMAP_AGENT_MODEL("provider:model")로 langchain ChatModel을 만든다.
+
+    프로바이더별 API 키는 langchain이 환경변수(OPENAI_API_KEY / ANTHROPIC_API_KEY /
+    GOOGLE_API_KEY)에서 읽으므로, settings에 있는 키를 os.environ에 채워준 뒤 만든다.
+    """
+    import os
+
+    for env_key, value in (
+        ("OPENAI_API_KEY", settings.OPENAI_API_KEY),
+        ("ANTHROPIC_API_KEY", settings.ANTHROPIC_API_KEY),
+        ("GOOGLE_API_KEY", settings.GOOGLE_API_KEY),
+    ):
+        if value and not os.environ.get(env_key):
+            os.environ[env_key] = value
+
+    try:
+        return init_chat_model(settings.ROADMAP_AGENT_MODEL, max_tokens=1500)
+    except Exception as exc:  # noqa: BLE001 - 설정/패키지 문제를 사용자에게 명확히 전달
+        raise RuntimeError(
+            f"로드맵 에이전트 LLM 초기화 실패(ROADMAP_AGENT_MODEL={settings.ROADMAP_AGENT_MODEL!r}). "
+            f"해당 프로바이더의 API 키와 langchain 통합 패키지가 설치돼 있는지 확인하세요: {exc}"
+        ) from exc
 
 
 class _ToolContext:
@@ -321,57 +343,51 @@ def run_roadmap_chat(db: Session, user: User, roadmap: CourseRoadmap, message: s
     db.flush()
 
     history = _load_history(db, roadmap.id)
-    messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
-    messages.extend({"role": m.role, "content": m.content} for m in history)
+    messages: list = [SystemMessage(content=_SYSTEM_PROMPT)]
+    for m in history:
+        if m.role == "user":
+            messages.append(HumanMessage(content=m.content))
+        else:
+            messages.append(AIMessage(content=m.content))
 
-    client = _get_client()
+    llm = _build_llm()
     ctx = _ToolContext(db, user, roadmap)
 
-    # tool_choice="required"를 매 턴 강제한다 — "일반 텍스트로 바로 답하기"라는
-    # 탈출구를 아예 없애서, gpt-4o가 search_courses/propose_change 없이 과목명을
+    # tool_choice="any"를 매 턴 강제한다(langchain이 각 프로바이더 형식으로 변환:
+    # OpenAI "required", Anthropic "any" 등) — "일반 텍스트로 바로 답하기"라는
+    # 탈출구를 아예 없애서, 모델이 search_courses/propose_change 없이 과목명을
     # 지어내 대충 텍스트로 답하고 끝내버리는 걸 막는다. 사용자에게 보이는 답변도
     # finish_response라는 도구 호출로만 나가게 만들어서(위 _TOOLS 참고),
     # "확인된 과목만 finish_response 전에 propose_change로 제안했어야 한다"는
     # 순서를 프롬프트뿐 아니라 도구 인터페이스 자체로 강제한다.
+    llm_required = llm.bind_tools(_TOOLS, tool_choice="any")
+
     final_text = ""
     finished = False
     for _ in range(MAX_TOOL_ITERATIONS):
-        response = client.chat.completions.create(
-            model=MODEL,
-            max_tokens=1500,
-            tools=_TOOLS,
-            tool_choice="required",
-            messages=messages,
-        )
-        message = response.choices[0].message
+        ai_msg: AIMessage = llm_required.invoke(messages)
+        messages.append(ai_msg)
 
-        if not message.tool_calls:
-            # 이론상 tool_choice="required"면 안 나와야 하지만, 방어적으로 처리.
-            if message.content:
-                final_text = message.content
+        if not ai_msg.tool_calls:
+            # 이론상 tool_choice="any"면 안 나와야 하지만, 방어적으로 처리.
+            if isinstance(ai_msg.content, str) and ai_msg.content:
+                final_text = ai_msg.content
             break
 
-        messages.append(
-            {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [tc.model_dump() for tc in message.tool_calls],
-            }
-        )
-        for tool_call in message.tool_calls:
-            arguments = json.loads(tool_call.function.arguments or "{}")
-            if tool_call.function.name == "finish_response":
+        for tool_call in ai_msg.tool_calls:
+            name = tool_call["name"]
+            arguments = tool_call["args"] or {}
+            if name == "finish_response":
                 final_text = arguments.get("message", "")
                 result = {"delivered": True}
                 finished = True
             else:
-                result = ctx.dispatch(tool_call.function.name, arguments)
+                result = ctx.dispatch(name, arguments)
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(result, ensure_ascii=False),
-                }
+                ToolMessage(
+                    tool_call_id=tool_call["id"],
+                    content=json.dumps(result, ensure_ascii=False),
+                )
             )
 
         if finished:
@@ -381,25 +397,21 @@ def run_roadmap_chat(db: Session, user: User, roadmap: CourseRoadmap, message: s
         # MAX_TOOL_ITERATIONS를 다 쓰도록 finish_response를 못 부른 경우다.
         # propose_change 자체는 이미 성공적으로 쌓였을 수 있으므로(실제로 그런
         # 경우가 있었다 — 요청 범위를 벗어난 추가 제안을 만드느라 턴을 다 씀),
-        # 뭉뚱그린 사과문 대신 tool_choice="none"으로 한 번 더 불러서 지금까지
-        # 쌓인 tool 결과를 바탕으로 실제 요약을 받아낸다.
+        # 뭉뚱그린 사과문 대신 도구 없이 한 번 더 불러서 지금까지 쌓인 tool
+        # 결과를 바탕으로 실제 요약을 받아낸다.
         try:
-            wrapup = client.chat.completions.create(
-                model=MODEL,
-                max_tokens=500,
-                tool_choice="none",
-                messages=messages
+            wrapup = llm.invoke(
+                messages
                 + [
-                    {
-                        "role": "user",
-                        "content": (
+                    HumanMessage(
+                        content=(
                             "지금까지 확인/제안한 내용을 바탕으로 사용자에게 보여줄 "
                             "답변을 정리해서 말해줘. 새 도구는 호출하지 마."
-                        ),
-                    }
-                ],
+                        )
+                    )
+                ]
             )
-            final_text = wrapup.choices[0].message.content or ""
+            final_text = wrapup.content if isinstance(wrapup.content, str) else ""
         except Exception:  # noqa: BLE001 - 마무리 요약 실패는 폴백 문구로 넘어간다
             final_text = ""
         if not final_text:

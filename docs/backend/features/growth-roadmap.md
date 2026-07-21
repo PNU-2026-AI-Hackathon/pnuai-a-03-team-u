@@ -92,18 +92,26 @@ course_roadmap_items
 
 ## AI 로드맵 상담 (`app/domains/planning/roadmap_chat.py`, `app/api/roadmap_agent.py`)
 
-OpenAI(`gpt-4o`) tool-calling으로 로드맵 변경을 "제안"받는 채팅 기능(원래
-Anthropic Messages API로 설계했으나 `.env`에 `ANTHROPIC_API_KEY`가 없어 실제
-테스트를 위해 OpenAI로 구현 — `ANTHROPIC_API_KEY`가 채워지면 다시 바꿔도 된다.
-tool 스키마/`_ToolContext` 로직은 SDK 무관하게 재사용 가능, client 호출부만
-다르다). **Agent는 `course_roadmap_items`를 절대 직접 쓰지 않는다** — 항상
+langchain tool-calling으로 로드맵 변경을 "제안"받는 채팅 기능. **멀티 LLM 프로바이더
+지원**: LLM 호출을 langchain `init_chat_model` + `bind_tools`로 추상화해서,
+`settings.ROADMAP_AGENT_MODEL`("provider:model", 예: `"openai:gpt-4o"`,
+`"anthropic:claude-sonnet-4-5"`, `"google_genai:gemini-2.0-flash"`) 한 줄만 바꾸면
+프로바이더가 교체된다. tool 스키마(`_TOOLS`, OpenAI function-schema dict를 langchain이
+그대로 받음)·`_ToolContext` 로직·아래 tool 루프는 프로바이더 무관하게 그대로
+재사용된다. **Agent는 `course_roadmap_items`를 절대 직접 쓰지 않는다** — 항상
 `pending_roadmap_changes`에 제안만 쌓고, 사용자가 승인한 항목만 실제로
 반영된다(human-in-the-loop). 최초 로드맵 생성이든 기존 항목 수정/삭제든 전부
 같은 절차를 거친다.
 
+프로바이더를 바꾸려면 (1) `ROADMAP_AGENT_MODEL`을 바꾸고, (2) 해당 API 키
+(`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`GOOGLE_API_KEY`)를 `.env`에 넣고,
+(3) langchain 통합 패키지(`langchain-anthropic` 등, requirements.txt에 주석으로
+있음)를 설치하면 된다. `tool_choice="any"`(반드시 도구 호출)도 langchain이
+프로바이더별 형식(OpenAI `required`, Anthropic `any` 등)으로 변환해준다.
+
 LangGraph 같은 그래프 오케스트레이션은 쓰지 않는다 — tool 호출 루프 한 번 →
 제안 저장 → (별도 API 호출로) 확인 대기 → 반영, 순서가 고정된 단순 파이프라인이라
-그래프 엔진 없이 SDK의 tool loop만으로 충분하다.
+그래프 엔진 없이 `bind_tools` + 직접 루프만으로 충분하다.
 
 ### 실계정 E2E 테스트에서 발견한 신뢰성 문제와 수정 (2026-07-13)
 
@@ -158,9 +166,10 @@ pending_roadmap_changes
 
 ## 알려진 한계 / TODO
 
-- `ANTHROPIC_API_KEY`가 채워지면 OpenAI → Anthropic Messages API로 다시 바꿀지
-  결정 필요 (tool 스키마 형식이 SDK마다 달라 client 호출부 재작성 필요)
-- `tool_choice="required"`를 매 턴 강제해서 왕복 횟수가 늘어나(항상 최소 1개 이상
+- 기본 프로바이더는 `openai:gpt-4o`. Anthropic/Google로 바꾸려면 통합 패키지
+  설치가 필요하며(requirements.txt 주석 참고), 프로바이더별 tool-calling 동작
+  차이(특히 병렬 tool call, `tool_choice` 강제 방식)는 각각 실계정으로 재검증할 것
+- `tool_choice="any"`를 매 턴 강제해서 왕복 횟수가 늘어나(항상 최소 1개 이상
   tool call) 응답 지연이 커졌다 — 필요하면 `MAX_TOOL_ITERATIONS`나 프롬프트로 더
   튜닝할 여지 있음
 - 대화형 부분 수정("전공필수 먼저", "4학년은 가볍게" 등)은 시스템 프롬프트로만

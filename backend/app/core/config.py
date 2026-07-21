@@ -11,6 +11,15 @@ class Settings(BaseSettings):
 
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
+    GOOGLE_API_KEY: str | None = None
+
+    # 로드맵 상담 에이전트가 쓸 LLM. langchain init_chat_model 형식으로,
+    # "provider:model"(예: "openai:gpt-4o", "anthropic:claude-sonnet-4-5",
+    # "google_genai:gemini-2.0-flash") 한 줄만 바꾸면 프로바이더가 교체된다.
+    # 해당 프로바이더의 API 키(OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_API_KEY)와
+    # langchain 통합 패키지(langchain-openai / langchain-anthropic /
+    # langchain-google-genai)가 함께 있어야 한다.
+    ROADMAP_AGENT_MODEL: str = "openai:gpt-4o"
 
     PNU_LOGIN_ID: str | None = None
     PNU_LOGIN_PW: str | None = None
