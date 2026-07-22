@@ -26,8 +26,10 @@ from app.ingestion.crawlers.advisor_consultation import fetch_current_term_consu
 from app.ingestion.crawlers.graduation import fetch_graduation_requirement
 from app.ingestion.crawlers.graduation_expected_info import extract_graduation_expected_info
 from app.ingestion.crawlers.grades import fetch_all_grades
+from app.ingestion.crawlers.my_pusan_extracurricular import fetch_extracurricular_certificate
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
 from app.ingestion.crawlers.student_info import fetch_student_record
+from app.ingestion.normalizers.my_pusan_normalizer import upsert_extracurricular_activities
 from app.ingestion.normalizers.pnu_normalizer import (
     map_academic_program_registrations,
     map_grades,
@@ -67,6 +69,9 @@ class PortalSyncResponse(BaseModel):
     courses: list[CourseRecordResponse]
     academic_programs: list[AcademicProgramResponse]
     graduation_table_count: int
+    activities_created: int = 0
+    activities_updated: int = 0
+    activities_sso_ok: bool = False
 
 
 class AdvisorConsultedRequest(BaseModel):
@@ -90,6 +95,18 @@ def sync_portal_data(
             consultation_status = fetch_current_term_consultation_status(
                 page, current_year, current_semester
             )
+            # my.pusan.ac.kr는 별도 서브도메인이라 SSO 세션 공유 여부를 검증할 필요가
+            # 있다. 이수 프로그램 크롤이 실패해도(로그인 튕김·페이지 구조 변경) 전체
+            # portal-sync가 실패하면 안 되므로 여기서 예외 흡수. 성공 시에도 fetch 결과의
+            # authenticated=False면 데이터 반영 스킵.
+            try:
+                extracurricular = fetch_extracurricular_certificate(page)
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "my.pusan.ac.kr 이수 프로그램 크롤 실패 (user_id=%s): %s",
+                    current_user.id, exc,
+                )
+                extracurricular = {"authenticated": False, "programs": [], "raw_tables": []}
     except PnuLoginError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
@@ -114,6 +131,18 @@ def sync_portal_data(
     if consultation_status is not None:  # 이번 학기 신청 내역 자체가 없으면 기존 값 유지
         current_user.advisor_consulted = "완료" in consultation_status
 
+    activities_created = activities_updated = 0
+    activities_sso_ok = bool(extracurricular.get("authenticated"))
+    if activities_sso_ok and extracurricular.get("programs"):
+        activities_created, activities_updated = upsert_extracurricular_activities(
+            db, current_user.id, extracurricular["programs"]
+        )
+    elif not activities_sso_ok:
+        logging.getLogger(__name__).info(
+            "my.pusan.ac.kr SSO 공유 실패 — 이수 프로그램 동기화 스킵 (user_id=%s, final_url=%s)",
+            current_user.id, extracurricular.get("final_url"),
+        )
+
     # 새로 크롤링된 이수내역을 사용자의 모든 로드맵에 반영한다. 이 시점(크롤링
     # 직후)에만 하면 되므로, 로드맵을 열 때마다(GET /me/roadmaps/current) 매번
     # 다시 확인할 필요가 없다 — 조회는 항상 가볍게 유지된다. 로드맵 개수가 많아도
@@ -131,6 +160,9 @@ def sync_portal_data(
         courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
+        activities_created=activities_created,
+        activities_updated=activities_updated,
+        activities_sso_ok=activities_sso_ok,
     )
 
 
