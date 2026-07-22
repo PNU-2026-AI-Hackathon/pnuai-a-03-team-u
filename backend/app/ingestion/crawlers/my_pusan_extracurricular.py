@@ -17,12 +17,23 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
 
-# h5 텍스트 → 유형. 소제목 표기 흔들림에 대비해 여러 표기를 담아둔다. 어느 표기든
-# 하나라도 부분 매칭되면 그 유형으로 분류.
-_H5_TO_KIND: tuple[tuple[str, tuple[str, ...]], ...] = (
+# 소제목 텍스트 → 유형. 실제 페이지에서 확인된 표기:
+#   - 비교과활동: <h5>이수 프로그램</h5>
+#   - 자격증: <h5>자격증</h5>
+#   - 어학: <h5> 없이 시험 종목별 <span class="title center">TOEIC</span> 등의 라벨.
+# 그래서 시험 종목명(TOEIC/TOEFL/...)이 소제목이면 그 자체로 language로 확정하고,
+# 표에는 시험명이 없더라도 이 라벨을 test_name으로 주입한다.
+_LABEL_TO_KIND: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("activity", ("비교과", "이수 프로그램", "이수프로그램", "활동")),
     ("certification", ("자격증", "자격")),
-    ("language", ("어학", "외국어")),
+    (
+        "language",
+        (
+            "어학", "외국어",
+            "TOEIC", "TOEFL", "TEPS", "IELTS", "OPIc", "OPIC", "JLPT", "HSK", "TSC",
+            "DELE", "DELF", "SPA", "CEFR",
+        ),
+    ),
 )
 
 # 유형별 정규 필드 매핑. 표 헤더가 이 alias 중 하나면 그 필드로 채운다. 못 걸린
@@ -56,34 +67,35 @@ _FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
-# h5 + 그 아래 첫 번째 data-role="table" 컨테이너 안의 첫 번째 <table>을 뽑는 JS.
-# 순서 유지 필수 — h5[i]가 어떤 유형인지 판정한 뒤 tables[i]를 그 유형으로 넣는다.
+# 소제목 후보 + 그 아래 첫 번째 data-role="table" 컨테이너 안의 <table>을 뽑는 JS.
+# 소제목은 h5뿐 아니라 어학 시험 종목별 라벨(`<span class="title center">TOEIC</span>` 등)도
+# 잡아야 하므로 셀렉터를 넓힌다. 문서 순서 기준으로 label과 다음 data-role="table"이
+# 짝지어져 나온다는 걸 이용.
 _EXTRACT_SECTIONED_TABLES_JS = """
 () => {
+  // 소제목 후보: h5는 물론이고 span.title 계열(어학 시험 종목 라벨)도 포함.
+  const labels = Array.from(document.querySelectorAll(
+    'h5, span.title, span[class*="title"]'
+  ));
+  const tables = Array.from(document.querySelectorAll('[data-role="table"]'));
+  // 문서 순서를 유지하기 위해 각 label의 절대 위치를 뽑고, 그 뒤 첫 번째 table을 매칭.
+  const nodePos = (node) => {
+    // TreeWalker 없이 간단히: comparing document order via compareDocumentPosition.
+    return node;
+  };
   const out = [];
-  const headings = Array.from(document.querySelectorAll('h5'));
-  for (const h of headings) {
-    const title = (h.textContent || '').trim();
+  for (const label of labels) {
+    const title = (label.textContent || '').trim();
     if (!title) continue;
-    // h5 뒤에 등장하는 첫 번째 [data-role="table"] (같은 부모 이하 형제/자손 우선 순위).
-    // querySelector로 문서 순서 기준 다음 노드를 찾기 위해 h5 이후를 walk한다.
-    let container = null;
-    let node = h;
-    while (node) {
-      const next = node.nextElementSibling;
-      if (next && next.querySelector) {
-        if (next.matches && next.matches('[data-role="table"]')) { container = next; break; }
-        const nested = next.querySelector('[data-role="table"]');
-        if (nested) { container = nested; break; }
-      }
-      // 부모의 다음 형제로 올라가며 계속 찾는다
-      if (next) { node = next; continue; }
-      node = node.parentElement;
-      if (!node) break;
+    // label 이후로 문서 순서상 가장 가까운 [data-role="table"]을 찾는다.
+    let picked = null;
+    for (const t of tables) {
+      const rel = label.compareDocumentPosition(t);
+      // Node.DOCUMENT_POSITION_FOLLOWING = 4
+      if (rel & 4) { picked = t; break; }
     }
-    if (!container) continue;
-    const table = container.querySelector('table');
-    if (!table) continue;
+    if (!picked) continue;
+    const table = picked.querySelector('table') || picked;
     const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
       Array.from(tr.querySelectorAll('th,td')).map(c => (c.textContent || '').trim())
     );
@@ -95,9 +107,19 @@ _EXTRACT_SECTIONED_TABLES_JS = """
 
 
 def _classify_heading(heading: str) -> str | None:
-    for kind, markers in _H5_TO_KIND:
+    for kind, markers in _LABEL_TO_KIND:
         if any(marker in heading for marker in markers):
             return kind
+    return None
+
+
+def _test_name_from_heading(heading: str) -> str | None:
+    """어학 소제목이 시험 종목명 그 자체(예: "TOEIC")인 경우, 표 안에 test_name
+    컬럼이 없더라도 이 값을 test_name으로 주입할 수 있게 뽑아낸다."""
+    up = heading.strip().upper()
+    for marker in ("TOEIC", "TOEFL", "TEPS", "IELTS", "OPIC", "JLPT", "HSK", "TSC", "DELE", "DELF", "SPA", "CEFR"):
+        if marker in up:
+            return marker
     return None
 
 
@@ -160,10 +182,15 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
             header = rows[0]
             if not any(cell.strip() for cell in header):
                 continue
+            # 어학 소제목이 시험 종목명 그 자체(예: "TOEIC")면, 표 안에 시험명 컬럼이
+            # 없을 것이므로 소제목을 test_name으로 주입한다.
+            heading_test_name = _test_name_from_heading(heading) if kind == "language" else None
             for row in rows[1:]:
                 if not any(cell.strip() for cell in row):
                     continue
                 parsed = _parse_row(kind, header, row)
+                if kind == "language" and heading_test_name and not parsed.get("test_name"):
+                    parsed["test_name"] = heading_test_name
                 # 정규 필드가 하나도 안 걸리고 _extra만 있으면 사실상 매핑 실패. 그래도
                 # description 폴백으로 저장은 가능하니 남겨둔다.
                 if not parsed:
