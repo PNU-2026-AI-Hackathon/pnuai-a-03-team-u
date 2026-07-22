@@ -1427,15 +1427,17 @@ body.theme-dark .password-reset-icon {
 }
 
 .credit-chart strong {
-  color: var(--ink);
+  color: var(--blue);
   font-size: 22px;
+  font-weight: 900;
 }
 
 .credit-chart strong span {
   margin-left: 4px;
-  color: var(--muted);
+  color: var(--blue);
   font-size: 12px;
   font-weight: 800;
+  opacity: 0.7;
 }
 
 .term-options {

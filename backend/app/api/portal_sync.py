@@ -158,10 +158,10 @@ def sync_portal_data(
             language_scores_created, language_scores_updated = upsert_language_scores(
                 db, current_user.id, extracurricular["language_scores"]
             )
-        if extracurricular.get("unclassified_headers"):
+        if extracurricular.get("unclassified_headings"):
             logging.getLogger(__name__).info(
-                "my.pusan.ac.kr certificate 페이지에 분류 실패한 표 헤더 (user_id=%s): %s",
-                current_user.id, extracurricular["unclassified_headers"],
+                "my.pusan.ac.kr certificate 페이지에 분류 실패한 h5 (user_id=%s): %s",
+                current_user.id, extracurricular["unclassified_headings"],
             )
     else:
         logging.getLogger(__name__).info(

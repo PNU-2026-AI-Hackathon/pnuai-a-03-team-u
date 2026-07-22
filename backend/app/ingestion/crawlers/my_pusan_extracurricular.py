@@ -1,37 +1,36 @@
 """my.pusan.ac.kr 학생 경력 인증서 페이지에서 비교과활동/자격증/어학 성적을 한 번에 긁는다.
 
 기존 pnu_session.login() 세션이 login.pusan.ac.kr 통합 SSO에 붙어있고, 그 세션 쿠키가
-my.pusan.ac.kr 서브도메인에도 유효한 걸 전제로 한다. certificate 페이지엔 이수 프로그램,
-자격증, 어학 점수가 각각 별도 <table>로 나열되는 것으로 확인됨(2026-07-23 사용자 확인).
+my.pusan.ac.kr 서브도메인에도 유효한 걸 전제로 한다. certificate 페이지는 각 유형(활동
+/자격증/어학)마다 `<h5>` 소제목 + 그 아래 `data-role="table"` 컨테이너 안의 `<table>`로
+구성됨(2026-07-23 사용자 확인).
 
-전략: 페이지의 모든 <table>을 뽑고, 각 표의 헤더 텍스트로 유형(activity/certification/
-language)을 분류. 헤더가 alias에 하나도 안 걸리는 표는 무시. 실제 관측 후 alias 확장 가능.
+전략: 페이지에서 `<h5>` + 다음 `data-role="table"` 쌍을 순서대로 잡고, h5 텍스트로
+유형을 분류. 표 헤더 셀 텍스트가 어떻든 h5가 "비교과활동"/"자격증"/"어학"이면 해당
+유형으로 확정한다. 필드 매핑은 표 헤더 alias로 흡수하고, 못 맞춘 헤더는 _extra에 원문
+보존해서 상위 계층에서 알아서 살린다.
 """
 
 from __future__ import annotations
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from app.ingestion.crawlers.table_extract import extract_tables
-
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
 
-# 각 표를 어떤 유형으로 볼지 판정하기 위한 대표 헤더 마커. 헤더 중 하나라도
-# 해당 유형의 marker에 걸리면 그 유형으로 분류한다. 우선순위 순서(certification/
-# language가 더 좁은 매칭이라 activity보다 앞에 둔다 — 예: "어학"이라는 단어가
-# 비교과활동 표에 우연히 포함되는 것보다 어학 표일 확률이 훨씬 크다).
-_TABLE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("language", ("어학성적", "어학시험", "TOEIC", "TOEFL", "TEPS", "OPIc", "JLPT", "HSK")),
-    ("certification", ("자격증", "자격명", "종목명", "종목", "취득일", "발급기관", "인정번호")),
-    ("activity", ("프로그램명", "활동명", "이수시간", "이수학점", "참여기간", "영역", "주관부서")),
+# h5 텍스트 → 유형. 소제목 표기 흔들림에 대비해 여러 표기를 담아둔다. 어느 표기든
+# 하나라도 부분 매칭되면 그 유형으로 분류.
+_H5_TO_KIND: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("activity", ("비교과", "이수 프로그램", "이수프로그램", "활동")),
+    ("certification", ("자격증", "자격")),
+    ("language", ("어학", "외국어")),
 )
 
-# 각 유형별 정규 필드 매핑. extract_tables()가 돌려주는 헤더 텍스트가 이 alias 중
-# 하나면 대응 필드에 값을 넣는다.
+# 유형별 정규 필드 매핑. 표 헤더가 이 alias 중 하나면 그 필드로 채운다. 못 걸린
+# 헤더는 파싱 결과의 _extra dict에 원문 그대로 남겨서 후속 매핑/저장 시 참고.
 _FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
     "activity": {
-        "title": ("프로그램명", "활동명", "프로그램", "활동"),
-        "category": ("영역", "카테고리", "분류", "구분"),
+        "title": ("프로그램명", "활동명", "프로그램", "활동", "제목"),
+        "category": ("영역", "카테고리", "분류", "구분", "유형"),
         "organization": ("주관부서", "주관기관", "기관", "부서", "운영기관"),
         "role": ("참여형태", "역할"),
         "start_date": ("시작일", "참여시작일", "활동시작일"),
@@ -57,18 +56,52 @@ _FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
-def _classify_table(header: list[str]) -> str | None:
-    """헤더 셀 텍스트 리스트에서 표 유형을 판정한다. 매칭 안 되면 None."""
-    normalized_cells = [cell.strip() for cell in header]
-    joined = " ".join(normalized_cells)
-    for kind, markers in _TABLE_MARKERS:
-        if any(marker in joined for marker in markers):
+# h5 + 그 아래 첫 번째 data-role="table" 컨테이너 안의 첫 번째 <table>을 뽑는 JS.
+# 순서 유지 필수 — h5[i]가 어떤 유형인지 판정한 뒤 tables[i]를 그 유형으로 넣는다.
+_EXTRACT_SECTIONED_TABLES_JS = """
+() => {
+  const out = [];
+  const headings = Array.from(document.querySelectorAll('h5'));
+  for (const h of headings) {
+    const title = (h.textContent || '').trim();
+    if (!title) continue;
+    // h5 뒤에 등장하는 첫 번째 [data-role="table"] (같은 부모 이하 형제/자손 우선 순위).
+    // querySelector로 문서 순서 기준 다음 노드를 찾기 위해 h5 이후를 walk한다.
+    let container = null;
+    let node = h;
+    while (node) {
+      const next = node.nextElementSibling;
+      if (next && next.querySelector) {
+        if (next.matches && next.matches('[data-role="table"]')) { container = next; break; }
+        const nested = next.querySelector('[data-role="table"]');
+        if (nested) { container = nested; break; }
+      }
+      // 부모의 다음 형제로 올라가며 계속 찾는다
+      if (next) { node = next; continue; }
+      node = node.parentElement;
+      if (!node) break;
+    }
+    if (!container) continue;
+    const table = container.querySelector('table');
+    if (!table) continue;
+    const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
+      Array.from(tr.querySelectorAll('th,td')).map(c => (c.textContent || '').trim())
+    );
+    out.push({ heading: title, rows });
+  }
+  return out;
+}
+"""
+
+
+def _classify_heading(heading: str) -> str | None:
+    for kind, markers in _H5_TO_KIND:
+        if any(marker in heading for marker in markers):
             return kind
     return None
 
 
 def _parse_row(kind: str, header: list[str], row: list[str]) -> dict:
-    """헤더-셀 대응. 매핑 안 되는 헤더는 _extra dict에 원문으로 보존."""
     aliases = _FIELD_ALIASES[kind]
     parsed: dict = {}
     extra: dict[str, str] = {}
@@ -92,16 +125,14 @@ def _parse_row(kind: str, header: list[str], row: list[str]) -> dict:
 
 
 def fetch_extracurricular_certificate(page: Page) -> dict:
-    """certificate 페이지를 열고 표를 유형별로 분류해 목록으로 돌려준다.
+    """certificate 페이지에서 h5+[data-role=table] 섹션별로 표를 뽑고 유형별로 분류.
 
-    반환 dict:
+    반환:
       - final_url: 도달 URL. login 페이지로 튕겼으면 SSO 미공유.
       - authenticated: SSO 공유 성공 여부.
-      - activities: 비교과활동 파싱 결과 (list[dict])
-      - certifications: 자격증 파싱 결과
-      - language_scores: 어학 점수 파싱 결과
-      - raw_tables: 진단용 원시 테이블(전체 최대 5개까지)
-      - unclassified_headers: 유형 판정 실패한 표의 헤더 목록(진단용)
+      - activities/certifications/language_scores: 파싱 결과 list[dict]
+      - unclassified_headings: h5 텍스트가 alias 매칭 실패한 목록 (진단용)
+      - raw_sections: 원시 {heading, rows} 리스트 (진단용, 상위 5개까지만)
     """
     context = page.context
     target = context.new_page()
@@ -113,24 +144,29 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
         final_url = target.url
         authenticated = "login.pusan.ac.kr" not in final_url
 
+        sections = target.evaluate(_EXTRACT_SECTIONED_TABLES_JS) if authenticated else []
+
         buckets: dict[str, list[dict]] = {"activity": [], "certification": [], "language": []}
-        unclassified: list[list[str]] = []
-        raw_tables = extract_tables(target)
-        for table in raw_tables:
-            if len(table) < 2:
+        unclassified: list[str] = []
+        for sec in sections:
+            heading = sec.get("heading") or ""
+            rows = sec.get("rows") or []
+            if len(rows) < 1:
                 continue
-            header = table[0]
+            kind = _classify_heading(heading)
+            if kind is None:
+                unclassified.append(heading)
+                continue
+            header = rows[0]
             if not any(cell.strip() for cell in header):
                 continue
-            kind = _classify_table(header)
-            if kind is None:
-                unclassified.append(header)
-                continue
-            for row in table[1:]:
+            for row in rows[1:]:
                 if not any(cell.strip() for cell in row):
                     continue
                 parsed = _parse_row(kind, header, row)
-                if not parsed or all(v == {} or v == "" or v is None for k, v in parsed.items() if k != "_extra"):
+                # 정규 필드가 하나도 안 걸리고 _extra만 있으면 사실상 매핑 실패. 그래도
+                # description 폴백으로 저장은 가능하니 남겨둔다.
+                if not parsed:
                     continue
                 buckets[kind].append(parsed)
 
@@ -140,8 +176,8 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
             "activities": buckets["activity"],
             "certifications": buckets["certification"],
             "language_scores": buckets["language"],
-            "raw_tables": raw_tables[:5],
-            "unclassified_headers": unclassified,
+            "unclassified_headings": unclassified,
+            "raw_sections": sections[:5],
         }
     finally:
         target.close()
