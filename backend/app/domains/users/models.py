@@ -20,6 +20,9 @@ class User(TimestampMixin, Base):
     major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     career_goal: Mapped[str | None] = mapped_column(String(255))
     advisor_consulted: Mapped[bool] = mapped_column(default=False)
+    # One-Stop 포털 학적부(fetch_student_record)의 "지도교수" 필드에서 크롤링.
+    # 없으면 아직 동기화 전이거나 지도교수가 아직 배정되지 않은 것.
+    advisor_name: Mapped[str | None] = mapped_column(String(100))
 
 
 class PortalCredential(TimestampMixin, Base):

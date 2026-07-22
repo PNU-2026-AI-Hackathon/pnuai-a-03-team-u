@@ -223,7 +223,7 @@ export function DashboardPage() {
           <div className="card-title">
             <div>
               <p className="eyebrow">지도 교수</p>
-              <h3>김도현 교수</h3>
+              <h3>{user?.advisor_name ?? "미동기화"}</h3>
             </div>
             <span className="status blue">{statusLabels[currentConsultationStatus]}</span>
           </div>

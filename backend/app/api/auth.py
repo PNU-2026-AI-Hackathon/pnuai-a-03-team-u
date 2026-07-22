@@ -96,6 +96,8 @@ class UserResponse(BaseModel):
     department: str | None
     major: str | None
     career_goal: str | None
+    advisor_name: str | None
+    advisor_consulted: bool
     academic_programs: list[AcademicProgramResponse] = []
 
     model_config = {"from_attributes": True}
@@ -127,6 +129,8 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         department=_department_name(db, user.department_id),
         major=_major_name(db, user.major_id),
         career_goal=user.career_goal,
+        advisor_name=user.advisor_name,
+        advisor_consulted=user.advisor_consulted,
         academic_programs=[
             AcademicProgramResponse(
                 major=_major_name(db, p.major_id) or "",
