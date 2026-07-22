@@ -32,6 +32,8 @@ import {
   GRADUATION_OVERRIDE_KEY,
   PROFILE_OVERRIDES_KEY,
   STUDENT_RECORD_KEY,
+  getDistinctProgramNames,
+  normalizeAcademicYear,
   notifyStudentProfileUpdated,
   readGraduationOverride,
   readProfileOverrides,
@@ -274,7 +276,8 @@ export function InfoPage() {
   const profileName = profileOverrides?.name ?? baseProfileName;
   const profileDepartment = profileOverrides?.department ?? baseProfileDepartment;
   const profileMajor = profileOverrides?.major ?? baseProfileMajor;
-  const academicYear = profileOverrides?.academicYear ?? baseAcademicYear;
+  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? baseAcademicYear;
+  const profileProgramNames = getDistinctProgramNames(profileDepartment, profileMajor);
   const totalCredits = displayedGraduation?.required_total_credits;
   const overallGpa = calculateGpa(displayedCourses);
   const overallMajorGpa = calculateGpa(displayedCourses, true);
@@ -305,10 +308,13 @@ export function InfoPage() {
   }
 
   function openProfileEditor() {
+    const hasDuplicateProgramName = Boolean(
+      profileDepartment && profileMajor && getDistinctProgramNames(profileDepartment, profileMajor).length === 1,
+    );
     setProfileEditDraft({
       name: profileName ?? "",
       department: profileDepartment ?? "",
-      major: profileMajor ?? "",
+      major: hasDuplicateProgramName ? "" : profileMajor ?? "",
       academicYear: academicYear ?? 1,
     });
     setCourseEditDraft(courses.map((course) => ({ ...course })));
@@ -335,8 +341,8 @@ export function InfoPage() {
   }
 
   function saveProfileEditor() {
-    if (!profileEditDraft.name.trim() || !profileEditDraft.major.trim()) {
-      setProfileEditError("이름과 전공을 모두 입력해 주세요.");
+    if (!profileEditDraft.name.trim() || (!profileEditDraft.department?.trim() && !profileEditDraft.major.trim())) {
+      setProfileEditError("이름과 학부/학과 또는 전공을 입력해 주세요.");
       return;
     }
 
@@ -641,7 +647,7 @@ export function InfoPage() {
                 <input value={profileEditDraft.name} onChange={(event) => setProfileEditDraft((current) => ({ ...current, name: event.target.value }))} />
               </label>
               <label>
-                <span>학부</span>
+                <span>학부/학과</span>
                 <input value={profileEditDraft.department ?? ""} onChange={(event) => setProfileEditDraft((current) => ({ ...current, department: event.target.value }))} />
               </label>
               <label>
@@ -657,11 +663,8 @@ export function InfoPage() {
             <>
               <h2>{profileName ?? "이름 정보 없음"}</h2>
               <p className="profile-program">
-                {profileDepartment || profileMajor ? (
-                  <>
-                    {profileDepartment ? <span>{profileDepartment}</span> : null}
-                    {profileMajor ? <span>{profileMajor}</span> : null}
-                  </>
+                {profileProgramNames.length > 0 ? (
+                  profileProgramNames.map((programName) => <span key={programName}>{programName}</span>)
                 ) : (
                   <span>학적 정보를 불러오면 표시됩니다.</span>
                 )}

@@ -7,6 +7,8 @@ import { getGraduationProgress } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { useAuth } from "../auth/AuthContext";
 import {
+  getDistinctProgramNames,
+  normalizeAcademicYear,
   readGraduationOverride,
   readProfileOverrides,
   readStoredCourses,
@@ -111,9 +113,10 @@ export function DashboardPage() {
 
   const studentId = studentRecord["학번"] ?? user?.student_id ?? "2023662247";
   const profileName = profileOverrides?.name ?? studentRecord["이름"] ?? studentRecord["성명"] ?? user?.name ?? "이도원";
-  const department = profileOverrides?.department ?? studentRecord["학부"] ?? user?.department ?? "의생명융합공학부";
-  const major = profileOverrides?.major ?? studentRecord["전공"] ?? user?.major ?? "데이터사이언스전공";
-  const academicYear = profileOverrides?.academicYear ?? 3;
+  const department = profileOverrides?.department ?? studentRecord["학부"] ?? user?.department ?? "";
+  const major = profileOverrides?.major ?? studentRecord["전공"] ?? user?.major ?? "";
+  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? 3;
+  const profileProgramNames = getDistinctProgramNames(department, major);
   const careerGoal = user?.career_goal ?? "데이터 사이언티스트";
   const currentConsultationStatus = useMemo(
     () => loadCurrentConsultationStatus(studentId, currentTerm),
@@ -142,8 +145,9 @@ export function DashboardPage() {
   const remainingCredits = requiredCredits === null ? null : Math.max(0, requiredCredits - earnedCredits);
   const creditProgress = requiredCredits ? Math.min(100, Math.round((earnedCredits / requiredCredits) * 100)) : 0;
   const profileFacts = [
-    ["학부", department],
-    ["전공", major],
+    ...(profileProgramNames.length === 1
+      ? [[department.trim() ? "학과" : "전공", profileProgramNames[0]]]
+      : [["학부", department], ["전공", major]]),
     ["학년", `${academicYear}학년`],
     ["진로", careerGoal],
   ];
@@ -173,7 +177,7 @@ export function DashboardPage() {
             <h2>
               {profileName} <span>({studentId})</span>
             </h2>
-            <p>{department} · {major}</p>
+            <p>{profileProgramNames.join(" · ")}</p>
             <p>{academicYear}학년 · 졸업 요건 점검 중</p>
           </div>
         </div>
