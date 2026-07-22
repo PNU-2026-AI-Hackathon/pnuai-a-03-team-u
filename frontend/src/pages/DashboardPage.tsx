@@ -44,9 +44,22 @@ function formatCredit(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function semesterSortValue(course: CourseRecord) {
-  const semesterOrder: Record<string, number> = { "1": 1, 여름: 2, "2": 3, 겨울: 4 };
-  return Number(course.year ?? 0) * 10 + (semesterOrder[course.semester ?? ""] ?? 0);
+// 백엔드는 semester를 원시값("1", "2", "1,2", "1학기", "2학기", "여름계절수업",
+// "입학전성적" 등) 그대로 돌려준다. 정렬용 순서와 사용자에게 보여줄 라벨을 여기서
+// 통일한다. "입학전성적"은 편입 인정 학점 lump-sum이라 학기 slot에 안 들어가고
+// 별개로 취급한다 — 편입생 대시보드에서는 이 값이 다른 학기들보다 훨씬 커서
+// 평균 왜곡을 만들기 때문에 학기별 표에서 제외한다.
+function normalizeSemesterSlot(raw: string): { order: number; label: string } | null {
+  const s = raw.trim();
+  if (s === "입학전성적" || s === "편입인정") return null;
+  if (s === "1" || s === "1학기") return { order: 1, label: "1학기" };
+  if (s === "2" || s === "2학기") return { order: 3, label: "2학기" };
+  if (s === "1,2" || s === "전학기") return { order: 5, label: "학기 무관" };
+  if (s.includes("여름계절")) return { order: 2, label: "여름계절" };
+  if (s.includes("겨울계절")) return { order: 4, label: "겨울계절" };
+  if (s.includes("여름도약")) return { order: 2, label: "여름도약" };
+  if (s.includes("겨울도약")) return { order: 4, label: "겨울도약" };
+  return { order: 6, label: s };
 }
 
 function getSemesterCredits(courses: CourseRecord[]) {
@@ -54,13 +67,14 @@ function getSemesterCredits(courses: CourseRecord[]) {
 
   courses.forEach((course) => {
     if (!course.year || !course.semester || course.credits === null) return;
-    const key = `${course.year}-${course.semester}`;
-    const semesterLabel = `${course.year}-${course.semester}`;
+    const slot = normalizeSemesterSlot(course.semester);
+    if (slot === null) return; // "입학전성적" 등 학기 단위 아닌 값은 제외
+    const key = `${course.year}-${slot.label}`;
     const current = groups.get(key);
     groups.set(key, {
-      label: semesterLabel,
+      label: `${course.year} ${slot.label}`,
       credits: (current?.credits ?? 0) + course.credits,
-      sortValue: semesterSortValue(course),
+      sortValue: Number(course.year) * 10 + slot.order,
     });
   });
 

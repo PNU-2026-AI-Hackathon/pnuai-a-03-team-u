@@ -29,7 +29,11 @@ from app.ingestion.crawlers.grades import fetch_all_grades
 from app.ingestion.crawlers.my_pusan_extracurricular import fetch_extracurricular_certificate
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
 from app.ingestion.crawlers.student_info import fetch_student_record
-from app.ingestion.normalizers.my_pusan_normalizer import upsert_extracurricular_activities
+from app.ingestion.normalizers.my_pusan_normalizer import (
+    upsert_certifications,
+    upsert_extracurricular_activities,
+    upsert_language_scores,
+)
 from app.ingestion.normalizers.pnu_normalizer import (
     map_academic_program_registrations,
     map_grades,
@@ -69,9 +73,15 @@ class PortalSyncResponse(BaseModel):
     courses: list[CourseRecordResponse]
     academic_programs: list[AcademicProgramResponse]
     graduation_table_count: int
+    # my.pusan.ac.kr 이수 프로그램·자격증·어학성적 동기화 결과 요약.
+    # sso_ok=false면 크롤 자체가 실패한 것(로그인 페이지로 튕김).
+    my_pusan_sso_ok: bool = False
     activities_created: int = 0
     activities_updated: int = 0
-    activities_sso_ok: bool = False
+    certifications_created: int = 0
+    certifications_updated: int = 0
+    language_scores_created: int = 0
+    language_scores_updated: int = 0
 
 
 class AdvisorConsultedRequest(BaseModel):
@@ -132,14 +142,30 @@ def sync_portal_data(
         current_user.advisor_consulted = "완료" in consultation_status
 
     activities_created = activities_updated = 0
-    activities_sso_ok = bool(extracurricular.get("authenticated"))
-    if activities_sso_ok and extracurricular.get("programs"):
-        activities_created, activities_updated = upsert_extracurricular_activities(
-            db, current_user.id, extracurricular["programs"]
-        )
-    elif not activities_sso_ok:
+    certifications_created = certifications_updated = 0
+    language_scores_created = language_scores_updated = 0
+    my_pusan_sso_ok = bool(extracurricular.get("authenticated"))
+    if my_pusan_sso_ok:
+        if extracurricular.get("activities"):
+            activities_created, activities_updated = upsert_extracurricular_activities(
+                db, current_user.id, extracurricular["activities"]
+            )
+        if extracurricular.get("certifications"):
+            certifications_created, certifications_updated = upsert_certifications(
+                db, current_user.id, extracurricular["certifications"]
+            )
+        if extracurricular.get("language_scores"):
+            language_scores_created, language_scores_updated = upsert_language_scores(
+                db, current_user.id, extracurricular["language_scores"]
+            )
+        if extracurricular.get("unclassified_headers"):
+            logging.getLogger(__name__).info(
+                "my.pusan.ac.kr certificate 페이지에 분류 실패한 표 헤더 (user_id=%s): %s",
+                current_user.id, extracurricular["unclassified_headers"],
+            )
+    else:
         logging.getLogger(__name__).info(
-            "my.pusan.ac.kr SSO 공유 실패 — 이수 프로그램 동기화 스킵 (user_id=%s, final_url=%s)",
+            "my.pusan.ac.kr SSO 공유 실패 — 이수/자격/어학 동기화 스킵 (user_id=%s, final_url=%s)",
             current_user.id, extracurricular.get("final_url"),
         )
 
@@ -160,9 +186,13 @@ def sync_portal_data(
         courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
+        my_pusan_sso_ok=my_pusan_sso_ok,
         activities_created=activities_created,
         activities_updated=activities_updated,
-        activities_sso_ok=activities_sso_ok,
+        certifications_created=certifications_created,
+        certifications_updated=certifications_updated,
+        language_scores_created=language_scores_created,
+        language_scores_updated=language_scores_updated,
     )
 
 
