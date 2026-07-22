@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan-U가 어떻게 동작하는지 — 비전공자를 위한 안내</title>
+<style>
+:root {
+  --bg: #fafbfc;
+  --panel: #ffffff;
+  --ink: #1c2532;
+  --muted: #5b6879;
+  --border: #e2e7ee;
+  --accent: #1a69ae;
+  --accent-2: #f97b3d;
+  --ok: #2f9e56;
+  --warn: #e0a04b;
+  --err: #d05364;
+  --sky: #eaf3fb;
+  --sky-line: #b7d4ee;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 16px; line-height: 1.75; letter-spacing: -.1px;
+}
+.layout { max-width: 860px; margin: 0 auto; padding: 60px 32px 120px; }
+h1 {
+  font-size: 34px; margin: 0 0 8px; letter-spacing: -.6px;
+}
+p.lead {
+  font-size: 18px; color: var(--muted); margin: 0 0 12px;
+}
+p.stamp {
+  font-size: 13px; color: var(--muted); margin: 0 0 40px;
+}
+section { margin: 48px 0; }
+section > h2 {
+  font-size: 24px; margin: 0 0 12px; padding-left: 14px;
+  border-left: 4px solid var(--accent);
+}
+section > h3 { font-size: 18px; margin: 22px 0 8px; }
+p { margin: 10px 0; }
+strong { color: var(--ink); }
+em { font-style: normal; color: var(--accent); font-weight: 700; }
+ul, ol { padding-left: 22px; margin: 8px 0; }
+li { margin: 6px 0; }
+
+.callout {
+  padding: 16px 20px; border-radius: 8px; background: var(--sky);
+  border-left: 4px solid var(--accent); margin: 16px 0;
+}
+.callout p:first-child { margin-top: 0; }
+.callout p:last-child { margin-bottom: 0; }
+.callout .callout-title { font-weight: 800; color: var(--accent); margin-bottom: 4px; }
+
+.flow {
+  display: grid; gap: 12px; margin: 20px 0;
+  padding: 20px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel);
+}
+.flow-row {
+  display: grid; grid-template-columns: 42px 1fr; gap: 14px; align-items: start;
+}
+.flow-step {
+  width: 42px; height: 42px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-weight: 800;
+  display: grid; place-items: center; font-size: 16px;
+}
+.flow-body strong { display: block; margin-bottom: 2px; }
+.flow-body span { color: var(--muted); font-size: 15px; }
+
+.card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px 20px;
+}
+.card h4 { margin: 0 0 6px; font-size: 15px; color: var(--accent); }
+.card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+.analogy {
+  background: #fff9ee; border: 1px dashed var(--warn);
+  padding: 14px 18px; border-radius: 8px; margin: 14px 0;
+}
+.analogy-tag {
+  display: inline-block; background: var(--warn); color: #fff;
+  padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 800;
+  margin-right: 8px; letter-spacing: .3px;
+}
+
+.big-diagram {
+  padding: 24px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); margin: 20px 0;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; text-align: center;
+}
+.big-diagram .part {
+  padding: 16px 12px; border-radius: 8px; border: 2px solid var(--sky-line);
+  background: var(--sky);
+}
+.big-diagram .part strong { display: block; font-size: 15px; margin-bottom: 4px; color: var(--accent); }
+.big-diagram .part span { display: block; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.big-diagram .arrow { align-self: center; color: var(--accent); font-size: 22px; }
+
+.tab-strip {
+  display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px;
+}
+.tab-strip span {
+  display: inline-block; padding: 4px 12px; border-radius: 12px;
+  background: #eaeef4; font-size: 13px; font-weight: 700; color: var(--muted);
+}
+
+.step-guard {
+  display: grid; grid-template-columns: 24px 1fr; gap: 12px; align-items: start;
+  padding: 10px 0; border-bottom: 1px dashed var(--border);
+}
+.step-guard:last-child { border-bottom: 0; }
+.step-guard .num {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--ok);
+  color: #fff; font-weight: 800; font-size: 12px;
+  display: grid; place-items: center; margin-top: 2px;
+}
+
+.summary-line {
+  padding: 14px 18px; background: linear-gradient(90deg, var(--sky), #fff);
+  border-left: 4px solid var(--accent); margin: 12px 0; border-radius: 0 6px 6px 0;
+}
+.summary-line strong { color: var(--accent); }
+
+nav.mini-toc {
+  padding: 16px 20px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; margin: 24px 0 40px;
+}
+nav.mini-toc p { margin: 0 0 8px; font-size: 13px; font-weight: 800; color: var(--muted); letter-spacing: .5px; }
+nav.mini-toc ol { margin: 0; padding-left: 20px; font-size: 15px; }
+nav.mini-toc a { color: var(--ink); text-decoration: none; }
+nav.mini-toc a:hover { color: var(--accent); }
+
+@media (max-width: 700px) {
+  .layout { padding: 40px 20px 80px; }
+  .card-grid { grid-template-columns: 1fr; }
+  .big-diagram { grid-template-columns: 1fr; }
+  .big-diagram .arrow { transform: rotate(90deg); }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<h1>Plan-U는 어떻게 동작하나요?</h1>
+<p class="lead">부산대 학생을 위한 학사 로드맵 서비스가 실제로 어떤 부품으로 이루어져 있고, 화면 뒤에서 무슨 일이 일어나는지 개발자가 아닌 분도 이해할 수 있게 정리했습니다.</p>
+<p class="stamp">문서 갱신: 2026-07-23</p>
+
+<nav class="mini-toc">
+  <p>목차</p>
+  <ol>
+    <li><a href="#what">Plan-U는 뭘 하는 서비스인가요?</a></li>
+    <li><a href="#first-use">처음 사용하는 학생 시나리오</a></li>
+    <li><a href="#big-picture">전체 부품들 (건물 비유로)</a></li>
+    <li><a href="#crawl">"교과 활동 불러오기"는 어떻게 되나요?</a></li>
+    <li><a href="#ai-chat">AI 상담은 어떻게 과목을 추천하나요?</a></li>
+    <li><a href="#guards">AI가 이상한 추천을 안 하도록 하는 안전장치들</a></li>
+    <li><a href="#privacy">개인정보는 어떻게 다루나요?</a></li>
+    <li><a href="#next">앞으로 무엇을 더 만들 예정인가요?</a></li>
+  </ol>
+</nav>
+
+<section id="what">
+  <h2>1. Plan-U는 뭘 하는 서비스인가요?</h2>
+  <p><strong>한 문장으로</strong>: 학생이 자기 학번으로 로그인하면, 부산대 학사 시스템에서 성적·이수내역·비교과 활동을 자동으로 가져와서, <em>지금까지 뭘 이수했고 앞으로 뭘 들어야 졸업할지</em>를 한 화면에서 보여주고, AI 상담으로 다음 학기 과목까지 함께 짜주는 서비스입니다.</p>
+
+  <div class="callout">
+    <p class="callout-title">기존 방식과 뭐가 다른가요?</p>
+    <p>학교 사이트에서 매번 학적부, 성적조회, 졸업요건 페이지를 각각 열어 확인해야 했던 정보를 <strong>한 번에 자동으로</strong> 모아 보여줍니다. 그리고 "다음 학기에 뭘 들으면 좋을까"를 사람 상담사 대신 AI가 학생 상황에 맞춰 제안해주고, 학생이 승인한 것만 실제 로드맵에 반영합니다.</p>
+  </div>
+</section>
+
+<section id="first-use">
+  <h2>2. 처음 사용하는 학생 시나리오</h2>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-step">1</div>
+      <div class="flow-body">
+        <strong>회원가입 · 로그인</strong>
+        <span>학번·비밀번호로 Plan-U 계정을 만들고 로그인합니다. 여기서 쓰는 비밀번호는 <em>Plan-U 자체 비밀번호</em>이고, 학교 학사 시스템 비밀번호와 다릅니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">2</div>
+      <div class="flow-body">
+        <strong>"교과 활동 불러오기" 클릭</strong>
+        <span>학교 학사 시스템 비밀번호를 한 번 넣으면, Plan-U가 학생 대신 학교 사이트에 접속해서 필요한 정보를 자동으로 가져옵니다. (자세한 원리는 <a href="#crawl">아래</a>에서.)</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">3</div>
+      <div class="flow-body">
+        <strong>홈 대시보드 확인</strong>
+        <span>졸업요건 대비 이수 학점, 학기별 이수 학점, 지도교수, 상담 상태, 자격증·어학 성적, 비교과활동이 모두 한 화면에 정리돼 나옵니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">4</div>
+      <div class="flow-body">
+        <strong>성장 로드맵 편집 · AI 상담</strong>
+        <span>학년별 시간표에 앞으로 이수할 과목을 직접 추가하거나, "다음 학기 뭐 들으면 좋을까"를 AI와 대화하며 짤 수 있습니다. AI가 제안한 것들은 학생이 <strong>체크박스로 선택 승인</strong>한 것만 실제 로드맵에 반영됩니다.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="big-picture">
+  <h2>3. 전체 부품들 (건물 비유로)</h2>
+  <p>Plan-U는 여러 부품이 협력해서 동작합니다. 대형 사무실 건물에 비유하면 이해가 쉽습니다.</p>
+
+  <div class="big-diagram">
+    <div class="part">
+      <strong>브라우저 화면</strong>
+      <span>학생이 보는 창구</span>
+    </div>
+    <div class="arrow">→</div>
+    <div class="part">
+      <strong>백엔드 서버</strong>
+      <span>업무 처리 사무실</span>
+    </div>
+    <div class="arrow">→</div>
+    <div class="part">
+      <strong>데이터베이스</strong>
+      <span>서류 보관 창고</span>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>프론트엔드 (창구)</h4>
+      <p>학생이 눈으로 보고 클릭하는 웹 페이지 전부. 화면 디자인·버튼·표·차트가 여기 있고, 학생 컴퓨터의 브라우저에서 돌아갑니다.</p>
+    </div>
+    <div class="card">
+      <h4>백엔드 (사무실)</h4>
+      <p>화면 뒤에서 실제 업무를 처리하는 서버. 로그인 확인, 데이터 저장, AI 상담 진행, 학교 사이트 크롤링 등을 담당합니다.</p>
+    </div>
+    <div class="card">
+      <h4>데이터베이스 (창고)</h4>
+      <p>학생 프로필, 이수 과목, 자격증, 로드맵 등 모든 정보가 표 형태로 정리되어 보관되는 곳. 사무실이 필요할 때 꺼내 씁니다.</p>
+    </div>
+    <div class="card">
+      <h4>크롤러 (심부름꾼)</h4>
+      <p>학생 대신 학교 사이트(One-Stop, my.pusan.ac.kr, 학사 시스템)에 로그인해서 데이터를 긁어오는 자동화 도구. 사람이 창을 하나하나 열지 않아도 몇 초 만에 끝납니다.</p>
+    </div>
+    <div class="card">
+      <h4>AI 상담 엔진</h4>
+      <p>대화 챗봇. 학생 질문을 받아 로드맵을 확인하고, 부족한 학점을 계산하고, 진로에 맞는 과목을 제안합니다. 실제 로드맵 편집은 학생 승인 후에만 됩니다.</p>
+    </div>
+    <div class="card">
+      <h4>규칙 기반 판정 엔진</h4>
+      <p>졸업요건 충족 여부는 이 엔진이 판정합니다. AI가 아니고, 학교 규정을 그대로 옮긴 "if-then" 규칙으로 계산해서 <em>실수 없이 일관되게</em> 판정합니다.</p>
+    </div>
+  </div>
+
+  <div class="analogy">
+    <span class="analogy-tag">비유</span>
+    학생이 창구(프론트엔드)에서 종이를 접수하면, 사무실 직원(백엔드)이 그걸 창고(DB)에 정리하거나 꺼내옵니다. 학교 관공서에서 서류가 필요하면 심부름꾼(크롤러)을 보내 대신 받아오고, 판정이 필요하면 규정집(규칙 엔진)을 펴서 확인합니다. AI 상담사는 이 모든 자료를 참고해 학생에게 조언하지만, 실제 서류에 도장을 찍는 건(로드맵 저장) 학생 본인입니다.
+  </div>
+</section>
+
+<section id="crawl">
+  <h2>4. "교과 활동 불러오기"는 어떻게 되나요?</h2>
+  <p>학생이 이 버튼을 누르면 Plan-U 서버가 학생 계정으로 <strong>세 곳의 학교 사이트에 순서대로 로그인</strong>해서 정보를 긁어옵니다. Playwright라는 도구를 써서 마치 사람이 브라우저로 클릭하는 것처럼 자동화합니다.</p>
+
+  <div class="tab-strip">
+    <span>login.pusan.ac.kr — 통합 SSO 로그인</span>
+    <span>onestop.pusan.ac.kr — 학적·성적·상담</span>
+    <span>my.pusan.ac.kr — 비교과·자격증·어학</span>
+  </div>
+
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-step">1</div>
+      <div class="flow-body">
+        <strong>SSO(통합로그인) 진입</strong>
+        <span>onestop.pusan.ac.kr에서 시작해 "통합로그인" 링크를 클릭해서 login.pusan.ac.kr로 이동합니다. 여기서 학번·비밀번호를 입력해 로그인.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">2</div>
+      <div class="flow-body">
+        <strong>학적부에서 이름·학번·학과·지도교수 조회</strong>
+        <span>화면에 뜨는 정보뿐 아니라 배후에서 학교 서버가 주고받는 데이터도 함께 확인해 지도교수 이름 같은 숨겨진 값도 정확히 잡습니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">3</div>
+      <div class="flow-body">
+        <strong>성적표에서 이수 과목·학점·성적 수집</strong>
+        <span>학기별로 이수한 과목명, 학점, 이수구분(전공필수/선택/교양 등), 성적을 모두 표로 가져옵니다. 편입생의 "입학전성적"도 별도로 인식합니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">4</div>
+      <div class="flow-body">
+        <strong>졸업요건표·상담 상태 수집</strong>
+        <span>이번 학기 지도교수 상담을 신청·완료했는지도 함께 반영해 대시보드에 표시합니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">5</div>
+      <div class="flow-body">
+        <strong>my.pusan.ac.kr에서 비교과·자격증·어학 수집</strong>
+        <span>학생 경력 인증서 페이지의 이수 프로그램, 수상실적, 자격증, 어학 성적(TOEIC 등), 연수, 동아리, 봉사, 기타 8개 섹션을 자동 파싱해 정리합니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">6</div>
+      <div class="flow-body">
+        <strong>모두 데이터베이스에 저장 → 화면 갱신</strong>
+        <span>수집한 정보를 학생 계정 아래 저장하고, 학생이 페이지를 새로고침하면 대시보드에 반영된 결과가 나타납니다.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <p class="callout-title">왜 이렇게 여러 사이트를 거치나요?</p>
+    <p>부산대는 학사 시스템이 <strong>목적별로 사이트가 나뉘어 있어서</strong> 그렇습니다. 성적·수강신청은 One-Stop, 비교과·자격증은 my.pusan.ac.kr, 로그인은 별도 통합인증(login.pusan.ac.kr). Plan-U는 이걸 학생 한 번의 클릭으로 통합해서 처리합니다.</p>
+  </div>
+</section>
+
+<section id="ai-chat">
+  <h2>5. AI 상담은 어떻게 과목을 추천하나요?</h2>
+  <p>학생이 채팅창에 "다음 학기 뭐 들어야 해?"라고 물으면 AI가 단순히 답을 지어내는 게 아니라, 아래 절차를 <strong>도구를 사용해</strong> 진행합니다.</p>
+
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-step">1</div>
+      <div class="flow-body">
+        <strong>학생 프로필 확인</strong>
+        <span>진로 목표, 주전공/부전공, 이수 완료 과목, 학점 상한 등을 시스템 프롬프트에 자동 주입해 AI가 배경을 알고 시작합니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">2</div>
+      <div class="flow-body">
+        <strong>졸업요건 진행 상황 조회</strong>
+        <span>어떤 이수구분(전공필수/선택/교양필수 등)에 몇 학점 부족한지 시스템에서 자동 계산해 AI에게 알려줍니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">3</div>
+      <div class="flow-body">
+        <strong>다음 학기 개설 과목 검색</strong>
+        <span>부족한 이수구분마다 학생의 학과·전공 커리큘럼에서 후보 과목을 검색합니다. 각 과목의 개요(설명)도 함께 봅니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">4</div>
+      <div class="flow-body">
+        <strong>학생 상황에 맞춰 후보 선정</strong>
+        <span>진로 목표(예: "시스템 프로그래밍")에 맞는 과목을 우선하고, 이미 이수한 과목이나 학점 상한 초과는 자동으로 제외합니다.</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-step">5</div>
+      <div class="flow-body">
+        <strong>"제안"으로 만들어 학생에게 보여줌</strong>
+        <span>AI는 로드맵을 직접 편집하지 않고 제안만 만듭니다. 학생이 각 제안 옆의 체크박스로 원하는 것만 선택 승인하면 그때 실제 로드맵에 반영됩니다.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="analogy">
+    <span class="analogy-tag">비유</span>
+    AI 상담사가 학생 종합 서류를 훑어보고, 학교 커리큘럼 책자를 뒤져서 "이거 이거 어때요?" 하고 <strong>포스트잇을 붙여줍니다</strong>. 학생은 포스트잇 중에서 좋아 보이는 것만 골라 실제 계획서에 옮겨 적습니다. 상담사가 임의로 계획서를 고쳐 쓰는 일은 없습니다.
+  </div>
+</section>
+
+<section id="guards">
+  <h2>6. AI가 이상한 추천을 안 하도록 하는 안전장치들</h2>
+  <p>AI는 유창하게 말하지만 사실은 자주 실수합니다. Plan-U는 <strong>중요한 규칙들을 AI 판단이 아니라 시스템 코드로 강제</strong>해서 사고를 원천 차단합니다.</p>
+
+  <div class="step-guard">
+    <div class="num">1</div>
+    <div>
+      <strong>졸업요건 판정은 절대 AI가 하지 않음</strong><br>
+      <span style="color: var(--muted);">"이 학생 졸업 가능한가?"의 답은 규칙 기반 엔진이 계산합니다. AI는 그 결과를 참고해 문장을 만들 뿐입니다.</span>
+    </div>
+  </div>
+  <div class="step-guard">
+    <div class="num">2</div>
+    <div>
+      <strong>학기당 학점 상한 위반 방지</strong><br>
+      <span style="color: var(--muted);">부산대 규정에 따라 133학점 이상 학과는 21학점, 이하는 19학점까지만. AI가 초과하는 조합을 제안해도 시스템이 거절하고 다른 학기로 미루거나 교체 제안하도록 유도합니다.</span>
+    </div>
+  </div>
+  <div class="step-guard">
+    <div class="num">3</div>
+    <div>
+      <strong>이미 이수한 과목을 다시 추천 못 하게</strong><br>
+      <span style="color: var(--muted);">성적표에 있는 과목명(부산대 표기와 편입 전 학교 표기 차이도 흡수)과 매칭해서, 이미 이수한 과목의 재추천을 도구 단에서 막습니다.</span>
+    </div>
+  </div>
+  <div class="step-guard">
+    <div class="num">4</div>
+    <div>
+      <strong>편입생에게 1·2학년 과목 추천 방지</strong><br>
+      <span style="color: var(--muted);">편입 인정 학점이 있는 학생에게는 시스템이 자동으로 3학년 이상 슬롯에만 새 항목을 만들도록 강제합니다.</span>
+    </div>
+  </div>
+  <div class="step-guard">
+    <div class="num">5</div>
+    <div>
+      <strong>계절수업 과목을 정규 학기에 배치 방지</strong><br>
+      <span style="color: var(--muted);">여름·겨울 계절수업 전용 과목을 "다음 학기(정규 학기)"로 배치하려는 시도를 자동 감지해서 거절합니다.</span>
+    </div>
+  </div>
+  <div class="step-guard">
+    <div class="num">6</div>
+    <div>
+      <strong>학생 승인 없이는 저장 안 됨</strong><br>
+      <span style="color: var(--muted);">AI가 만든 모든 변경은 "제안" 상태로만 쌓입니다. 학생이 체크박스로 개별 승인한 것만 실제 로드맵에 반영됩니다.</span>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <h2>7. 개인정보는 어떻게 다루나요?</h2>
+  <div class="summary-line">
+    <p><strong>원칙</strong>: 최소 수집, 전송은 HTTPS, 저장은 암호화, 외부 AI 호출 시 개인 식별정보는 비식별화. 이 원칙을 위반하는 코드는 절대 작성하지 않습니다.</p>
+  </div>
+  <ul>
+    <li>학교 학사 시스템 비밀번호는 <strong>암호화해서 저장</strong>합니다. 저장된 값은 서버 관리자도 그대로 못 봅니다.</li>
+    <li>성적표를 이미지로 업로드받는 방식은 쓰지 않습니다. 필요한 정보만 학생 계정 세션으로 학교 사이트에서 직접 긁어옵니다.</li>
+    <li>AI(OpenAI/Anthropic/Google)에 대화를 넘길 때도 학번 같은 식별정보는 프롬프트에서 제외합니다.</li>
+    <li>학생이 대화를 초기화하면 <em>서버 데이터베이스에서도 대화 기록을 삭제</em>합니다. 프론트 화면만 지우고 서버는 남기지 않습니다.</li>
+  </ul>
+</section>
+
+<section id="next">
+  <h2>8. 앞으로 무엇을 더 만들 예정인가요?</h2>
+  <ul>
+    <li><strong>시간표 작성/추천 페이지</strong>: 로드맵의 다음 학기 과목들을 실제 요일·교시로 배치하는 시간표 작성 기능.</li>
+    <li><strong>상담 예약 페이지</strong>: 지도교수 상담 신청을 서비스 안에서 바로 할 수 있게.</li>
+    <li><strong>다른 학과 커리큘럼 수집 확장</strong>: 지금은 정보컴퓨터공학부 컴퓨터공학전공이 완비. 다른 학과도 순차 확대 중.</li>
+    <li><strong>졸업요건 세부 판정</strong>: 지금은 이수구분별 총 학점 대조까지. 앞으로는 "이 특정 과목을 반드시 들어야 함" 같은 세부 조건도 판정.</li>
+    <li><strong>추천 활동 매칭</strong>: 학생의 진로 목표에 맞는 비교과 활동을 추천하는 기능.</li>
+  </ul>
+</section>
+
+<section>
+  <h2 style="border: 0; padding: 0;">읽어주셔서 감사합니다</h2>
+  <p style="color: var(--muted);">이 문서는 팀 안팎의 비전공자·비개발자 이해관계자(교수님, 학과 사무실, 서비스 소개 대상 등)에게 Plan-U 구조를 설명하기 위한 것입니다. 기술적 상세는 <code style="background: #eef2f7; padding: 2px 8px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 13px;">docs/architecture-overview.html</code>을 참고하세요.</p>
+</section>
+
+</div>
+</body>
+</html>
