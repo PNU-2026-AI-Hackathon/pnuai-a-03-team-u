@@ -1460,9 +1460,29 @@ body.theme-dark .password-reset-icon {
 
 .roadmap-shell {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1600px;
   min-width: 0;
   margin: 34px auto 0;
+  /* AI 상담 패널을 shell 레벨에서 우측 컬럼으로 붙인다. 이전에는 roadmap-layout
+   * 안에 있어서 요건 카드/타임라인과 같은 컬럼을 나눠 시각적으로 겹쳐 보이는
+   * 문제가 있었다. shell 레벨로 올리면 탭 전환과 무관하게 항상 우측에 붙는다. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  gap: 22px;
+  align-items: start;
+}
+
+.roadmap-shell-body {
+  min-width: 0;
+}
+
+/* AI 패널이 shell 레벨의 오른쪽 컬럼 자리에서 자연 흐름대로 배치된다.
+ * 이전 roadmap-layout 하위였을 때의 sticky/absolute 규칙은 제거했다 —
+ * 이제 컬럼 안에서 flow-based로 스크롤과 함께 움직인다. */
+@media (max-width: 900px) {
+  .roadmap-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .roadmap-head,
@@ -2327,9 +2347,9 @@ body.theme-dark .password-reset-icon {
 }
 
 .roadmap-layout {
+  /* AI 패널을 shell로 뺀 뒤로 이 컨테이너는 로드맵 본문 영역 하나만 담는다. */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(290px, 330px);
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -3521,13 +3541,9 @@ body.theme-dark .password-reset-icon {
     display: none;
   }
 
-  .roadmap-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(250px, 300px);
-  }
-
-  .ai-planner {
-    position: sticky;
-    top: 24px;
+  .roadmap-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
+    gap: 18px;
   }
 
   .track-item {
@@ -3574,23 +3590,9 @@ body.theme-dark .password-reset-icon {
   }
 }
 
-@media (min-width: 901px) and (max-width: 1240px) {
-  .roadmap-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(270px, 310px);
-  }
-
-  .ai-planner {
-    position: sticky;
-    top: 24px;
-  }
-}
-
 @media (max-width: 700px) {
-  .roadmap-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ai-planner {
+  .ai-planner,
+  .ai-roadmap-panel {
     position: static;
   }
 }
@@ -4675,8 +4677,11 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .ai-roadmap-panel {
-  position: sticky;
-  top: 24px;
+  /* 이전에는 position: sticky로 상단에 고정했는데, 사용자가 아래로 스크롤하면
+   * 로드맵 카드가 이 패널 뒤로 지나가면서 시야에서 가려지는 문제가 있었다.
+   * grid의 2번째 컬럼 자리에 자연스럽게 흐르도록 static로 둔다.
+   */
+  position: static;
   display: grid;
   gap: 16px;
   padding: 22px;
@@ -4879,6 +4884,34 @@ body.theme-dark .semester-course-status.status-completed {
   height: 6px;
   border-radius: 50%;
   background: #69ca97;
+}
+
+/* 개별 승인 UI: 각 제안 옆에 체크박스. bullet dot는 숨기고 checkbox가 마커 역할. */
+.ai-roadmap-proposal li:has(.pending-change-row) {
+  padding-left: 0;
+}
+.ai-roadmap-proposal li:has(.pending-change-row)::before {
+  display: none;
+}
+
+.pending-change-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.pending-change-row input[type="checkbox"] {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.pending-change-row span {
+  color: #465266;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .proposal-actions {
@@ -6299,10 +6332,6 @@ body.theme-dark .evidence-list strong {
 }
 
 @media (max-width: 900px) {
-  .roadmap-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .activity-results-head {
     align-items: flex-start;
     flex-direction: column;

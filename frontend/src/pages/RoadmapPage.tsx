@@ -5,6 +5,7 @@ import { getApiErrorMessage } from "../api/client";
 import {
   chatWithRoadmapAgent,
   confirmRoadmapChanges,
+  resetRoadmapAgentSession,
   createRoadmapItem,
   deleteRoadmapItem,
   getCurrentRoadmap,
@@ -628,6 +629,7 @@ function MockRoadmapPage() {
 
   return (
     <section className="roadmap-shell" data-current-tab={activeTab}>
+      <div className="roadmap-shell-body">
       <section className="roadmap-head">
         <div>
           <p className="eyebrow">남은 요건</p>
@@ -971,11 +973,13 @@ function MockRoadmapPage() {
             </section>
           )}
         </div>
+      </section>
+      </div>
 
-        <aside className="ai-roadmap-panel">
-          <div className="ai-panel-head">
-            <div className="ai-panel-copy">
-              <p className="eyebrow">AI와 같이 요건 맞추기</p>
+      <aside className="ai-roadmap-panel">
+        <div className="ai-panel-head">
+          <div className="ai-panel-copy">
+            <p className="eyebrow">AI와 같이 요건 맞추기</p>
               <h3>AI와 같이 로드맵 짜기</h3>
               <p>남은 요건과 과목 후보를 보면서 바로 조정합니다.</p>
             </div>
@@ -1072,7 +1076,6 @@ function MockRoadmapPage() {
             </button>
           </form>
         </aside>
-      </section>
     </section>
   );
 }
@@ -1215,7 +1218,7 @@ function pendingChangeLabel(change: PendingRoadmapChange) {
   const term = change.planned_grade
     ? `${change.planned_grade}학년 ${normalizeSemester(change.planned_semester) ?? "학기 미정"}`
     : normalizeSemester(change.planned_semester);
-  return [actionLabels[change.action], term, change.reason].filter(Boolean).join(" · ");
+  return [actionLabels[change.action], change.course_name, term, change.reason].filter(Boolean).join(" · ");
 }
 
 function ConnectedRoadmapPage() {
@@ -1236,6 +1239,7 @@ function ConnectedRoadmapPage() {
   const [messages, setMessages] = useState<ChatMessage[]>(apiInitialMessages);
   const [suggestedActions, setSuggestedActions] = useState(initialSuggestedActions);
   const [pendingChanges, setPendingChanges] = useState<PendingRoadmapChange[]>([]);
+  const [selectedChangeIds, setSelectedChangeIds] = useState<Set<number>>(new Set());
   const [prompt, setPrompt] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
@@ -1499,6 +1503,7 @@ function ConnectedRoadmapPage() {
       const response = await chatWithRoadmapAgent(roadmap.id, trimmedValue);
       setMessages((current) => [...current, { id: `ai-${Date.now()}`, speaker: "AI", text: response.reply }]);
       setPendingChanges(response.pending_changes);
+      setSelectedChangeIds(new Set(response.pending_changes.map((change) => change.change_id)));
       setSuggestedActions([
         { label: "남은 요건 확인", prompt: "현재 계획에서 아직 부족한 졸업요건을 정리해줘." },
         { label: "학점 부담 조정", prompt: "학기별 예정 학점을 균형 있게 조정해줘." },
@@ -1514,26 +1519,40 @@ function ConnectedRoadmapPage() {
 
   async function resolvePendingChanges(approve: boolean) {
     if (!roadmap || pendingChanges.length === 0 || isAiLoading) return;
-    const ids = pendingChanges.map((change) => change.change_id);
+    // approve=true면 사용자가 체크한 항목만 반영. 나머지는 rejected로 함께 정리해서
+    // pending 상태로 남지 않게 한다. approve=false면 전부 rejected.
+    const allIds = pendingChanges.map((change) => change.change_id);
+    const approved = approve ? allIds.filter((id) => selectedChangeIds.has(id)) : [];
+    const rejected = approve ? allIds.filter((id) => !selectedChangeIds.has(id)) : allIds;
+    if (approve && approved.length === 0) return;
     setIsAiLoading(true);
     setAiError("");
     try {
-      await confirmRoadmapChanges(roadmap.id, approve ? ids : [], approve ? [] : ids);
-      if (approve) {
+      await confirmRoadmapChanges(roadmap.id, approved, rejected);
+      if (approve && approved.length > 0) {
         await reloadRoadmap();
         setMessages((current) => [...current, {
           id: `applied-${Date.now()}`,
           speaker: "AI",
-          text: "승인한 변경사항을 로드맵에 반영했습니다.",
+          text: `승인한 ${approved.length}개 변경사항을 로드맵에 반영했습니다.`,
         }]);
         setActiveTab("semester");
       }
       setPendingChanges([]);
+      setSelectedChangeIds(new Set());
     } catch (error) {
       setAiError(getApiErrorMessage(error, "AI 변경안을 처리하지 못했습니다."));
     } finally {
       setIsAiLoading(false);
     }
+  }
+
+  function togglePendingChangeSelection(changeId: number) {
+    setSelectedChangeIds((current) => {
+      const next = new Set(current);
+      if (next.has(changeId)) next.delete(changeId); else next.add(changeId);
+      return next;
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1548,10 +1567,22 @@ function ConnectedRoadmapPage() {
     }
   }
 
-  function handleResetConversation() {
+  async function handleResetConversation() {
+    // 백엔드에서도 대화 히스토리와 미승인 pending 변경을 삭제해서, 다음 채팅에
+    // 이전 대화가 다시 로드되지 않게 한다. 예전에는 로컬 state만 리셋해서 UI는
+    // 새 대화처럼 보이지만 백엔드는 과거를 다 기억하는 정합성 이슈가 있었다.
+    if (roadmap) {
+      try {
+        await resetRoadmapAgentSession(roadmap.id);
+      } catch (error) {
+        setAiError(getApiErrorMessage(error, "대화 초기화에 실패했습니다."));
+        return;
+      }
+    }
     setMessages(apiInitialMessages);
     setSuggestedActions(initialSuggestedActions);
     setPendingChanges([]);
+    setSelectedChangeIds(new Set());
     setPrompt("");
     setAiError("");
     setFailedPrompt("");
@@ -1580,6 +1611,7 @@ function ConnectedRoadmapPage() {
 
   return (
     <section className="roadmap-shell" data-current-tab={activeTab}>
+      <div className="roadmap-shell-body">
       <section className="roadmap-head">
         <div>
           <p className="eyebrow">남은 요건</p>
@@ -1708,19 +1740,20 @@ function ConnectedRoadmapPage() {
             </section>
           )}
         </div>
-
-        <aside className="ai-roadmap-panel">
-          <div className="ai-panel-head"><div className="ai-panel-copy"><p className="eyebrow">AI와 같이 요건 맞추기</p><h3>AI와 같이 로드맵 짜기</h3><p>남은 요건과 실제 로드맵을 기준으로 변경안을 제안합니다.</p></div><button className="ai-reset-button" type="button" aria-label="화면 대화 초기화" title="화면 대화 초기화" disabled={isAiLoading || pendingChanges.length > 0} onClick={handleResetConversation}><RotateCcw size={16} aria-hidden="true" /></button></div>
-          <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading}>
-            {messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
-            {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}
-            {aiError ? <div className="ai-chat-error" role="alert"><p>{aiError}</p>{failedPrompt ? <button type="button" onClick={() => void sendMessage(failedPrompt, false)}><RefreshCw size={13} aria-hidden="true" /> 다시 시도</button> : null}</div> : null}
-          </div>
-          {pendingChanges.length > 0 ? <section className="ai-roadmap-proposal" aria-label="AI 로드맵 변경 제안"><div><span>변경 제안</span><h4>{pendingChanges.length}개의 변경사항</h4><p>승인한 뒤에만 실제 로드맵에 저장됩니다.</p></div><ul>{pendingChanges.map((change) => <li key={change.change_id}>{pendingChangeLabel(change)}</li>)}</ul><div className="proposal-actions"><button type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(false)}><X size={14} aria-hidden="true" /> 거절</button><button className="apply-proposal-button" type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(true)}><Check size={14} aria-hidden="true" /> 모두 승인</button></div></section> : null}
-          <div className="suggested-actions"><span>다음 추천 행동</span><div className="quick-prompts">{suggestedActions.map((action) => <button type="button" key={action.label} disabled={isAiLoading || pendingChanges.length > 0} onClick={() => void sendMessage(action.prompt)}>{action.label}</button>)}</div></div>
-          <form className="ai-input" onSubmit={handleSubmit}><textarea ref={promptRef} value={prompt} rows={1} aria-label="AI에게 메시지 보내기" placeholder="예: 다음 학기 전공 필수를 먼저 배치해줘" disabled={isAiLoading || pendingChanges.length > 0} onChange={(event) => { setPrompt(event.target.value); event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`; }} onKeyDown={handlePromptKeyDown} /><button type="submit" aria-label="메시지 전송" title="메시지 전송" disabled={!prompt.trim() || isAiLoading || pendingChanges.length > 0}>{isAiLoading ? <LoaderCircle size={17} aria-hidden="true" /> : <Send size={17} aria-hidden="true" />}</button></form>
-        </aside>
       </section>
+      </div>
+
+      <aside className="ai-roadmap-panel">
+        <div className="ai-panel-head"><div className="ai-panel-copy"><p className="eyebrow">AI와 같이 요건 맞추기</p><h3>AI와 같이 로드맵 짜기</h3><p>남은 요건과 실제 로드맵을 기준으로 변경안을 제안합니다.</p></div><button className="ai-reset-button" type="button" aria-label="화면 대화 초기화" title="화면 대화 초기화" disabled={isAiLoading || pendingChanges.length > 0} onClick={handleResetConversation}><RotateCcw size={16} aria-hidden="true" /></button></div>
+        <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading}>
+          {messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
+          {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}
+          {aiError ? <div className="ai-chat-error" role="alert"><p>{aiError}</p>{failedPrompt ? <button type="button" onClick={() => void sendMessage(failedPrompt, false)}><RefreshCw size={13} aria-hidden="true" /> 다시 시도</button> : null}</div> : null}
+        </div>
+        {pendingChanges.length > 0 ? <section className="ai-roadmap-proposal" aria-label="AI 로드맵 변경 제안"><div><span>변경 제안</span><h4>{pendingChanges.length}개의 변경사항</h4><p>반영할 항목만 체크한 뒤 승인하세요.</p></div><ul>{pendingChanges.map((change) => <li key={change.change_id}><label className="pending-change-row"><input type="checkbox" checked={selectedChangeIds.has(change.change_id)} onChange={() => togglePendingChangeSelection(change.change_id)} disabled={isAiLoading} /><span>{pendingChangeLabel(change)}</span></label></li>)}</ul><div className="proposal-actions"><button type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(false)}><X size={14} aria-hidden="true" /> 모두 거절</button><button className="apply-proposal-button" type="button" disabled={isAiLoading || selectedChangeIds.size === 0} onClick={() => void resolvePendingChanges(true)}><Check size={14} aria-hidden="true" /> 선택 승인 ({selectedChangeIds.size})</button></div></section> : null}
+        <div className="suggested-actions"><span>다음 추천 행동</span><div className="quick-prompts">{suggestedActions.map((action) => <button type="button" key={action.label} disabled={isAiLoading || pendingChanges.length > 0} onClick={() => void sendMessage(action.prompt)}>{action.label}</button>)}</div></div>
+        <form className="ai-input" onSubmit={handleSubmit}><textarea ref={promptRef} value={prompt} rows={1} aria-label="AI에게 메시지 보내기" placeholder="예: 다음 학기 전공 필수를 먼저 배치해줘" disabled={isAiLoading || pendingChanges.length > 0} onChange={(event) => { setPrompt(event.target.value); event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`; }} onKeyDown={handlePromptKeyDown} /><button type="submit" aria-label="메시지 전송" title="메시지 전송" disabled={!prompt.trim() || isAiLoading || pendingChanges.length > 0}>{isAiLoading ? <LoaderCircle size={17} aria-hidden="true" /> : <Send size={17} aria-hidden="true" />}</button></form>
+      </aside>
     </section>
   );
 }

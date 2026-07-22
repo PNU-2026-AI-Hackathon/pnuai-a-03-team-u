@@ -60,6 +60,7 @@ export type PendingRoadmapChange = {
   action: "create" | "update" | "delete";
   item_id: number | null;
   course_id: number | null;
+  course_name: string | null;
   planned_year: string | null;
   planned_semester: string | null;
   planned_grade: number | null;
@@ -115,6 +116,13 @@ export async function confirmRoadmapChanges(
   const { data } = await apiClient.post<{ applied: number[]; rejected: number[] }>(
     `/me/roadmaps/${roadmapId}/agent/confirm`,
     { approved, rejected },
+  );
+  return data;
+}
+
+export async function resetRoadmapAgentSession(roadmapId: number) {
+  const { data } = await apiClient.post<{ deleted_messages: number; deleted_pending: number }>(
+    `/me/roadmaps/${roadmapId}/agent/reset`,
   );
   return data;
 }

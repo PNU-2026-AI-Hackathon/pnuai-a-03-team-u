@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
-from app.domains.planning.models import CourseRoadmap, PendingRoadmapChange
+from app.domains.courses.models import Course
+from app.domains.planning.models import (
+    CourseRoadmap,
+    CourseRoadmapChatMessage,
+    CourseRoadmapItem,
+    PendingRoadmapChange,
+)
 from app.domains.planning.roadmap_chat import apply_pending_changes, run_roadmap_chat
 from app.domains.users.models import User
 
@@ -36,6 +42,7 @@ class PendingChangeResponse(BaseModel):
     action: str
     item_id: int | None
     course_id: int | None
+    course_name: str | None
     planned_year: str | None
     planned_semester: str | None
     planned_grade: int | None
@@ -43,18 +50,53 @@ class PendingChangeResponse(BaseModel):
     reason: str | None
 
     @classmethod
-    def from_model(cls, change: PendingRoadmapChange) -> "PendingChangeResponse":
+    def from_model(cls, change: PendingRoadmapChange, course_name: str | None) -> "PendingChangeResponse":
         return cls(
             change_id=change.id,
             action=change.action,
             item_id=change.item_id,
             course_id=change.course_id,
+            course_name=course_name,
             planned_year=change.planned_year,
             planned_semester=change.planned_semester,
             planned_grade=change.planned_grade,
             before_snapshot=change.before_snapshot,
             reason=change.reason,
         )
+
+
+def _resolve_change_course_names(
+    db: Session, changes: list[PendingRoadmapChange]
+) -> dict[int, str | None]:
+    """각 pending change가 어떤 과목에 대한 것인지 사용자에게 보여주기 위해 이름을 찾는다.
+    - create/update with course_id: Course.course_name
+    - update/delete (course_id 없음): before_snapshot["course_name"] → 기존 item.course_name 폴백
+    """
+    course_ids = {c.course_id for c in changes if c.course_id is not None}
+    course_names: dict[int, str] = {}
+    if course_ids:
+        rows = db.execute(
+            Course.__table__.select().where(Course.id.in_(course_ids))
+        ).mappings().all()
+        course_names = {r["id"]: r["course_name"] for r in rows}
+    item_ids = {c.item_id for c in changes if c.item_id is not None and c.course_id is None}
+    item_names: dict[int, str] = {}
+    if item_ids:
+        rows = db.execute(
+            CourseRoadmapItem.__table__.select().where(CourseRoadmapItem.id.in_(item_ids))
+        ).mappings().all()
+        item_names = {r["id"]: r["course_name"] for r in rows}
+    resolved: dict[int, str | None] = {}
+    for c in changes:
+        if c.course_id is not None:
+            resolved[c.id] = course_names.get(c.course_id)
+        elif c.before_snapshot and c.before_snapshot.get("course_name"):
+            resolved[c.id] = c.before_snapshot["course_name"]
+        elif c.item_id is not None:
+            resolved[c.id] = item_names.get(c.item_id)
+        else:
+            resolved[c.id] = None
+    return resolved
 
 
 class ChatResponse(BaseModel):
@@ -73,9 +115,13 @@ def chat_with_roadmap_agent(
     반환된 pending_changes를 /confirm으로 승인해야 실제 반영된다."""
     roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
     result = run_roadmap_chat(db, current_user, roadmap, payload.message)
+    name_map = _resolve_change_course_names(db, result["pending_changes"])
     return ChatResponse(
         reply=result["reply"],
-        pending_changes=[PendingChangeResponse.from_model(c) for c in result["pending_changes"]],
+        pending_changes=[
+            PendingChangeResponse.from_model(c, name_map.get(c.id))
+            for c in result["pending_changes"]
+        ],
     )
 
 
@@ -100,3 +146,37 @@ def confirm_pending_changes(
     roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
     result = apply_pending_changes(db, roadmap, payload.approved, payload.rejected)
     return ConfirmResponse(**result)
+
+
+class ResetResponse(BaseModel):
+    deleted_messages: int
+    deleted_pending: int
+
+
+@router.post("/reset", response_model=ResetResponse)
+def reset_roadmap_agent_session(
+    roadmap_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """이 로드맵의 상담 대화 기록과 아직 반영 안 된 pending change를 모두 지운다.
+    프론트 '화면 대화 초기화' 버튼이 이 엔드포인트를 부른다. 이전에는 프론트에서만
+    상태를 리셋하고 DB 히스토리가 남아있어, 다음 채팅 시작 시 백엔드가 여전히 과거
+    대화를 다 로드해 LLM에 넘기던 문제가 있었다.
+    """
+    roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
+    deleted_messages = (
+        db.query(CourseRoadmapChatMessage)
+        .filter(CourseRoadmapChatMessage.roadmap_id == roadmap.id)
+        .delete(synchronize_session=False)
+    )
+    deleted_pending = (
+        db.query(PendingRoadmapChange)
+        .filter(
+            PendingRoadmapChange.roadmap_id == roadmap.id,
+            PendingRoadmapChange.status == "pending",
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return ResetResponse(deleted_messages=deleted_messages, deleted_pending=deleted_pending)
