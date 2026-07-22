@@ -15,8 +15,6 @@ import {
   readStoredStudentRecord,
 } from "../data/studentProfileStorage";
 
-type ConsultationStatus = "scheduled" | "completed";
-
 const fallbackSemesterCredits = [
   ["2025-1", "18"],
   ["2025-2", "21"],
@@ -40,35 +38,6 @@ function getCurrentAcademicTerm(date = new Date()) {
   if (month <= 2) return { year: year - 1, semester: 2 as const };
   if (month <= 8) return { year, semester: 1 as const };
   return { year, semester: 2 as const };
-}
-
-const statusLabels: Record<ConsultationStatus, string> = {
-  scheduled: "상담예정",
-  completed: "상담 완료",
-};
-
-function getConsultationStorageKey(studentNumber: string) {
-  return `plan-u:advisor-consultations:${studentNumber}`;
-}
-
-function isConsultationStatus(status: string): status is ConsultationStatus {
-  return status === "scheduled" || status === "completed";
-}
-
-function loadCurrentConsultationStatus(
-  studentNumber: string,
-  currentTerm: { year: number; semester: 1 | 2 },
-): ConsultationStatus {
-  try {
-    const saved = window.localStorage.getItem(getConsultationStorageKey(studentNumber));
-    if (!saved) return "scheduled";
-
-    const parsed = JSON.parse(saved) as Record<string, string>;
-    const status = parsed[`${currentTerm.year}-${currentTerm.semester}`];
-    return status && isConsultationStatus(status) ? status : "scheduled";
-  } catch {
-    return "scheduled";
-  }
 }
 
 function formatCredit(value: number) {
@@ -118,10 +87,7 @@ export function DashboardPage() {
   const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? 3;
   const profileProgramNames = getDistinctProgramNames(department, major);
   const careerGoal = user?.career_goal ?? "데이터 사이언티스트";
-  const currentConsultationStatus = useMemo(
-    () => loadCurrentConsultationStatus(studentId, currentTerm),
-    [currentTerm, studentId],
-  );
+  const consultationStatusLabel = user?.advisor_consulted ? "상담 완료" : "상담예정";
 
   useEffect(() => {
     if (graduation) return;
@@ -225,12 +191,12 @@ export function DashboardPage() {
               <p className="eyebrow">지도 교수</p>
               <h3>{user?.advisor_name ?? "미동기화"}</h3>
             </div>
-            <span className="status blue">{statusLabels[currentConsultationStatus]}</span>
+            <span className="status blue">{consultationStatusLabel}</span>
           </div>
           <p>{currentTerm.year}년 {currentTerm.semester}학기 상담 여부만 홈에서 확인합니다.</p>
           <div className="advisor-current-status" aria-label="현재 학기 상담 상태">
             <span>{currentTerm.year}년 {currentTerm.semester}학기</span>
-            <strong>{statusLabels[currentConsultationStatus]}</strong>
+            <strong>{consultationStatusLabel}</strong>
           </div>
         </article>
 
