@@ -26,10 +26,18 @@ export type User = {
   student_id: string | null;
   department: string | null;
   major: string | null;
+  academic_year: number | null;
   career_goal: string | null;
   advisor_name: string | null;
   advisor_consulted: boolean;
   academic_programs: AcademicProgram[];
+};
+
+export type ProfileUpdatePayload = {
+  name: string;
+  department: string;
+  major?: string | null;
+  academic_year: number;
 };
 
 export type SignupPayload = {
@@ -37,6 +45,7 @@ export type SignupPayload = {
   password: string;
   name: string;
   student_id: string;
+  academic_year: number;
   school?: string;
   college?: string;
   department?: string;
@@ -44,7 +53,12 @@ export type SignupPayload = {
   academic_programs?: AcademicProgramInput[];
 };
 
-function createMockUser(studentId: string, name = "테스트 학생", email = "mock@plan-u.local"): User {
+function createMockUser(
+  studentId: string,
+  name = "테스트 학생",
+  email = "mock@plan-u.local",
+  academicYear = 3,
+): User {
   return {
     id: 0,
     email,
@@ -52,6 +66,7 @@ function createMockUser(studentId: string, name = "테스트 학생", email = "m
     student_id: studentId.trim() || "2023662247",
     department: "의생명융합공학부",
     major: "데이터사이언스전공",
+    academic_year: academicYear,
     career_goal: "데이터 사이언티스트",
     advisor_name: "김도현 교수",
     advisor_consulted: false,
@@ -74,7 +89,7 @@ export function hasAuthSession() {
 
 export async function signup(payload: SignupPayload) {
   if (isMockAuthEnabled) {
-    return createMockUser(payload.student_id, payload.name, payload.email);
+    return createMockUser(payload.student_id, payload.name, payload.email, payload.academic_year);
   }
 
   const { data } = await apiClient.post<User>("/auth/signup", payload, {
@@ -121,6 +136,41 @@ export async function getMe() {
 
   const { data } = await apiClient.get<User>("/auth/me", {
     timeout: AUTH_REQUEST_TIMEOUT_MS,
+  });
+  return data;
+}
+
+function updateStoredMockUser(updates: Partial<User>) {
+  const localUser = window.localStorage.getItem(MOCK_USER_KEY);
+  const sessionUser = window.sessionStorage.getItem(MOCK_USER_KEY);
+  const storage = localUser ? window.localStorage : window.sessionStorage;
+  const saved = localUser ?? sessionUser;
+  if (!saved) throw new Error("목업 로그인 정보가 없습니다.");
+  const user = { ...(JSON.parse(saved) as User), ...updates };
+  storage.setItem(MOCK_USER_KEY, JSON.stringify(user));
+  return user;
+}
+
+export async function updateMyProfile(payload: ProfileUpdatePayload) {
+  if (isMockAuthEnabled) {
+    return updateStoredMockUser({
+      name: payload.name,
+      department: payload.department,
+      major: payload.major?.trim() || null,
+      academic_year: payload.academic_year,
+    });
+  }
+  const { data } = await apiClient.patch<User>("/me/profile", payload);
+  return data;
+}
+
+export async function updateAdvisorConsulted(advisorConsulted: boolean) {
+  if (isMockAuthEnabled) {
+    const user = updateStoredMockUser({ advisor_consulted: advisorConsulted });
+    return { advisor_consulted: user.advisor_consulted };
+  }
+  const { data } = await apiClient.patch<{ advisor_consulted: boolean }>("/me/advisor-consulted", {
+    advisor_consulted: advisorConsulted,
   });
   return data;
 }

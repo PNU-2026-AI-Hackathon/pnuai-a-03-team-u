@@ -71,6 +71,49 @@ export type PendingRoadmapChange = {
 export type RoadmapChatResponse = {
   reply: string;
   pending_changes: PendingRoadmapChange[];
+  suggested_actions: SuggestedAction[];
+};
+
+export type SuggestedAction = {
+  label: string;
+  prompt: string;
+};
+
+export type RoadmapChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type RoadmapConversation = {
+  messages: RoadmapChatMessage[];
+  pending_changes: PendingRoadmapChange[];
+  suggested_actions: SuggestedAction[];
+};
+
+export type CurriculumCourse = {
+  id: number;
+  course_name: string;
+  course_code: string | null;
+  category: string | null;
+  credits: number | null;
+  semester: string | null;
+  description: string | null;
+  status: "done" | "planned" | "available";
+};
+
+export type CurriculumGroup = {
+  grade: string;
+  title: string;
+  courses: CurriculumCourse[];
+};
+
+export type Curriculum = {
+  department: string | null;
+  major: string | null;
+  curriculum_year: string | null;
+  groups: CurriculumGroup[];
 };
 
 export async function getCurrentRoadmap() {
@@ -124,5 +167,19 @@ export async function resetRoadmapAgentSession(roadmapId: number) {
   const { data } = await apiClient.post<{ deleted_messages: number; deleted_pending: number }>(
     `/me/roadmaps/${roadmapId}/agent/reset`,
   );
+  return data;
+}
+
+export async function getRoadmapConversation(roadmapId: number) {
+  const { data } = await apiClient.get<RoadmapConversation>(`/me/roadmaps/${roadmapId}/agent/messages`);
+  return data;
+}
+
+export async function clearRoadmapConversation(roadmapId: number) {
+  await apiClient.delete(`/me/roadmaps/${roadmapId}/agent/messages`);
+}
+
+export async function getMyCurriculum() {
+  const { data } = await apiClient.get<Curriculum>("/me/curriculum");
   return data;
 }

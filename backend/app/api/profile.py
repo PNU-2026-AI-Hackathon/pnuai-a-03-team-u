@@ -9,15 +9,99 @@ from __future__ import annotations
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.auth import get_current_user
+from app.api.auth import UserResponse, _load_user_response, get_current_user
 from app.core.db import get_db
+from app.domains.academics.hierarchy import get_or_create_major, resolve_hierarchy
+from app.domains.academics.models import Department, Major, UserAcademicProgram
 from app.domains.users.models import User, UserActivity, UserCertification, UserLanguageScore
 
 router = APIRouter(prefix="/me", tags=["profile"])
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str
+    department: str
+    major: str | None = None
+    academic_year: int = Field(ge=1, le=6)
+
+
+def _resolve_profile_program(
+    db: Session, current_user: User, department_name: str, major_name: str | None
+) -> tuple[int, int | None]:
+    department_name = department_name.strip()
+    if not department_name:
+        raise HTTPException(status_code=422, detail="학부/학과를 입력해 주세요")
+
+    department = None
+    if current_user.department_id:
+        current_department = db.get(Department, current_user.department_id)
+        if current_department and current_department.name == department_name:
+            department = current_department
+    if department is None:
+        department = db.scalars(select(Department).where(Department.name == department_name)).first()
+    if department is None:
+        department_id, _ = resolve_hierarchy(db, None, None, department_name, None)
+        department = db.get(Department, department_id)
+    if department is None:
+        raise HTTPException(status_code=422, detail="학부/학과를 저장할 수 없습니다")
+
+    normalized_major = (major_name or "").strip()
+    major_id = None
+    if normalized_major:
+        major = db.scalars(
+            select(Major).where(
+                Major.department_id == department.id,
+                Major.name == normalized_major,
+            )
+        ).first()
+        major_id = (major or get_or_create_major(db, department.id, normalized_major)).id
+    return department.id, major_id
+
+
+@router.patch("/profile", response_model=UserResponse)
+def update_profile(
+    payload: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """사용자 기본 프로필과 주전공 정보를 함께 갱신한다."""
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="이름을 입력해 주세요")
+
+    department_id, major_id = _resolve_profile_program(
+        db, current_user, payload.department, payload.major
+    )
+    program_changed = (
+        current_user.department_id != department_id or current_user.major_id != major_id
+    )
+    current_user.name = name
+    current_user.department_id = department_id
+    current_user.major_id = major_id
+    current_user.academic_year = payload.academic_year
+    if program_changed:
+        current_user.graduation_override = None
+
+    primary = db.scalars(
+        select(UserAcademicProgram).where(
+            UserAcademicProgram.user_id == current_user.id,
+            UserAcademicProgram.program_type == "primary",
+        )
+    ).first()
+    if primary is None:
+        primary = UserAcademicProgram(user_id=current_user.id, program_type="primary")
+        db.add(primary)
+    primary.department_id = department_id
+    primary.major_id = major_id
+    primary.status = "active"
+
+    db.commit()
+    db.refresh(current_user)
+    return _load_user_response(db, current_user)
 
 
 # --- 비교과 활동 ---

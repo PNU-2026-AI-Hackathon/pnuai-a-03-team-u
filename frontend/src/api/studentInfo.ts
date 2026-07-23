@@ -4,6 +4,7 @@ export const isMockStudentDataEnabled =
   import.meta.env.DEV && import.meta.env.VITE_USE_MOCK_STUDENT_DATA === "true";
 
 export type CourseRecord = {
+  id: number;
   course_name: string;
   category: string | null;
   credits: number | null;
@@ -11,6 +12,7 @@ export type CourseRecord = {
   semester: string | null;
   grade: string | null;
   match_status: string;
+  source: string;
 };
 
 export type PortalSyncResponse = {
@@ -51,14 +53,14 @@ export type GraduationProgress = {
 };
 
 const mockCourses: CourseRecord[] = [
-  { course_name: "데이터베이스", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched" },
-  { course_name: "자료구조", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched" },
-  { course_name: "선형대수", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "B+", match_status: "matched" },
-  { course_name: "웹프로그래밍", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched" },
-  { course_name: "교양 선택", category: "교양선택", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched" },
-  { course_name: "Python Programming", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched" },
-  { course_name: "확률및통계 II", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched" },
-  { course_name: "인공지능과 디지털 사고", category: "교양필수", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched" },
+  { id: 1, course_name: "데이터베이스", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 2, course_name: "자료구조", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 3, course_name: "선형대수", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "B+", match_status: "matched", source: "mock" },
+  { id: 4, course_name: "웹프로그래밍", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 5, course_name: "교양 선택", category: "교양선택", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 6, course_name: "Python Programming", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 7, course_name: "확률및통계 II", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 8, course_name: "인공지능과 디지털 사고", category: "교양필수", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
 ];
 
 const mockGraduationProgress: GraduationProgress = {
@@ -114,5 +116,62 @@ export async function getGraduationProgress() {
   }
 
   const { data } = await apiClient.get<GraduationProgress>("/me/graduation");
+  return data;
+}
+
+function readMockCourses() {
+  try {
+    const saved = window.sessionStorage.getItem("planUCourseRecords");
+    if (!saved) return mockCourses;
+    return (JSON.parse(saved) as Array<Partial<CourseRecord>>).map((course, index) => ({
+      ...course,
+      id: typeof course.id === "number" ? course.id : index + 1,
+      source: course.source ?? "mock",
+    })) as CourseRecord[];
+  } catch {
+    return mockCourses;
+  }
+}
+
+export async function getCourseRecords() {
+  if (isMockStudentDataEnabled) return readMockCourses();
+  const { data } = await apiClient.get<CourseRecord[]>("/me/course-records");
+  return data;
+}
+
+export async function replaceCourseRecords(courses: CourseRecord[]) {
+  if (isMockStudentDataEnabled) {
+    const normalized = courses.map((course, index) => ({
+      ...course,
+      id: course.id > 0 ? course.id : Date.now() + index,
+      source: course.source || "mock",
+    }));
+    window.sessionStorage.setItem("planUCourseRecords", JSON.stringify(normalized));
+    return normalized;
+  }
+  const { data } = await apiClient.put<CourseRecord[]>("/me/course-records", {
+    courses: courses.map((course) => ({
+      id: course.id > 0 ? course.id : undefined,
+      course_name: course.course_name,
+      category: course.category,
+      credits: course.credits,
+      year: course.year,
+      semester: course.semester,
+      grade: course.grade,
+    })),
+  });
+  return data;
+}
+
+export async function saveGraduationOverride(program: GraduationProgram) {
+  if (isMockStudentDataEnabled) {
+    window.sessionStorage.setItem("planUGraduationOverride", JSON.stringify(program));
+    return { user_id: 0, programs: [program] } satisfies GraduationProgress;
+  }
+  const { data } = await apiClient.patch<GraduationProgress>("/me/graduation/override", {
+    required_total_credits: program.required_total_credits,
+    earned_total_credits: program.earned_total_credits,
+    categories: program.categories,
+  });
   return data;
 }

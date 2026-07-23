@@ -25,6 +25,7 @@ export function AuthPage() {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupName, setSignupName] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [academicYear, setAcademicYear] = useState("");
   const [department, setDepartment] = useState("");
   const [careerGoal, setCareerGoal] = useState("");
   const [minorMajor, setMinorMajor] = useState("");
@@ -59,6 +60,12 @@ export function AuthPage() {
       return;
     }
 
+    const parsedAcademicYear = Number(academicYear);
+    if (!Number.isInteger(parsedAcademicYear) || parsedAcademicYear < 1 || parsedAcademicYear > 6) {
+      setMessage("학년은 1부터 6 사이의 숫자로 입력해주세요.");
+      return;
+    }
+
     const academicPrograms: AcademicProgramInput[] = [];
     if (department.trim()) {
       academicPrograms.push({ department: department.trim(), program_type: "primary" });
@@ -77,12 +84,13 @@ export function AuthPage() {
         password: signupPassword,
         name: signupName,
         student_id: studentId,
+        academic_year: parsedAcademicYear,
         school: "부산대학교",
         department: department || undefined,
         career_goal: careerGoal || undefined,
         academic_programs: academicPrograms,
       });
-      setLoginStudentId(studentId.trim());
+      setLoginStudentId("");
       setLoginPassword("");
       setLoginMessage("회원가입이 완료되었습니다. 로그인해 주세요.");
       setLoginMessageKind("success");
@@ -207,6 +215,18 @@ export function AuthPage() {
           <label>
             <span>학번</span>
             <input type="text" inputMode="numeric" placeholder="예: 202312345" value={studentId} onChange={(event) => setStudentId(event.target.value)} required />
+          </label>
+          <label>
+            <span>학년</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={1}
+              placeholder="예: 3"
+              value={academicYear}
+              onChange={(event) => setAcademicYear(event.target.value)}
+              required
+            />
           </label>
           <label>
             <span>학과</span>
