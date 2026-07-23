@@ -3,7 +3,8 @@ import { ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getActivities, getCertifications, getLanguageScores } from "../api/profile";
 import type { ActivityRecord, CertificationRecord, LanguageScoreRecord } from "../api/profile";
-import { getGraduationProgress } from "../api/studentInfo";
+import { updateAdvisorConsulted } from "../api/auth";
+import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -84,24 +85,34 @@ function getSemesterCredits(courses: CourseRecord[]) {
 }
 
 export function DashboardPage() {
-  const { user } = useAuth();
-  const [profileOverrides] = useState(readProfileOverrides);
+  const { user, refreshUser } = useAuth();
+  const [profileOverrides] = useState(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [studentRecord] = useState(readStoredStudentRecord);
-  const [courses] = useState(readStoredCourses);
-  const [graduation, setGraduation] = useState<GraduationProgram | null>(readGraduationOverride);
+  const [courses, setCourses] = useState<CourseRecord[] | null>(() => isMockStudentDataEnabled ? readStoredCourses() : null);
+  const [graduation, setGraduation] = useState<GraduationProgram | null>(() => isMockStudentDataEnabled ? readGraduationOverride() : null);
   const [activities, setActivities] = useState<ActivityRecord[] | null>(null);
   const [certifications, setCertifications] = useState<CertificationRecord[] | null>(null);
   const [languageScores, setLanguageScores] = useState<LanguageScoreRecord[] | null>(null);
+  const [advisorConsulted, setAdvisorConsulted] = useState(Boolean(user?.advisor_consulted));
+  const [isAdvisorSaving, setIsAdvisorSaving] = useState(false);
   const currentTerm = useMemo(() => getCurrentAcademicTerm(), []);
 
   const studentId = studentRecord["학번"] ?? user?.student_id ?? "2023662247";
   const profileName = profileOverrides?.name ?? studentRecord["이름"] ?? studentRecord["성명"] ?? user?.name ?? "이도원";
   const department = profileOverrides?.department ?? studentRecord["학부"] ?? user?.department ?? "";
   const major = profileOverrides?.major ?? studentRecord["전공"] ?? user?.major ?? "";
-  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? 3;
+  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear ?? user?.academic_year) ?? 3;
   const profileProgramNames = getDistinctProgramNames(department, major);
   const careerGoal = user?.career_goal ?? "데이터 사이언티스트";
-  const consultationStatusLabel = user?.advisor_consulted ? "상담 완료" : "상담예정";
+  const currentConsultationStatus = advisorConsulted ? "상담 완료" : "상담예정";
+
+  useEffect(() => {
+    setAdvisorConsulted(Boolean(user?.advisor_consulted));
+  }, [user?.advisor_consulted]);
+
+  useEffect(() => {
+    getCourseRecords().then(setCourses).catch(() => setCourses([]));
+  }, []);
 
   useEffect(() => {
     if (graduation) return;
@@ -120,8 +131,21 @@ export function DashboardPage() {
       .catch(() => undefined);
   }, []);
 
-  const earnedCredits = graduation?.earned_total_credits ?? 112;
-  const requiredCredits = graduation?.required_total_credits ?? 130;
+  async function toggleAdvisorConsulted() {
+    if (isAdvisorSaving) return;
+    const nextValue = !advisorConsulted;
+    setIsAdvisorSaving(true);
+    try {
+      const result = await updateAdvisorConsulted(nextValue);
+      setAdvisorConsulted(result.advisor_consulted);
+      await refreshUser();
+    } finally {
+      setIsAdvisorSaving(false);
+    }
+  }
+
+  const earnedCredits = graduation?.earned_total_credits ?? (isMockStudentDataEnabled ? 112 : 0);
+  const requiredCredits = graduation?.required_total_credits ?? (isMockStudentDataEnabled ? 130 : null);
   const remainingCredits = requiredCredits === null ? null : Math.max(0, requiredCredits - earnedCredits);
   const creditProgress = requiredCredits ? Math.min(100, Math.round((earnedCredits / requiredCredits) * 100)) : 0;
   const profileFacts = [
@@ -131,8 +155,12 @@ export function DashboardPage() {
     ["학년", `${academicYear}학년`],
     ["진로", careerGoal],
   ];
-  const storedSemesterCredits = useMemo(() => getSemesterCredits(courses), [courses]);
-  const semesterCredits = storedSemesterCredits.length > 0 ? storedSemesterCredits : fallbackSemesterCredits;
+  const storedSemesterCredits = useMemo(() => getSemesterCredits(courses ?? []), [courses]);
+  const semesterCredits = storedSemesterCredits.length > 0
+    ? storedSemesterCredits
+    : isMockStudentDataEnabled
+    ? fallbackSemesterCredits
+    : [];
   const visibleSemesterCredits = semesterCredits.slice(-SEMESTER_PREVIEW_LIMIT);
   const averageCredits = semesterCredits.length > 0
     ? semesterCredits.reduce((sum, [, credit]) => sum + Number(credit), 0) / semesterCredits.length
@@ -205,12 +233,22 @@ export function DashboardPage() {
               <p className="eyebrow">지도 교수</p>
               <h3>{user?.advisor_name ?? "미동기화"}</h3>
             </div>
-            <span className="status blue">{consultationStatusLabel}</span>
+            <span className="status blue">{currentConsultationStatus}</span>
           </div>
           <p>{currentTerm.year}년 {currentTerm.semester}학기 상담 여부만 홈에서 확인합니다.</p>
           <div className="advisor-current-status" aria-label="현재 학기 상담 상태">
             <span>{currentTerm.year}년 {currentTerm.semester}학기</span>
-            <strong>{consultationStatusLabel}</strong>
+            <button
+              className="advisor-status-toggle"
+              type="button"
+              role="switch"
+              aria-checked={advisorConsulted}
+              disabled={isAdvisorSaving}
+              onClick={() => void toggleAdvisorConsulted()}
+            >
+              <span aria-hidden="true" />
+              <strong>{isAdvisorSaving ? "저장 중" : currentConsultationStatus}</strong>
+            </button>
           </div>
         </article>
 

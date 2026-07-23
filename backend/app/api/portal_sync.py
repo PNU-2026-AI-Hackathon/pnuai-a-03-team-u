@@ -12,13 +12,13 @@ import datetime
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
-from app.domains.academics.models import Major, UserAcademicProgram
+from app.domains.academics.models import Major, StudentCourseRecord, UserAcademicProgram
 from app.domains.planning.history import sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap
 from app.domains.users.models import User
@@ -50,6 +50,7 @@ class PortalSyncRequest(BaseModel):
 
 
 class CourseRecordResponse(BaseModel):
+    id: int
     course_name: str = Field(validation_alias="raw_course_name")
     category: str | None
     credits: float | None
@@ -57,6 +58,7 @@ class CourseRecordResponse(BaseModel):
     semester: str | None
     grade: str | None
     match_status: str
+    source: str
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
@@ -86,6 +88,27 @@ class PortalSyncResponse(BaseModel):
 
 class AdvisorConsultedRequest(BaseModel):
     advisor_consulted: bool
+
+
+class CourseRecordInput(BaseModel):
+    id: int | None = None
+    course_name: str
+    category: str | None = None
+    credits: float | None = Field(default=None, ge=0)
+    year: str | None = None
+    semester: str | None = None
+    grade: str | None = None
+
+
+class CourseRecordsReplaceRequest(BaseModel):
+    courses: list[CourseRecordInput]
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self):
+        ids = [course.id for course in self.courses if course.id is not None]
+        if len(ids) != len(set(ids)):
+            raise ValueError("같은 교과 이력 ID를 두 번 저장할 수 없습니다")
+        return self
 
 
 @router.post("/portal-sync", response_model=PortalSyncResponse)
@@ -221,6 +244,72 @@ def _table_rows_as_text(table: dict) -> list[list[str]]:
     grades/graduation 크롤러와 같은 평범한 문자열 2차원 배열로 변환한다.
     """
     return [[cell["text"] for cell in row["cells"]] for row in table["rows"]]
+
+
+def _list_course_records(db: Session, user_id: int) -> list[StudentCourseRecord]:
+    return db.scalars(
+        select(StudentCourseRecord)
+        .where(StudentCourseRecord.user_id == user_id)
+        .order_by(
+            StudentCourseRecord.year.desc(),
+            StudentCourseRecord.semester.desc(),
+            StudentCourseRecord.id,
+        )
+    ).all()
+
+
+@router.get("/course-records", response_model=list[CourseRecordResponse])
+def list_course_records(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """마지막 포털 동기화 및 사용자 편집 결과를 DB에서 다시 조회한다."""
+    return _list_course_records(db, current_user.id)
+
+
+@router.put("/course-records", response_model=list[CourseRecordResponse])
+def replace_course_records(
+    payload: CourseRecordsReplaceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """내 정보 편집 화면의 교과 이력을 한 트랜잭션으로 저장한다."""
+    existing = {
+        record.id: record
+        for record in db.scalars(
+            select(StudentCourseRecord).where(StudentCourseRecord.user_id == current_user.id)
+        ).all()
+    }
+    submitted_ids = {course.id for course in payload.courses if course.id is not None}
+    unknown_ids = submitted_ids.difference(existing)
+    if unknown_ids:
+        raise HTTPException(status_code=404, detail="수정할 수 없는 교과 이력이 포함되어 있습니다")
+
+    for record_id, record in existing.items():
+        if record_id not in submitted_ids:
+            db.delete(record)
+
+    for course in payload.courses:
+        name = course.course_name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="과목명을 입력해 주세요")
+        record = existing.get(course.id) if course.id is not None else None
+        if record is None:
+            record = StudentCourseRecord(
+                user_id=current_user.id,
+                raw_course_name=name,
+                source="manual",
+                match_status="manual",
+            )
+            db.add(record)
+        record.raw_course_name = name
+        record.category = course.category.strip() if course.category else None
+        record.credits = course.credits
+        record.year = course.year.strip() if course.year else None
+        record.semester = course.semester.strip() if course.semester else None
+        record.grade = course.grade.strip() if course.grade else None
+
+    db.commit()
+    return _list_course_records(db, current_user.id)
 
 
 @router.patch("/advisor-consulted")
