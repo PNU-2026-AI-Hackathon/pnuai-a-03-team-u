@@ -53,6 +53,44 @@ def _normalize_semester(value: str | None) -> str | None:
     return value.replace("학기", "").replace(" ", "").strip()
 
 
+def _semester_for_display(value: str | None) -> str | None:
+    """courses.semester 원시값을 사용자·LLM에게 보여줄 정규 형태로 바꾼다.
+
+    DB에는 `"1"`, `"2"`, `"1,2"`, `"전학기"`, `"여름계절수업"` 등이 섞여 있는데,
+    로드맵 항목(planned_semester)과 이수기록(StudentCourseRecord.semester)은
+    `"1학기"`/`"2학기"` 형태로 저장돼 있다. 에이전트가 `search_courses` 결과의
+    학기값을 그대로 `propose_change.planned_semester`로 흘려도 이 두 계열이
+    일치하도록 여기서 맞춰준다. `"1,2"`는 "학기 무관" 의미라 별도 문구로 바꾼다.
+    """
+    if value is None:
+        return None
+    v = value.strip()
+    if v in ("1", "2"):
+        return f"{v}학기"
+    if v == "1,2":
+        return "1학기 또는 2학기"
+    return v
+
+
+# 졸업요건 표기(교양필수/교양선택)와 courses.category 원시값(효원핵심교양 등) 사이의
+# 매핑. LLM/사용자는 요건 표기로 필터하고, DB는 원시 카테고리로 저장돼 있어 exact match만
+# 하면 아무것도 안 잡히던 문제를 여기서 흡수한다. 판정 엔진의 CATEGORY_FIELDS와 정합.
+_CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
+    "교양필수": ("효원핵심교양", "기초교양"),
+    "교양선택": ("효원균형교양", "효원창의교양"),
+}
+
+
+def _category_condition(category: str):
+    """카테고리 필터를 실제 DB 값들의 OR 조건으로 확장한다.
+    매핑에 없는 값(전공기초/전공필수/전공선택 등)은 exact match 그대로 유지한다.
+    """
+    aliases = _CATEGORY_ALIASES.get(category)
+    if not aliases:
+        return Course.category == category
+    return Course.category.in_((category, *aliases))
+
+
 def _major_scope_filter(model: type[Course] | type[GraduationRequirement], major_id: int | None):
     """major_id가 없으면(전공 미확정/미세분 학과) 전공 조건으로 좁히지 않는다.
 
@@ -126,11 +164,34 @@ class CurriculumRetriever:
             _major_scope_filter(Course, major_id),
         ]
         if parsed_filters.grade is not None:
-            conditions.append(Course.year == _normalize_grade(parsed_filters.grade))
+            # 학년 필터에 특정 학년(1~4)을 넣으면 courses.year가 정확히 그 값이거나
+            # "전학년"(학년 무관 개설)인 과목을 함께 반환한다. 후자를 배제해버리면
+            # 사실상 언제나 이수 가능한 과목들이 결과에서 통째로 빠져 검색 결과가
+            # 필요 이상으로 좁아진다(3학년 2학기 추천을 요청했는데 "전학년" 과목이
+            # 아예 안 나오는 회귀 사례가 관측됨).
+            normalized_grade = _normalize_grade(parsed_filters.grade)
+            if normalized_grade in {"1", "2", "3", "4", "5", "6"}:
+                conditions.append(or_(Course.year == normalized_grade, Course.year == "전학년"))
+            else:
+                conditions.append(Course.year == normalized_grade)
         if parsed_filters.semester:
-            conditions.append(Course.semester == _normalize_semester(parsed_filters.semester))
+            # 학기 필터도 같은 이유로 정규 1/2학기를 지정하면 학기 무관 개설
+            # ("1,2"/"전학기") 과목도 함께 반환한다. 계절수업/도약수업 등 방학 세션
+            # 값은 그대로 exact match — 정규 학기 요청에 계절수업 과목이 섞이면
+            # 안 되고, 계절수업 요청에 정규 과목이 섞이면 안 된다.
+            normalized_semester = _normalize_semester(parsed_filters.semester)
+            if normalized_semester in {"1", "2"}:
+                conditions.append(
+                    or_(
+                        Course.semester == normalized_semester,
+                        Course.semester == "1,2",
+                        Course.semester == "전학기",
+                    )
+                )
+            else:
+                conditions.append(Course.semester == normalized_semester)
         if parsed_filters.category:
-            conditions.append(Course.category == parsed_filters.category)
+            conditions.append(_category_condition(parsed_filters.category))
 
         courses = self.db.scalars(
             select(Course)
@@ -148,7 +209,18 @@ class CurriculumRetriever:
                 course.course_name,
             ),
         )
-        return [self._course_to_result(course, query) for course in ranked[: parsed_filters.limit]]
+        # 같은 개념 과목이 학과별 서로 다른 course_code로 여러 행 시딩된 경우(주로 교양:
+        # ZE1000119/DM1100179/CB1000119/ZE1000118 = 모두 "공학작문및발표") LLM에 중복
+        # 후보를 밀어넣지 않도록 (이름, 카테고리) 기준 dedup. 순위상 먼저 나온 걸 남긴다.
+        deduped: list[Course] = []
+        seen: set[tuple[str, str | None]] = set()
+        for course in ranked:
+            key = (course.course_name, course.category)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(course)
+        return [self._course_to_result(course, query) for course in deduped[: parsed_filters.limit]]
 
     def _search_vector_chunks(
         self,
@@ -196,7 +268,7 @@ class CurriculumRetriever:
             "category": chunk.category,
             "credits": _number_to_float(metadata.get("credits")),
             "grade": chunk.grade,
-            "semester": chunk.semester,
+            "semester": _semester_for_display(chunk.semester),
             "evidence": chunk.evidence,
             "source": chunk.source,
             "score": 1 - float(distance_value or 0),
@@ -211,7 +283,7 @@ class CurriculumRetriever:
             "category": course.category,
             "credits": _number_to_float(course.credits),
             "grade": course.year,
-            "semester": course.semester,
+            "semester": _semester_for_display(course.semester),
             "evidence": evidence,
             "source": "courses:2026_curriculum",
             "score": _keyword_score(query, evidence),

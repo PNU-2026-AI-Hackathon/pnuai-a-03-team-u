@@ -114,7 +114,7 @@ export function AppLayout() {
 
         <div className="sidebar-section">
           <p>바로가기</p>
-          <a href="#calendar">학사 일정</a>
+          <a href="https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076" target="_blank" rel="noopener noreferrer">학사 일정</a>
           <NavLink to="/activities">추천 활동</NavLink>
           <a href="#advisor">상담 예약</a>
         </div>

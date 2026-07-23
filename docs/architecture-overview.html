@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan-U 아키텍처 개요</title>
+<style>
+:root {
+  --bg: #0f1620;
+  --panel: #17202e;
+  --panel-2: #1b2534;
+  --border: #2b3648;
+  --ink: #e9edf3;
+  --muted: #97a3b6;
+  --accent: #7cc4ff;
+  --accent-2: #ffa87c;
+  --ok: #78d19d;
+  --warn: #f2c67b;
+  --err: #f28792;
+  --code-bg: #0a1119;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 15px; line-height: 1.6; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.layout { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+nav {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--panel); border-right: 1px solid var(--border); padding: 20px 16px;
+}
+nav h1 { font-size: 16px; margin: 0 0 12px; letter-spacing: -.3px; }
+nav h2 { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; letter-spacing: .5px; }
+nav ul { list-style: none; padding: 0; margin: 0; }
+nav li { margin: 2px 0; }
+nav a { display: block; padding: 5px 8px; border-radius: 4px; color: var(--ink); font-size: 13px; }
+nav a:hover { background: var(--panel-2); text-decoration: none; }
+main { padding: 34px 44px 80px; max-width: 1080px; }
+h1.title { font-size: 30px; margin: 0 0 6px; letter-spacing: -.6px; }
+p.subtitle { color: var(--muted); margin: 0 0 26px; }
+section { margin: 36px 0; }
+section > h2 { font-size: 22px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+section > h3 { font-size: 17px; margin: 22px 0 8px; color: var(--accent); }
+section > h4 { font-size: 14px; margin: 16px 0 6px; color: var(--accent-2); }
+p { margin: 8px 0; }
+code { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: var(--warn); }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: transparent; padding: 0; color: var(--ink); font-size: 13px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--border); vertical-align: top; }
+th { background: var(--panel); color: var(--muted); font-weight: 700; letter-spacing: .3px; }
+tbody tr:nth-child(odd) td { background: rgba(255, 255, 255, 0.015); }
+.callout { padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--panel);
+  border-radius: 0 4px 4px 0; margin: 12px 0; }
+.callout.warn { border-left-color: var(--warn); }
+.callout.err { border-left-color: var(--err); }
+.callout p:first-child { margin-top: 0; }
+.callout p:last-child { margin-bottom: 0; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.pill.get { background: #244e2f; color: #a8e2b8; }
+.pill.post { background: #244059; color: #a8c9e2; }
+.pill.patch { background: #4a3a1c; color: #e2c88a; }
+.pill.delete { background: #4a1c22; color: #e2909a; }
+.mermaid { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 12px 0; }
+kbd { background: var(--panel); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+  padding: 1px 6px; font-family: var(--mono); font-size: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+.card h4 { margin-top: 0; }
+.note { color: var(--muted); font-size: 12px; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: static; height: auto; }
+  main { padding: 24px 20px 60px; }
+  .grid2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <h1>Plan-U</h1>
+  <p class="note">부산대(PNU) 학사 로드맵 서비스</p>
+  <h2>개요</h2>
+  <ul>
+    <li><a href="#overview">서비스 개요</a></li>
+    <li><a href="#architecture">전체 아키텍처</a></li>
+    <li><a href="#stack">기술 스택</a></li>
+  </ul>
+  <h2>Backend</h2>
+  <ul>
+    <li><a href="#backend-structure">모듈 구조</a></li>
+    <li><a href="#api-list">API 목록</a></li>
+    <li><a href="#roadmap-agent">로드맵 상담 에이전트</a></li>
+    <li><a href="#graduation-engine">졸업요건 엔진</a></li>
+    <li><a href="#rag">RAG 검색</a></li>
+    <li><a href="#ingestion">데이터 수집</a></li>
+  </ul>
+  <h2>Frontend</h2>
+  <ul>
+    <li><a href="#frontend-structure">페이지·컴포넌트</a></li>
+    <li><a href="#frontend-state">상태 관리</a></li>
+    <li><a href="#frontend-api">API 클라이언트</a></li>
+  </ul>
+  <h2>DB</h2>
+  <ul>
+    <li><a href="#db-schema">스키마</a></li>
+    <li><a href="#db-migrations">마이그레이션</a></li>
+    <li><a href="#db-seeding">시딩</a></li>
+  </ul>
+  <h2>Flow</h2>
+  <ul>
+    <li><a href="#flow-auth">인증·SSO</a></li>
+    <li><a href="#flow-portal-sync">포털 동기화</a></li>
+    <li><a href="#flow-roadmap">로드맵 편집</a></li>
+    <li><a href="#flow-ai-chat">AI 상담 대화</a></li>
+    <li><a href="#flow-graduation">졸업요건 판정</a></li>
+  </ul>
+  <h2>Deployment</h2>
+  <ul>
+    <li><a href="#deploy-local">로컬 실행</a></li>
+    <li><a href="#deploy-supabase">Supabase</a></li>
+    <li><a href="#env">환경 변수</a></li>
+  </ul>
+</nav>
+<main>
+
+<h1 class="title">Plan-U 아키텍처 개요</h1>
+<p class="subtitle">프론트엔드·백엔드·DB·API·배포까지 코드 실행 흐름과 함수 호출을 한 눈에.</p>
+
+<section id="overview">
+  <h2>1. 서비스 개요</h2>
+  <p>Plan-U는 부산대(PNU) 재학생이 학업 정보를 입력하면 <strong>졸업요건을 분석하고 학년별 성장 로드맵과 다음 학기 시간표 후보를 추천</strong>하는 서비스다. 학생지원시스템(One-Stop)에서 성적표·학적·지도교수 정보를 자동 수집(Playwright 크롤링)해 판정에 활용하며, AI 상담 챗봇은 로드맵 편집을 제안 형태로 만들고 사용자가 승인한 것만 실제 반영된다(human-in-the-loop).</p>
+  <div class="callout">
+    <p><strong>절대 원칙</strong>: 졸업요건 충족/미충족 판정은 <em>규칙 기반 엔진만</em> 한다. LLM은 판정 결과를 입력받아 설명·추천 문장만 만든다. 이 경계를 흐리는 변경은 하지 않는다.</p>
+    <p>개인정보(성적표 이미지, 이수내역, 자격증/어학 점수) 취급 원칙: 최소 수집, HTTPS 전송, 저장 시 암호화, OCR 원본은 텍스트 추출 직후 폐기, 외부 LLM 호출 시 개인 식별정보 비식별화.</p>
+  </div>
+</section>
+
+<section id="architecture">
+  <h2>2. 전체 아키텍처</h2>
+  <div class="mermaid">
+graph LR
+  subgraph Client
+    B[Browser<br/>Chrome/Safari]
+  end
+  subgraph Frontend
+    V[Vite Dev / Static Build<br/>React 18 + TypeScript]
+  end
+  subgraph Backend
+    F[FastAPI<br/>uvicorn --reload]
+    A[Roadmap Chat Agent<br/>LangChain + LLM]
+    R[Rule-based<br/>Graduation Engine]
+    C[Curriculum Retriever<br/>DB-first RAG]
+    P[Playwright Crawler<br/>PNU One-Stop]
+  end
+  subgraph Data
+    DB[(Supabase Postgres<br/>+ pgvector)]
+    S[Seed CSV<br/>ais_courses_2026]
+  end
+  subgraph External
+    L[OpenAI / Anthropic / Gemini]
+    PNU[PNU 학사 시스템<br/>login.pusan.ac.kr<br/>onestop.pusan.ac.kr]
+  end
+  B -- HTTPS --> V
+  V -- REST --> F
+  F --> A
+  F --> R
+  F --> C
+  F --> P
+  A -- Tool calls --> C
+  A -- Chat completion --> L
+  C --> DB
+  R --> DB
+  F --> DB
+  S -.import.-> DB
+  P --> PNU
+  </div>
+  <p>주요 데이터 흐름:</p>
+  <ul>
+    <li>브라우저는 정적 프론트엔드(SPA)를 로드하고, REST API로 백엔드와 통신.</li>
+    <li>백엔드 FastAPI는 인증/포털 동기화/로드맵 CRUD/AI 상담/졸업요건 판정 라우터를 노출.</li>
+    <li>AI 상담 에이전트는 LangChain의 <code>init_chat_model</code>을 통해 OpenAI/Anthropic/Gemini 중 하나(<code>ROADMAP_AGENT_MODEL</code>)에 붙고, DB-first 큐레이션 검색을 도구로 사용.</li>
+    <li>Playwright 크롤러는 사용자 자격으로 PNU 사이트에 로그인해 학적·성적·상담 정보를 수집.</li>
+    <li>모든 영속 데이터는 Supabase Postgres(pgvector 포함)에 저장.</li>
+  </ul>
+</section>
+
+<section id="stack">
+  <h2>3. 기술 스택</h2>
+  <table>
+    <thead><tr><th>영역</th><th>기술</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td>Frontend</td><td>React 18 + TypeScript + Vite</td><td>axios, lucide-react (icons)</td></tr>
+      <tr><td>Styling</td><td>Vanilla CSS (styles.css)</td><td>Dark theme 지원, Grid 기반 반응형</td></tr>
+      <tr><td>Backend</td><td>FastAPI + SQLAlchemy 2 + Alembic</td><td>Python 3.14 venv</td></tr>
+      <tr><td>DB</td><td>Postgres 16 + pgvector</td><td>로컬은 Docker, 프로덕션은 Supabase</td></tr>
+      <tr><td>AI</td><td>LangChain (init_chat_model)</td><td>OpenAI/Anthropic/Gemini 스왑 가능</td></tr>
+      <tr><td>임베딩</td><td>OpenAI text-embedding-3-small</td><td>curriculum RAG 벡터 저장용</td></tr>
+      <tr><td>크롤링</td><td>Playwright (async, Chromium)</td><td>PNU login → onestop 파이프라인</td></tr>
+      <tr><td>Auth</td><td>JWT (python-jose)</td><td>학번 기반 로그인, localStorage 저장</td></tr>
+      <tr><td>Deploy</td><td>uvicorn --reload (dev)</td><td>프로덕션은 별도 배포 대상</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="backend-structure">
+  <h2>4. Backend 모듈 구조</h2>
+  <pre><code>backend/
+├── app/
+│   ├── main.py            # FastAPI 앱 팩토리, 라우터 include, CORS
+│   ├── core/              # 설정(config), DB 엔진, 보안(JWT/해시)
+│   ├── api/               # HTTP 라우터 (얇은 계층)
+│   │   ├── auth.py           /auth/signup, /auth/login, /auth/me
+│   │   ├── profile.py        /me/activities, /me/certifications, /me/language-scores
+│   │   ├── portal_sync.py    /me/portal-sync, /me/advisor-consulted
+│   │   ├── roadmaps.py       /me/roadmaps (CRUD)
+│   │   ├── roadmap_agent.py  /me/roadmaps/{id}/agent/{chat,confirm,reset}
+│   │   ├── graduation.py     /me/graduation
+│   │   ├── courses.py        /courses/search
+│   │   └── rag.py            /rag/curriculum/search 등
+│   ├── domains/           # 도메인 로직 (경계 엄수)
+│   │   ├── users/            # User, PortalCredential, UserActivity 등
+│   │   ├── academics/        # School/College/Department/Major/
+│   │   │                       UserAcademicProgram/GraduationRequirement/
+│   │   │                       StudentCourseRecord
+│   │   ├── academics/graduation_progress.py  # 규칙 기반 판정 엔진
+│   │   ├── courses/          # Course, CourseOffering, CourseTime
+│   │   ├── planning/         # CourseRoadmap/CourseRoadmapItem/
+│   │   │                       PendingRoadmapChange/CourseRoadmapChatMessage
+│   │   ├── planning/roadmap_chat.py  # AI 상담 에이전트 (LangChain)
+│   │   └── activities/       # 추천 활동 (진행 중)
+│   ├── ai/
+│   │   ├── rag/
+│   │   │   ├── curriculum_retriever.py  # DB-first 큐레이션 검색
+│   │   │   ├── career_keywords.py       # 진로 키워드 확장
+│   │   │   └── models.py                # RagChunk (pgvector)
+│   │   ├── embeddings/openai_client.py
+│   │   └── llm/               # (langchain 통합)
+│   ├── ingestion/
+│   │   ├── crawlers/pnu_session.py       # Playwright 세션·SSO 로그인
+│   │   ├── crawlers/onestop_grades.py    # 성적표 수집
+│   │   ├── crawlers/advisor_consultation.py  # 지도교수 상담 상태
+│   │   ├── normalizers/pnu_normalizer.py # 성적표 → StudentCourseRecord
+│   │   └── csv_importers/
+│   └── models/             # (deprecated 경로)
+├── migrations/            # Alembic 리비전
+├── scripts/               # 시딩·유틸 스크립트
+├── seeds/                 # ais_courses_2026.csv, school_hierarchy_mapping.csv, ...
+└── tests/                 # pytest 단위 테스트</code></pre>
+  <div class="callout">
+    <p><strong>모듈 경계</strong>: 크롤러 코드를 <code>domains</code>에, 판정 로직을 <code>ai</code>에 넣는 식으로 섞지 않는다. <code>api</code> 라우터는 얇은 어댑터 계층이며 실제 로직은 <code>domains</code>·<code>ai</code>·<code>ingestion</code>이 담당.</p>
+  </div>
+</section>
+
+<section id="api-list">
+  <h2>5. API 목록 (수집 결과)</h2>
+  <h3>Auth</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/signup</code></td><td>회원가입 (학번·비밀번호·전공/부/복수전공 선택)</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/login</code></td><td>JWT 발급</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/auth/me</code></td><td>현재 사용자 (advisor_name/advisor_consulted 포함)</td></tr>
+    </tbody>
+  </table>
+  <h3>Portal Sync</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/me/portal-sync</code></td><td>학번/비번으로 PNU One-Stop 크롤링 → 학적/성적/지도교수/상담상태 DB 반영</td></tr>
+      <tr><td><span class="pill patch">PATCH</span></td><td><code>/me/advisor-consulted</code></td><td>지도교수 상담 상태 수동 토글</td></tr>
+    </tbody>
+  </table>
+  <h3>Profile</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span> <span class="pill post">POST</span> <span class="pill patch">PATCH</span> <span class="pill delete">DELETE</span></td><td><code>/me/activities</code>, <code>/me/certifications</code>, <code>/me/language-scores</code></td><td>대외활동/자격증/어학성적 CRUD</td></tr>
+    </tbody>
+  </table>
+  <h3>Roadmaps</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/me/roadmaps</code></td><td>로드맵 목록</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/me/roadmaps</code></td><td>새 로드맵 생성</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/me/roadmaps/current</code></td><td>현재 활성 로드맵 (프론트 진입점)</td></tr>
+      <tr><td><span class="pill get">GET</span> <span class="pill patch">PATCH</span> <span class="pill delete">DELETE</span></td><td><code>/me/roadmaps/{id}</code></td><td>단건 조회/수정/삭제</td></tr>
+      <tr><td><span class="pill post">POST</span> <span class="pill patch">PATCH</span> <span class="pill delete">DELETE</span></td><td><code>/me/roadmaps/{id}/items</code></td><td>로드맵 항목 편집</td></tr>
+    </tbody>
+  </table>
+  <h3>Roadmap Agent (AI 상담)</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/me/roadmaps/{id}/agent/chat</code></td><td>사용자 메시지 → LLM 응답 + pending 변경안</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/me/roadmaps/{id}/agent/confirm</code></td><td>선택 승인한 change_id만 실제 반영</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/me/roadmaps/{id}/agent/reset</code></td><td>대화 히스토리 + 미승인 pending 삭제</td></tr>
+    </tbody>
+  </table>
+  <h3>Graduation · Courses · RAG</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>기능</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/me/graduation</code></td><td>졸업요건 대비 이수 진행 상황</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/courses/search</code></td><td>과목 이름 검색 (로드맵 수동 편집용)</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/rag/curriculum/search</code></td><td>커리큘럼 RAG 검색</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/rag/graduation-requirements/search</code></td><td>졸업요건 RAG 검색</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/rag/ingest</code></td><td>RAG chunk 색인</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="roadmap-agent">
+  <h2>6. 로드맵 상담 에이전트</h2>
+  <p>구현: <code>backend/app/domains/planning/roadmap_chat.py</code></p>
+  <h3>설계 원칙</h3>
+  <ul>
+    <li><strong>LangChain 단일 루프</strong>: LangGraph 같은 그래프 오케스트레이션은 쓰지 않는다. tool 호출 → 결과 반영 → 다음 tool 호출.</li>
+    <li><strong>Human-in-the-loop</strong>: LLM이 로드맵을 직접 편집하지 않는다. <code>propose_change</code>가 <code>pending_roadmap_changes</code>에 제안만 쌓고, 사용자 승인 후 <code>apply_pending_changes()</code>에서 실제 반영.</li>
+    <li><strong>tool_choice="any"</strong>: LLM이 "일반 텍스트로 대충 답하고 끝"내는 탈출구를 없앤다. 사용자에게 보이는 메시지도 <code>finish_response</code>라는 도구로 나가야 함.</li>
+    <li><strong>규칙 기반 가드 우선</strong>: 학점 상한/과거 학기/이수 중복/계절수업 배치 등은 도구 계층에서 강제. LLM의 판단에만 맡기지 않는다.</li>
+  </ul>
+  <h3>Tool 카탈로그</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>역할</th><th>주요 리턴</th></tr></thead>
+    <tbody>
+      <tr><td><code>get_graduation_progress</code></td><td>주전공 이수구분별 남은 학점</td><td>categories[], remaining_credits</td></tr>
+      <tr><td><code>get_roadmap_items</code></td><td>현재 로드맵 + 학점 상한 + 이수기록</td><td>items[], term_credit_cap, planned_credits_by_term, completed_courses, earliest_recorded_grade, current_academic_term, next_plannable_term</td></tr>
+      <tr><td><code>search_courses</code></td><td>학생 학과·교육과정 스코프 안에서 과목 검색 (RAG)</td><td>results[] (course_id, name, category, credits, grade, semester, description)</td></tr>
+      <tr><td><code>propose_change</code></td><td>create/update/delete 제안. 실제 반영 아님</td><td>change_id 또는 error (가드 위반 시)</td></tr>
+      <tr><td><code>finish_response</code></td><td>사용자에게 보여줄 최종 답변</td><td>message</td></tr>
+    </tbody>
+  </table>
+  <h3>가드 (propose_change에서 강제)</h3>
+  <ol>
+    <li><strong>계절수업 vs 정규 학기</strong>: 여름계절수업 등 세션 전용 과목은 정규 1·2학기 슬롯에 배치 불가.</li>
+    <li><strong>편입생 학년 하한</strong>: <code>_min_completed_grade()</code>가 반환한 값보다 낮은 <code>planned_grade</code> 거부. 편입 인정만 있는 상태(<code>StudentCourseRecord.semester='입학전성적'</code>)에서도 3학년 폴백으로 판정.</li>
+    <li><strong>과거 학기 create 차단</strong>: 현재 학기보다 이전으로는 새 항목 못 만듦.</li>
+    <li><strong>학기당 학점 상한</strong>: 졸업기준학점 133+ → 21학점, 132- → 19학점. 초과 시 그 학기 기존 항목 목록과 대체 방향 hint를 함께 반환.</li>
+    <li><strong>로드맵 내 중복</strong>: 같은 <code>course_id</code>가 이미 로드맵에 있거나 같은 세션에서 이미 제안됐으면 create 거부.</li>
+    <li><strong>이수기록 중복</strong>: <code>StudentCourseRecord</code>의 이름과 정규화 매칭 (Ⅰ→I, 괄호·공백 제거). 매칭 시 create 거부.</li>
+  </ol>
+  <h3>시스템 프롬프트 컨텍스트 주입</h3>
+  <p>매 대화 시작 시 <code>_build_student_context_block(db, user)</code>이 <code>_SYSTEM_PROMPT</code>에 학생 프로필을 붙인다:</p>
+  <ul>
+    <li>진로 목표 (<code>user.career_goal</code>)</li>
+    <li>학적 프로그램: 주전공/복수전공/부전공/교직 각각의 학과·전공·교육과정 연도</li>
+    <li>이수 완료 과목: 이수구분별 그룹핑</li>
+  </ul>
+</section>
+
+<section id="graduation-engine">
+  <h2>7. 졸업요건 판정 엔진</h2>
+  <p>구현: <code>backend/app/domains/academics/graduation_progress.py</code></p>
+  <p>현재 엔진은 <strong>이수구분별 총 학점만 대조</strong>하는 단순 엔진이다. 개별 과목 매칭(<code>course_id</code>) 로직은 아직 없다. <code>StudentCourseRecord.category</code> 합계 vs <code>GraduationRequirement.required_*</code> 필드값을 비교.</p>
+  <div class="callout warn">
+    <p>이 엔진은 <strong>규칙 기반</strong>이다. LLM은 이 결과를 입력받아 설명 문장만 생성한다. 판정 자체를 LLM이 하지 않는다는 원칙은 절대 지켜진다.</p>
+  </div>
+  <p>매핑: <code>StudentCourseRecord.category</code>(성적표 원문 정규화 값) → <code>GraduationRequirement</code>의 <code>required_major_required</code>, <code>required_major_elective</code>, <code>required_general_required</code> 등.</p>
+</section>
+
+<section id="rag">
+  <h2>8. RAG 검색 (CurriculumRetriever)</h2>
+  <p>구현: <code>backend/app/ai/rag/curriculum_retriever.py</code></p>
+  <p>DB-first RAG. 벡터 검색은 옵션(<code>use_vector=True</code>)이고 기본은 structured DB 필터링이다. 학과/전공/교육과정연도 경계를 엄격히 지키기 위함.</p>
+  <h4>필터 확장 규칙</h4>
+  <ul>
+    <li><code>grade='3'</code> → <code>Course.year IN ('3', '전학년')</code></li>
+    <li><code>semester='2학기'</code> → <code>Course.semester IN ('2', '1,2', '전학기')</code></li>
+    <li><code>category='교양필수'</code> → alias 확장 → <code>Course.category IN ('교양필수', '효원핵심교양', '기초교양')</code></li>
+    <li><code>category='교양선택'</code> → <code>Course.category IN ('교양선택', '효원균형교양', '효원창의교양')</code></li>
+    <li>결과에서 <code>(course_name, category)</code> 기준 dedup — 학과별 다른 code로 시딩된 동일 개념 교양(공학작문및발표 등)을 한 번만 노출.</li>
+  </ul>
+  <h4>진로 키워드 확장 (career_keywords.py)</h4>
+  <p>query 문자열에 "AI"/"보안"/"백엔드" 등 alias가 포함되면 관련 키워드를 확장해서 결과 랭킹에 사용. 다만 이 로직은 5개 카테고리만 있고 대부분의 학과는 커버되지 않는다.</p>
+</section>
+
+<section id="ingestion">
+  <h2>9. 데이터 수집 (Ingestion)</h2>
+  <h3>Playwright 크롤러</h3>
+  <p><code>backend/app/ingestion/crawlers/pnu_session.py</code>가 세션 관리·SSO 로그인을 담당.</p>
+  <div class="callout">
+    <p><strong>PNU SSO 특이사항</strong>: <code>onestop.pusan.ac.kr</code>에서 <code>#global_login</code> 링크를 클릭해서 <code>login.pusan.ac.kr</code>로 진입해야 <code>csrfToken</code>이 정상 렌더링된다. 직접 URL 진입 시 CSRF가 빈 문자열이라 로그인 후 세션 이관에 실패. 페이지 단위 재시도(<code>_reach_login_form</code>)와 실패 사유 진단 로깅(dialog/console/network)이 걸려 있음.</p>
+  </div>
+  <h3>수집 항목</h3>
+  <ul>
+    <li><code>fetch_student_record</code>: 학적부 (지도교수 이름은 API 응답 <code>HB_ADVICE_PROF_NM</code>에서 획득)</li>
+    <li><code>fetch_all_grades</code>: 성적표 23건 예시</li>
+    <li><code>fetch_advisor_consultation</code>: 상담 상태 (menuCD=449, 현재 학기 필터)</li>
+  </ul>
+  <h3>정규화 & 저장</h3>
+  <p><code>pnu_normalizer.py</code>가 성적표 raw → <code>StudentCourseRecord</code>로 매핑. 개별 <code>course_id</code>는 대부분 <code>None</code>(과목명만 저장)이라 이름 정규화 매칭에 의존.</p>
+</section>
+
+<section id="frontend-structure">
+  <h2>10. Frontend 페이지·컴포넌트</h2>
+  <pre><code>frontend/
+├── src/
+│   ├── main.tsx           # Vite entry
+│   ├── App.tsx            # 라우팅, AuthContext
+│   ├── pages/
+│   │   ├── AuthPage.tsx        # 로그인/회원가입 (학번 기반)
+│   │   ├── DashboardPage.tsx   # 홈, 지도교수·상담 상태 표시
+│   │   ├── RoadmapPage.tsx     # 성장 로드맵 (AI 상담 + 편집)
+│   │   ├── InfoPage.tsx        # 프로필 (활동/자격증/어학)
+│   │   ├── ActivitiesPage.tsx  # 추천 활동 (mock)
+│   │   └── ForgotPasswordPage.tsx
+│   ├── components/layout/AppLayout.tsx  # 사이드바
+│   ├── api/
+│   │   ├── client.ts       # axios 인스턴스, JWT 인터셉터
+│   │   ├── auth.ts         # /auth/*
+│   │   ├── profile.ts      # /me/activities, /me/certifications, ...
+│   │   ├── roadmaps.ts     # /me/roadmaps/*, /agent/{chat,confirm,reset}
+│   │   └── graduation.ts   # /me/graduation
+│   ├── contexts/AuthContext.tsx  # 로그인 상태 전역
+│   └── styles.css                # dark theme 포함</code></pre>
+</section>
+
+<section id="frontend-state">
+  <h2>11. Frontend 상태 관리</h2>
+  <ul>
+    <li><strong>인증 상태</strong>: <code>AuthContext</code>에서 <code>user</code>·<code>accessToken</code> 유지. <code>ACCESS_TOKEN_KEY</code>로 localStorage 저장.</li>
+    <li><strong>로드맵 화면 로컬 상태</strong> (React <code>useState</code>):
+      <ul>
+        <li><code>roadmap</code>: <code>getCurrentRoadmap()</code> 결과</li>
+        <li><code>graduation</code>: <code>getGraduationProgress()</code> 결과</li>
+        <li><code>messages</code>: AI 대화 히스토리 (프론트 로컬 미러)</li>
+        <li><code>pendingChanges</code>: 백엔드에서 받은 제안 목록</li>
+        <li><code>selectedChangeIds</code>: 사용자가 체크한 승인 대상 (기본 전체 선택)</li>
+        <li><code>draftItems</code>: 편집 모드에서의 드래프트</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section id="frontend-api">
+  <h2>12. Frontend API 클라이언트</h2>
+  <p><code>src/api/client.ts</code>가 axios 인스턴스를 만들고, 요청 인터셉터에서 JWT를 <code>Authorization: Bearer</code>로 붙인다. 응답 인터셉터에서 401이면 <code>AUTH_EXPIRED_EVENT</code>를 발생시켜 자동 로그아웃 유도.</p>
+  <p><code>baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000"</code>. 실제로는 <code>.env</code>에서 <code>VITE_API_BASE_URL=http://127.0.0.1:8001</code>로 지정.</p>
+</section>
+
+<section id="db-schema">
+  <h2>13. DB 스키마</h2>
+  <h3>사용자·프로그램</h3>
+  <table>
+    <thead><tr><th>테이블</th><th>주요 컬럼</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><code>users</code></td><td>id, email, student_number, password_hash, name, department_id, major_id, career_goal, advisor_name, advisor_consulted</td><td>학번 기반 로그인</td></tr>
+      <tr><td><code>portal_credentials</code></td><td>user_id, encrypted_password</td><td>PNU 크롤링용 자격</td></tr>
+      <tr><td><code>user_academic_programs</code></td><td>user_id, program_type(primary/double/minor/teaching), department_id, major_id, curriculum_year</td><td>주/부/복수/교직</td></tr>
+      <tr><td><code>user_activities</code>, <code>user_certifications</code>, <code>user_language_scores</code></td><td>사용자 수동 입력</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <h3>학과 계층·요건</h3>
+  <table>
+    <thead><tr><th>테이블</th><th>주요 컬럼</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><code>schools</code>, <code>colleges</code>, <code>departments</code>, <code>majors</code></td><td>name, parent FK</td><td>AIS 기준 계층</td></tr>
+      <tr><td><code>graduation_requirements</code></td><td>department_id, major_id, program_type, curriculum_year, required_total_credits, required_major_*, required_general_*</td><td>flat 카테고리 합계</td></tr>
+      <tr><td><code>student_course_records</code></td><td>user_id, raw_course_name, category, year, semester, credits, course_id</td><td>성적표에서 파싱, course_id는 대부분 null</td></tr>
+    </tbody>
+  </table>
+  <h3>과목·개설</h3>
+  <table>
+    <thead><tr><th>테이블</th><th>주요 컬럼</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><code>courses</code></td><td>course_code, department_id, major_id, category, credits, year, semester, description</td><td>커리큘럼 카탈로그</td></tr>
+      <tr><td><code>course_offerings</code>, <code>course_times</code></td><td>학기별 실제 개설 정보</td><td>현재 비어있음 (수강편람 파이프라인 미완)</td></tr>
+      <tr><td><code>course_descriptions</code></td><td>대체 소스</td><td>과목별 개요 원문</td></tr>
+    </tbody>
+  </table>
+  <h3>로드맵·상담</h3>
+  <table>
+    <thead><tr><th>테이블</th><th>주요 컬럼</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><code>course_roadmaps</code></td><td>user_id, title, curriculum_year</td><td>학생당 1개 활성</td></tr>
+      <tr><td><code>course_roadmap_items</code></td><td>roadmap_id, course_id, course_name, category, credits, planned_year, planned_semester, planned_grade, status(planned/completed), source</td><td>편입 인정은 planned_grade=null, status=completed</td></tr>
+      <tr><td><code>course_roadmap_chat_messages</code></td><td>roadmap_id, role, content</td><td>영구 저장. <code>/agent/reset</code>이 삭제</td></tr>
+      <tr><td><code>pending_roadmap_changes</code></td><td>roadmap_id, item_id, action, course_id, planned_*, before_snapshot, reason, status</td><td>승인 대기 제안</td></tr>
+    </tbody>
+  </table>
+  <h3>RAG</h3>
+  <table>
+    <thead><tr><th>테이블</th><th>주요 컬럼</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><code>rag_chunks</code></td><td>document_type, department_id, major_id, curriculum_year, evidence, embedding (pgvector), source</td><td>선택적 벡터 검색</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="db-migrations">
+  <h2>14. 마이그레이션</h2>
+  <p>Alembic으로 관리. <code>backend/migrations/versions/</code>에 리비전 파일. <code>alembic upgrade head</code>로 적용.</p>
+  <p>CLAUDE.md 원칙: <strong>팀 공유 Supabase에 여러 번 나눠서 시도하지 않는다.</strong> 로컬 Postgres(<code>infra/docker/compose.local.yml</code>)에서 alembic + 시드 + 골든테스트까지 통과시킨 뒤 Supabase에 한 번에 반영.</p>
+</section>
+
+<section id="db-seeding">
+  <h2>15. 시딩</h2>
+  <table>
+    <thead><tr><th>스크립트</th><th>대상</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/seed_school_hierarchy.py</code></td><td>schools/colleges/departments/majors</td></tr>
+      <tr><td><code>scripts/seed_departments.py</code></td><td>departments 매핑</td></tr>
+      <tr><td><code>scripts/import_courses_from_ais.py</code></td><td>ais_courses_2026.csv → courses (idempotent get-or-create)</td></tr>
+      <tr><td><code>scripts/import_course_descriptions.py</code></td><td>course_descriptions</td></tr>
+      <tr><td><code>scripts/seed_live_flat_graduation_requirements.py</code></td><td>graduation_requirements</td></tr>
+      <tr><td><code>scripts/build_rag_chunks.py</code></td><td>rag_chunks 임베딩</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="flow-auth">
+  <h2>16. 인증 흐름</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant U as 사용자
+  participant F as Frontend<br/>AuthPage
+  participant B as Backend /auth
+  participant D as DB users
+  U->>F: 학번 + 비밀번호 입력
+  F->>B: POST /auth/login {student_number, password}
+  B->>D: SELECT users WHERE student_number=?
+  B->>B: verify_password (bcrypt)
+  B-->>F: {access_token: JWT}
+  F->>F: localStorage.setItem(ACCESS_TOKEN_KEY)
+  F->>B: GET /auth/me (Authorization: Bearer)
+  B-->>F: user (이름, 학과, advisor_name, ...)
+  F->>F: AuthContext.setUser(user)
+  U->>F: 홈으로 이동
+  </div>
+</section>
+
+<section id="flow-portal-sync">
+  <h2>17. 포털 동기화 흐름</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant F as Frontend
+  participant B as Backend /me/portal-sync
+  participant P as Playwright
+  participant O as onestop.pusan.ac.kr
+  participant L as login.pusan.ac.kr
+  participant D as DB
+  F->>B: POST /me/portal-sync {password}
+  B->>P: launch chromium
+  P->>O: goto onestop.pusan.ac.kr
+  P->>O: click #global_login
+  O->>L: navigate login.pusan.ac.kr
+  P->>L: fill 학번/비번, submit
+  L-->>P: sToken, csrfToken
+  P->>O: restoreSite() POST loginCheck
+  O-->>P: 세션 쿠키
+  P->>O: navigate menu (학적/성적/상담)
+  O-->>P: HTML + API 응답 (HB_ADVICE_PROF_NM 등)
+  P-->>B: 정규화된 데이터
+  B->>D: UPSERT users.advisor_name, StudentCourseRecord 등
+  B-->>F: PortalSyncResponse
+  </div>
+</section>
+
+<section id="flow-roadmap">
+  <h2>18. 로드맵 편집 흐름 (수동)</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant U as 사용자
+  participant F as Frontend RoadmapPage
+  participant B as Backend /me/roadmaps
+  U->>F: 로드맵 페이지 진입
+  F->>B: GET /me/roadmaps/current
+  B-->>F: Roadmap + items
+  F->>B: GET /me/graduation
+  B-->>F: GraduationProgress
+  U->>F: "로드맵 편집" 클릭
+  F->>F: setDraftItems(로컬)
+  U->>F: 과목 추가 (검색 → 선택)
+  F->>B: GET /courses/search?q=...
+  B-->>F: CourseSearchResult[]
+  U->>F: 저장 클릭
+  F->>B: POST /me/roadmaps/{id}/items (각 신규)
+  F->>B: PATCH /me/roadmaps/{id}/items/{id} (이동)
+  F->>B: DELETE ... (삭제)
+  B->>B: 트랜잭션 반영
+  F->>F: reloadRoadmap()
+  </div>
+</section>
+
+<section id="flow-ai-chat">
+  <h2>19. AI 상담 대화 흐름 (핵심)</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant U as 사용자
+  participant F as Frontend
+  participant B as Backend /agent/chat
+  participant CTX as _ToolContext
+  participant L as LLM (LangChain)
+  participant D as DB
+  U->>F: "3-2 추천해줘" 전송
+  F->>B: POST /me/roadmaps/{id}/agent/chat {message}
+  B->>D: INSERT chat_messages(role=user)
+  B->>B: _build_student_context_block (career_goal + programs + completed)
+  B->>D: SELECT chat_messages (전체 히스토리)
+  B->>L: SystemMessage + history + user message
+  loop MAX_TOOL_ITERATIONS = 8
+    L-->>B: tool_calls (get_graduation_progress, search_courses, propose_change, ...)
+    B->>CTX: dispatch(name, args)
+    CTX->>D: 필요한 조회 (Course, Requirement, StudentCourseRecord, ...)
+    Note over CTX: 가드 검증 (학점 상한, 이수 중복,<br/>계절수업, 학년 하한, ...)
+    CTX-->>B: 결과 또는 error
+    B->>L: ToolMessage
+    alt finish_response 호출
+      L-->>B: message
+      B->>F: {reply, pending_changes[]}
+    end
+  end
+  F->>F: setPendingChanges + setSelectedChangeIds(all)
+  U->>F: 체크박스 조정 → "선택 승인"
+  F->>B: POST /agent/confirm {approved, rejected}
+  B->>D: UPDATE pending_roadmap_changes.status
+  B->>D: INSERT/UPDATE/DELETE course_roadmap_items (approved만)
+  B-->>F: {applied, rejected}
+  F->>F: reloadRoadmap()
+  </div>
+  <div class="callout">
+    <p><code>tool_choice="any"</code>로 매 턴 도구 호출을 강제한다. 사용자에게 보이는 모든 응답은 <code>finish_response</code> 도구를 통해서만 나가서, "확인 안 한 과목을 지어내 텍스트로 답하고 끝내는" 경로를 프롬프트와 인터페이스 양쪽에서 봉쇄한다.</p>
+  </div>
+</section>
+
+<section id="flow-graduation">
+  <h2>20. 졸업요건 판정 흐름</h2>
+  <div class="mermaid">
+graph LR
+  A[/me/graduation] --> B[compute_graduation_progress]
+  B --> C{Load<br/>UserAcademicProgram}
+  C --> D[Load GraduationRequirement<br/>by dept/major/curr_year]
+  C --> E[Aggregate<br/>StudentCourseRecord<br/>by category]
+  D --> F[Compare category-wise<br/>required vs earned]
+  E --> F
+  F --> G[GraduationProgress<br/>+ remaining_credits]
+  </div>
+  <p>계산은 <em>규칙 기반</em>이며 <em>카테고리 합계만</em> 대조한다. 개별 <code>course_id</code> 매칭이나 택N/M 조건그룹은 아직 없음.</p>
+</section>
+
+<section id="deploy-local">
+  <h2>21. 로컬 실행</h2>
+  <h3>Backend</h3>
+  <pre><code># DB (pgvector 포함)
+docker compose -f infra/docker/compose.local.yml up -d
+
+# venv 활성화 및 마이그레이션
+cd backend
+./.venv/bin/alembic upgrade head
+
+# 시드 (필요 시)
+./.venv/bin/python -m scripts.seed_school_hierarchy
+./.venv/bin/python -m scripts.import_courses_from_ais
+
+# 서버 실행 (포트 8001)
+./.venv/bin/uvicorn app.main:app --reload --port 8001</code></pre>
+  <h3>Frontend</h3>
+  <pre><code>cd frontend
+npm install
+npm run dev   # Vite dev server (기본 5173)</code></pre>
+  <p><kbd>Cmd+Shift+R</kbd>로 하드 리로드 시 CSS 캐시 문제 회피.</p>
+</section>
+
+<section id="deploy-supabase">
+  <h2>22. Supabase (프로덕션 DB)</h2>
+  <p>팀 공유 Postgres. <code>backend/.env</code>의 <code>DATABASE_URL</code>이 Supabase를 직접 가리킨다(별도 스테이징 없음).</p>
+  <div class="callout warn">
+    <p><strong>주의</strong>: 마이그레이션이나 대량 데이터 반영처럼 되돌리기 어려운 작업은 <em>로컬 Postgres에서 완전히 검증한 뒤</em> Supabase에 한 번에 반영. 절반만 반영된 상태를 만들지 않는다.</p>
+    <p>시드 스크립트는 대부분 <code>(dept_id, major_id, course_code)</code> 등 자연 키 기준 idempotent get-or-create라 재실행 안전. 그래도 <code>--dry-run</code>으로 예상 delta 먼저 확인.</p>
+  </div>
+</section>
+
+<section id="env">
+  <h2>23. 환경 변수</h2>
+  <h3>Backend (<code>backend/.env</code>)</h3>
+  <pre><code>DATABASE_URL=postgresql+psycopg2://...
+JWT_SECRET_KEY=...
+JWT_ALGORITHM=HS256
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_API_KEY=...
+ROADMAP_AGENT_MODEL=openai:gpt-4o-mini   # 또는 anthropic:claude-*, google:gemini-*
+PORTAL_ENCRYPT_KEY=...                    # PortalCredential.encrypted_password</code></pre>
+  <h3>Frontend (<code>frontend/.env</code>)</h3>
+  <pre><code>VITE_API_BASE_URL=http://127.0.0.1:8001
+VITE_USE_MOCK_AUTH=false
+VITE_USE_MOCK_STUDENT_DATA=false</code></pre>
+  <div class="callout err">
+    <p><strong>커밋 금지</strong>: <code>backend/.env</code>, DB 비밀번호, API 키. Supabase <code>DATABASE_URL</code> 비밀번호는 팀 공유 채널에서만 받는다.</p>
+  </div>
+</section>
+
+<section>
+  <h2 style="border: 0;">부록: 계획된 다음 작업</h2>
+  <ul>
+    <li>시간표 작성/추천 페이지 신규 구현 (현재 사이드바 링크만 존재)</li>
+    <li>상담 예약·학사 일정 페이지</li>
+    <li>졸업요건 개별 과목(course_id) 기반 매칭 확장</li>
+    <li>기계공학부 세부전공 5개 등 시딩 누락 학과 HWP 파싱·재적재</li>
+    <li>수강편람(<code>course_offerings</code>) 크롤러/적재 파이프라인</li>
+    <li>부/복수/교직 요건 자동 판정</li>
+  </ul>
+</section>
+
+</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#0a1119',
+      primaryColor: '#1b2534',
+      primaryTextColor: '#e9edf3',
+      primaryBorderColor: '#2b3648',
+      lineColor: '#97a3b6',
+      secondaryColor: '#17202e',
+      tertiaryColor: '#0f1620',
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+    },
+  });
+</script>
+</body>
+</html>

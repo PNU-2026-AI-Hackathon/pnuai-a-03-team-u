@@ -14,6 +14,15 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-22 (blackest21)
+
+- **PNU 통합로그인(SSO) 개편으로 `POST /me/portal-sync` 자동 로그인이 막힘 — 원인은 우리 코드가 아니라 PNU 사이트 버그**:
+  - 07-08~07-11 세션(d0won)에선 정상 동작했는데, 그 사이 PNU가 로그인을 `onestop.pusan.ac.kr` 인페이지 레이어 방식에서 완전히 별도 도메인(`login.pusan.ac.kr`, "부산대학교 통합로그인")으로 옮겼다. 실제 로그인 진입점은 `https://login.pusan.ac.kr/onestop/loginPage#login_id`.
+  - `pnu_session.py`를 이 새 흐름에 맞게 다시 작성: 직링크 진입 + 탭 클릭 실패 시 페이지 전체 재시도(`_reach_login_form`), 헤드리스 Chromium의 `HeadlessChrome` UA와 `navigator.webdriver` 노출을 정상 브라우저처럼 패치, alert/팝업/네트워크 응답을 캡처하는 진단 로깅 추가.
+  - 이렇게 고친 뒤에도 실계정으로 계속 실패해서 끝까지 파봤다: 아이디/비밀번호 인증(`/common/sso/loginProcess`)은 **매번 정상 성공**(`nResult:0`, 유효한 sToken 발급)한다. 문제는 그다음 단계 — 사이트 자체 JS `restoreSite()`가 `onestop.pusan.ac.kr/login/loginCheck`로 세션을 넘기는 폼을 POST하는데, 이때 실어 보내는 `_csrf` 필드 값이 로그인 페이지 HTML에 **`var csrfToken = '';`로 하드코딩된 빈 문자열**이다(자동화 여부와 무관하게 `curl`로 그냥 받아봐도 빈 값 — 저희 크롤러가 만든 문제가 아니라 PNU 페이지 자체의 버그로 보인다). 그래서 onestop 서버가 CSRF 검증에 실패해 `/login`으로 되돌려보낸다.
+  - **결론**: 이 상태에선 자동 로그인은커녕 사람이 직접 브라우저로 로그인해도 같은 경로로는 안 될 가능성이 높다. PNU IT에 문의/신고가 필요한 사안. 지도교수 크롤링(`advisor.py`)도 같은 로그인 위에서 동작하므로 동일하게 막혀있다.
+  - 이 조사와 별개로 실제로 고쳐서 커밋 대기 중인 것: 편입생 1,2학년 로드맵 추천 버그(`roadmap_chat.py`— `earliest_recorded_grade` 가드), 로드맵 채팅 stateless 여부 확인(정상, 서버가 `course_roadmap_chat_messages`로 영속화), 지도교수 크롤링/DB/프론트 배선(`advisor.py`, `User.advisor_name`) — 단 위 SSO 버그 때문에 실계정 검증은 아직 못 함.
+
 ## 2026-07-20 (d0won)
 
 - **로드맵 상담 에이전트를 OpenAI SDK 직접 호출 → langchain으로 전환(멀티 LLM 지원)**:

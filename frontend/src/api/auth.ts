@@ -27,6 +27,8 @@ export type User = {
   department: string | null;
   major: string | null;
   career_goal: string | null;
+  advisor_name: string | null;
+  advisor_consulted: boolean;
   academic_programs: AcademicProgram[];
 };
 
@@ -51,6 +53,8 @@ function createMockUser(studentId: string, name = "테스트 학생", email = "m
     department: "의생명융합공학부",
     major: "데이터사이언스전공",
     career_goal: "데이터 사이언티스트",
+    advisor_name: "김도현 교수",
+    advisor_consulted: false,
     academic_programs: [{ major: "데이터사이언스전공", program_type: "primary" }],
   };
 }
