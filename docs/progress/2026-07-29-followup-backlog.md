@@ -104,15 +104,40 @@
 ## D. 오늘 논의만 하고 미착수 — 데이터 수집 선행 필요
 
 ### D-1. 융합트랙 추천 (Task #new)
-낮 세션 마지막에 논의됨. 착수 전 3가지 결정 필요:
+낮 세션 마지막에 논의됨. **판정 규칙 구조까지 확정됨**. 착수 전 데이터·정책 3가지 결정 남음:
 
 1. **데이터 원본**: 부산대 융합전공학부? 학과별 홈페이지? 담당자 수기 시트?
 2. **파일럿 범위**: 정컴 관여 트랙(들)만 vs 전체
 3. **"전선 겹침" 회계 방식**: 양쪽 다 카운트인지, 한쪽만인지
 
-착수 시 스케치:
-- 스키마: `convergence_tracks`, `convergence_track_hosting_departments`, `convergence_track_courses`
-- 로드맵 에이전트 확장: `_build_student_context_block`에 해당 트랙 정보 붙임, 프롬프트에 규칙 추가
+**규칙 구조**: `15/12학점 + 6/9학점 = 21학점` 은 OR 대체 규칙(variant)으로 표현.
+- variant 1: own_major ≥ 15 AND common ≥ 6 AND total ≥ 21
+- variant 2: own_major ≥ 12 AND common ≥ 9 AND total ≥ 21
+- 학생 이수분이 어느 하나라도 만족하면 completed. 미달이면 가장 가까운 variant의 부족분을 안내.
+
+**스키마 (3개 테이블)**:
+```sql
+convergence_tracks (id, name, description, status)
+convergence_track_courses (track_id, course_id, bucket ENUM('own_major','common'))
+convergence_track_rules (track_id, variant_no, own_major_min, common_min, total_min)
+```
+
+**판정 함수 스케치** (backend/app/domains/academics/convergence_track.py 신설 예정):
+```python
+def evaluate_convergence_track(db, track_id, user_id, include_planned=True) -> dict:
+    # 1. 완료 + (옵션) 계획 과목 학점 수집
+    # 2. track_courses의 bucket별로 학점 합산
+    # 3. rules variant 중 하나라도 만족 → completed
+    # 4. 미달이면 shortage 계산해 가장 가까운 variant + 남은 학점 안내
+```
+
+**착수 순서**:
+- 스키마 마이그레이션 + 모델
+- 시드용 CSV 포맷 정의 (`seeds/convergence_tracks_v1.csv`, `seeds/convergence_track_courses_v1.csv`, `seeds/convergence_track_rules_v1.csv`)
+- 담당자와 파일럿 트랙 하나 데이터 확보 (정컴 SW 관련 트랙 우선)
+- 판정 함수 + 단위 테스트 (15+6 / 12+9 / 부족 시나리오)
+- 로드맵 에이전트 확장: `_build_student_context_block`에 해당 트랙 진행률 삽입, 프롬프트에 "주관/참여 학과 학생이면 트랙 정보 안내" 규칙 추가
+- API: `GET /me/convergence-tracks/progress` (내 학과 관련 트랙 진행률)
 
 ### D-2. 복수·부·융합전공 DB 시드 (Task #4)
 - 우선 대형 학과 + 팀 학과 범위
@@ -126,13 +151,43 @@
 
 ---
 
-## E. 저녁 세션 착수 순서 (권장)
+## E. 진행 계획 — 3단계로 나눠서
 
-1. **[블로킹]** Docker 켜기 → 로컬 마이그레이션 · importer 검증 → Supabase 반영 (A-1, A-2, A-3)
-2. **[백엔드 후속]** C-1의 portal-sync 자동 반영 확인만 하고 넘어감(스크립트 불필요 확인)
-3. **[프론트]** B-1 세션 사이드바 → B-2 시간표 화면 (스코프가 명확)
-4. **[검증]** C-4의 실계정 회귀 시연
-5. **[논의 정리]** D-1 융합트랙 데이터 원본 확정 (담당자 연락) — 코드 착수는 정보 확보 후
+### E-1. 즉시 실행 (블로킹 없음, 사용자 판단만 필요)
+
+| 순서 | 항목 | 담당 · 방법 |
+|---|---|---|
+| 1 | Docker 켜서 로컬 pgvector Postgres 기동 | 사용자 실행 |
+| 2 | 로컬에 `alembic upgrade head` 실행, 세션 backfill 확인 | 사용자 실행 |
+| 3 | 로컬에 `import_course_offerings` dry-run → 매칭률 확인 → `--commit` | 사용자 실행 |
+| 4 | Supabase에 위 두 개 같은 순서로 반영 | 사용자 실행 |
+| 5 | 실계정으로 `POST /me/portal-sync` 재실행해 planned_grade 자동 갱신 확인 | 사용자 실행 (SSO 이슈 없을 때) |
+| 6 | 실계정으로 `GET /timetable/recommend` 응답 구조 시연 | 개발자 확인 |
+| 7 | 실계정으로 로드맵 챗에서 "4학년 1학기 추천" 시연 → 이전 학년 미이수분 후보 노출 확인 | 개발자 확인 |
+| 8 | 프론트 세션 사이드바 (B-1) 착수 | 별도 프론트 세션 |
+| 9 | 프론트 시간표 화면 (B-2) 착수 | 별도 프론트 세션 |
+
+### E-2. 데이터 확보 후 착수 (블로킹 항목)
+
+| 우선순위 | 항목 | 필요한 것 |
+|---|---|---|
+| High | 융합트랙 (D-1) | 담당자 확인: 데이터 원본, 파일럿 트랙, 겹침 회계 방식. **CSV 예시 1개 확보 시 즉시 착수 가능** |
+| Mid | 다중전공 시드 (D-2, Task #4) | 대상 학과 목록 확정 → `raw_data/manual_staging/`로 교육과정 수집. 이후 Task #5 |
+| Low | 교양 세분화 (D-3) | 교양교육원 사이트 or 학과 문서 조합. 요구가 실제로 나올 때 |
+
+### E-3. 사용 데이터 쌓인 뒤 관찰 후 튜닝 (조기 최적화 회피)
+
+| 항목 | 관찰 지표 |
+|---|---|
+| 시간표 조합 랭킹 (요일/공백 우선순위) | 사용자가 첫 후보를 몇 % 채택하는지 |
+| 대체 후보 랭킹 (권장 학년 근접도) | 사용자가 첫 후보 대체안을 몇 % 승인하는지 |
+| 세션 title 자동 생성 방식 (20자 vs LLM 요약) | 사용자가 title을 얼마나 수동으로 바꾸는지 (rename API 아직 없으면 지표 없음) |
+| 부분 조합 최소 학점 임계값 (`cap × 0.5`) | 실제로 표시된 partial_schedules 중 사용자가 유용하다 반응한 비율 |
+
+## F. 우선순위 요약 한 줄
+
+**저녁 세션 = E-1(1~7) 실측 검증 + E-2 High(융합트랙 데이터 요청 발송)**.
+프론트 통합은 별도 세션, 튜닝은 데이터 쌓인 뒤.
 
 ## 참고 — 이번 세션 완료 항목
 
