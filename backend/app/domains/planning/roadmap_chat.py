@@ -39,6 +39,7 @@ from app.domains.academics.models import GraduationRequirement, StudentCourseRec
 from app.domains.planning.models import (
     CourseRoadmap,
     CourseRoadmapChatMessage,
+    CourseRoadmapChatSession,
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
@@ -145,23 +146,29 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   검색으로 확인하지 않았거나 propose_change로 제안하지 않은 과목명을 finish_response에
   넣는 것은 금지다 — 그런 과목은 언급하지 말고 아예 빼라.
 - **"다음 학기 추천" 같이 특정 학기 후보를 뽑아야 할 때는 search_courses를 semester
-  필터로 좁혀서 호출해라.** 예: 다음 학기가 3학년 2학기이면
-  `search_courses(query="", semester="2학기", grade="3", category="전공선택")`처럼
-  category까지 붙여서 부족한 이수구분별로 훑어라. 특정 키워드가 있으면 query에 그
-  키워드를, 없으면 query를 비워두고 필터만으로 목록을 받아 그중 학생 상황에 맞는
-  과목을 골라 propose_change 해라. 한 번 검색해서 결과가 부족하면 필터/키워드를
+  필터로 좁혀서 호출해라. 이때 `grade` 필터는 걸지 마라.** 요청 학기가 4-1이든
+  3-2든, 학생이 아직 못 들은 과목이 이전 학년(1·2학년)에도 남아 있을 수 있다.
+  그 개설 학기(1·2학기·전학기)만 맞으면 학년이 낮은 과목도 후보로 유효하다 —
+  grade 필터로 좁히면 이런 미이수분이 아예 후보에서 빠진다. 예: 다음 학기가
+  3학년 2학기이면 `search_courses(query="", semester="2학기", category="전공선택")`
+  처럼 학년은 열어두고 이수구분·학기만 걸어서 훑어라. 특정 키워드가 있으면 query에
+  그 키워드를, 없으면 query를 비워두고 필터만으로 목록을 받아 그중 학생 상황에
+  맞는 과목을 골라 propose_change 해라. 한 번 검색해서 결과가 부족하면 필터/키워드를
   바꿔서 다시 검색해라 — 첫 검색 결과가 애매하다고 "추천할 과목이 없다"고 답하지 마라.
 - **다음 학기 추천 시 `get_graduation_progress`에서 `remaining_credits > 0`인 모든
   이수구분에 대해 각각 `search_courses`를 호출해라.** 전공만 훑고 교양은 건너뛰지
   마라. 예: 조회 결과 전공필수·전공선택·교양필수 세 곳에 남은 학점이 있다면 세 번
   다 호출해라:
-  - `search_courses(query="", semester="2학기", grade="3", category="전공필수")`
-  - `search_courses(query="", semester="2학기", grade="3", category="전공선택")`
-  - `search_courses(query="", semester="2학기", grade="3", category="교양필수")`
-  특히 **효원핵심교양·기초교양 같은 학과 지정 교양(category="교양필수" 필터로 잡힌다)은
-  졸업요건이라 반드시 이수해야 하니 남은 학점이 있으면 전공과 나란히 추천해라.**
-  전공선택 남은 학점이 훨씬 많더라도 교양필수 3학점을 이번 학기에 안 넣으면 다음
-  학기 부담이 커진다.
+  - `search_courses(query="", semester="2학기", category="전공필수")`
+  - `search_courses(query="", semester="2학기", category="전공선택")`
+  - `search_courses(query="", semester="2학기", category="교양필수")`
+  결과에는 학생 학과의 모든 학년 개설 과목이 섞여 나온다. **아직 이수하지 않은 과목
+  중에 이전 학년 권장 과목이 있으면 이번 학기로 배치하는 걸 우선순위에 둬라** —
+  특히 전공필수/전공기초처럼 반드시 이수해야 하는 카테고리에서 미이수분이 남아 있으면
+  요청 학기 권장 과목보다 먼저 채워라. 특히 **효원핵심교양·기초교양 같은 학과 지정
+  교양(category="교양필수" 필터로 잡힌다)은 졸업요건이라 반드시 이수해야 하니 남은
+  학점이 있으면 전공과 나란히 추천해라.** 전공선택 남은 학점이 훨씬 많더라도 교양필수
+  3학점을 이번 학기에 안 넣으면 다음 학기 부담이 커진다.
 - search_courses 결과에 description(교과목개요)이 있으면 과목명만 보고 판단하지 말고
   그 내용을 실제로 읽고 학생의 진로/관심사와 맞는지 확인해라. 과목명에 키워드가 없어도
   description 내용상 관련 있는 과목일 수 있다(반대의 경우도 있다 — description이 없다고
@@ -185,10 +192,14 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
     영문/숫자만은 저장 포맷과 어긋나 뒤에서 이수기록과 매칭이 깨진다.
   - `planned_year`는 실제 달력 연도(예: `"2027"`)다. `planned_grade`는 그 연도가
     학생 커리큘럼 기준 몇 학년인지(1~4)를 뜻한다. 두 값이 어긋나면 로드맵이 꼬인다.
-  - **특별한 사유가 없으면 `search_courses` 결과의 `grade`/`semester`(교육과정표
-    권장 학년/학기)를 그대로 `planned_grade`/`planned_semester`로 써라.** 권장값을
-    무시하고 아무 학기나 배치하지 마라. `semester`가 `"1학기 또는 2학기"` 또는
-    `"전학기"`인 경우(학기 무관 개설)에만 학생 상황에 맞는 정규 학기 하나를 골라라.
+  - **`planned_grade`/`planned_semester`는 학생이 실제로 그 과목을 이수할 학기다 —
+    사용자가 요청한 배치 학기(예: "4학년 1학기 추천"이면 4·1학기)를 그대로 써라.**
+    `search_courses` 결과의 `grade`(교육과정표 권장 학년)는 참고용이다. 권장 학년이
+    이보다 낮으면(예: 2학년 권장 전공필수를 4-1에 배치) 학생이 이전 학년에 못 들어
+    지금 채우는 것이니 planned_grade는 요청 학기의 학년(4)로 넣어라. 아무 학기나
+    배치하라는 뜻은 아니다 — 반드시 다음 학기 제약(개설 학기·학점 상한·과거 학기
+    금지)을 지켜야 하고, 개설 학기가 요청 학기와 맞지 않는 과목은 뺀다. `semester`가
+    `"1학기 또는 2학기"` 또는 `"전학기"`인 과목은 학생 상황에 맞는 정규 학기 하나를 골라라.
   - **계절수업/도약수업 전용 과목은 정규 학기 추천에서 제외해라.** `search_courses`
     결과의 `semester`가 `"여름계절수업"`, `"겨울계절수업"`, `"여름도약수업"`,
     `"겨울도약수업"` 등 방학 세션이면 그건 정규 1·2학기 개설이 아니라 방학 특별
@@ -258,11 +269,13 @@ _TOOLS = [
                 "course_id를 얻으려면 반드시 이걸 먼저 호출해야 한다. query가 비어 있어도 "
                 "semester/grade/category 필터만으로 '그 학기 개설 과목 훑어보기'가 가능하다 — "
                 "'다음 학기 전공선택 뭐 있냐' 같은 요청은 query='' + semester='2학기' + "
-                "category='전공선택'로 호출해라. 결과의 grade(교육과정 권장 학년: '1'~'4' 또는 "
-                "'전학년')과 semester(권장 학기: '1학기', '2학기', '1학기 또는 2학기', '전학기', "
-                "계절수업 등)를 특별한 사유가 없으면 그대로 propose_change의 planned_grade/"
-                "planned_semester로 써라. 결과의 description 필드에 교과목개요(있는 과목만)가 "
-                "같이 온다."
+                "category='전공선택'로 호출해라. **grade 필터는 웬만하면 걸지 마라** — "
+                "'4학년 1학기 추천'처럼 특정 학기 배치를 위한 검색이라도, 이전 학년에 못 들은 "
+                "과목이 후보에서 빠지지 않도록 학년은 열어두고 semester/category만 걸어라. "
+                "결과의 grade(교육과정 권장 학년)와 semester(권장 학기)는 참고용이다: "
+                "학생이 그 과목을 실제로 이수할 학기(propose_change의 planned_grade/"
+                "planned_semester)는 이 결과 그대로가 아니라 배치 대상 학기다. 결과의 "
+                "description 필드에 교과목개요(있는 과목만)가 같이 온다."
             ),
             "parameters": {
                 "type": "object",
@@ -284,7 +297,14 @@ _TOOLS = [
                     },
                     "category": {
                         "type": "string",
-                        "description": "'전공필수', '전공선택', '전공기초', '교양필수', '교양선택', '일반선택' 등 이수구분 필터.",
+                        "description": (
+                            "이수구분 필터. 요건 표기로 넓게 잡거나('교양필수' → 효원핵심교양+기초교양, "
+                            "'교양선택' → 효원균형교양+효원창의교양) 세부 표기로 정확히 좁힐 수 있다. "
+                            "가능한 값: '전공필수', '전공선택', '전공기초', '교직과목', '교양필수', '교양선택', "
+                            "'효원핵심교양', '효원균형교양', '효원창의교양', '기초교양', '일반선택'. "
+                            "학생이 '균형교양만 더 채우고 싶다'처럼 세부 영역을 콕 집으면 '효원균형교양'으로 "
+                            "필터하고, 그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게 잡아라."
+                        ),
                     },
                 },
                 "required": [],
@@ -828,10 +848,10 @@ class _ToolContext:
         return handler(**tool_input)
 
 
-def _load_history(db: Session, roadmap_id: int) -> list[CourseRoadmapChatMessage]:
+def _load_history(db: Session, session_id: int) -> list[CourseRoadmapChatMessage]:
     return db.scalars(
         select(CourseRoadmapChatMessage)
-        .where(CourseRoadmapChatMessage.roadmap_id == roadmap_id)
+        .where(CourseRoadmapChatMessage.session_id == session_id)
         .order_by(CourseRoadmapChatMessage.id)
     ).all()
 
@@ -898,16 +918,103 @@ def _build_student_context_block(db: Session, user: User) -> str:
 """
 
 
-def run_roadmap_chat(db: Session, user: User, roadmap: CourseRoadmap, message: str) -> dict:
+def _generate_session_title(message: str) -> str:
+    """첫 메시지에서 화면에 보일 짧은 제목을 만든다.
+
+    별도 LLM 호출을 피하려 규칙 기반으로 앞부분을 뽑는다: 개행/불필요 공백 제거 후
+    앞 20자를 자르고, 잘렸으면 말줄임표를 붙인다. 실제 사용성 데이터가 쌓이면
+    첫 응답의 요약을 title로 승격시키는 식으로 확장 가능.
+    """
+    stripped = " ".join(message.strip().split())
+    if not stripped:
+        return "새 대화"
+    return stripped[:20] + ("…" if len(stripped) > 20 else "")
+
+
+def _get_or_create_default_session(
+    db: Session, roadmap: CourseRoadmap, message: str
+) -> "CourseRoadmapChatSession":
+    """session_id가 오지 않은 요청을 위해 기본 세션을 확보한다.
+
+    로드맵에 세션이 하나도 없으면 첫 메시지 기반으로 새 세션을 만든다. 이미
+    있으면 가장 최근 세션을 이어 쓴다 — 세션 도입 이전에 만들어진 대화 흐름의
+    호환성을 위한 폴백이다.
+    """
+    latest = db.scalars(
+        select(CourseRoadmapChatSession)
+        .where(CourseRoadmapChatSession.roadmap_id == roadmap.id)
+        .order_by(CourseRoadmapChatSession.id.desc())
+    ).first()
+    if latest is not None:
+        return latest
+    session = CourseRoadmapChatSession(roadmap_id=roadmap.id, title=_generate_session_title(message))
+    db.add(session)
+    db.flush()
+    return session
+
+
+def create_chat_session(db: Session, roadmap: CourseRoadmap, title: str | None = None) -> "CourseRoadmapChatSession":
+    session = CourseRoadmapChatSession(roadmap_id=roadmap.id, title=(title or "새 대화"))
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def list_chat_sessions(db: Session, roadmap: CourseRoadmap) -> list["CourseRoadmapChatSession"]:
+    return db.scalars(
+        select(CourseRoadmapChatSession)
+        .where(CourseRoadmapChatSession.roadmap_id == roadmap.id)
+        .order_by(CourseRoadmapChatSession.id.desc())
+    ).all()
+
+
+def delete_chat_session(db: Session, roadmap: CourseRoadmap, session_id: int) -> bool:
+    session = db.get(CourseRoadmapChatSession, session_id)
+    if session is None or session.roadmap_id != roadmap.id:
+        return False
+    # 세션에 속한 메시지 먼저 삭제(FK 제약). pending_changes는 로드맵 전역이라 건드리지 않는다.
+    db.query(CourseRoadmapChatMessage).filter(
+        CourseRoadmapChatMessage.session_id == session_id
+    ).delete(synchronize_session=False)
+    db.delete(session)
+    db.commit()
+    return True
+
+
+def run_roadmap_chat(
+    db: Session,
+    user: User,
+    roadmap: CourseRoadmap,
+    message: str,
+    session_id: int | None = None,
+) -> dict:
     """사용자 메시지를 처리하고, AI 답변 + 이번 턴에 만들어진 pending change 목록을 반환한다.
+
+    session_id를 명시하지 않으면 로드맵의 가장 최근 세션을 이어 쓰거나, 세션이
+    하나도 없으면 이번 메시지를 기반으로 새 세션을 만든다.
 
     이 함수는 course_roadmap_items를 절대 쓰지 않는다 — 실제 반영은
     apply_pending_changes()가 사용자 승인 후에 한다.
     """
-    db.add(CourseRoadmapChatMessage(roadmap_id=roadmap.id, role="user", content=message))
+    if session_id is not None:
+        session = db.get(CourseRoadmapChatSession, session_id)
+        if session is None or session.roadmap_id != roadmap.id:
+            raise ValueError(f"session_id={session_id}는 이 로드맵의 세션이 아닙니다")
+    else:
+        session = _get_or_create_default_session(db, roadmap, message)
+
+    db.add(
+        CourseRoadmapChatMessage(
+            roadmap_id=roadmap.id,
+            session_id=session.id,
+            role="user",
+            content=message,
+        )
+    )
     db.flush()
 
-    history = _load_history(db, roadmap.id)
+    history = _load_history(db, session.id)
     system_prompt = _SYSTEM_PROMPT + "\n\n" + _build_student_context_block(db, user)
     messages: list = [SystemMessage(content=system_prompt)]
     for m in history:
@@ -983,10 +1090,17 @@ def run_roadmap_chat(db: Session, user: User, roadmap: CourseRoadmap, message: s
         if not final_text:
             final_text = "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
 
-    db.add(CourseRoadmapChatMessage(roadmap_id=roadmap.id, role="assistant", content=final_text))
+    db.add(
+        CourseRoadmapChatMessage(
+            roadmap_id=roadmap.id,
+            session_id=session.id,
+            role="assistant",
+            content=final_text,
+        )
+    )
     db.commit()
 
-    return {"reply": final_text, "pending_changes": ctx.pending_changes}
+    return {"reply": final_text, "pending_changes": ctx.pending_changes, "session_id": session.id}
 
 
 def apply_pending_changes(

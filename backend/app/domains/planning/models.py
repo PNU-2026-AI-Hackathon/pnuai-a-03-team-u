@@ -75,18 +75,35 @@ class CourseRoadmapItem(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(20), default="manual")
 
 
+class CourseRoadmapChatSession(TimestampMixin, Base):
+    """같은 로드맵 안에서 독립된 대화 스레드를 구분하는 세션.
+
+    사용자가 "새 대화 시작" 버튼을 누를 때마다 하나가 생기고, 각 세션은 자기
+    스레드의 메시지만 컨텍스트로 삼는다. pending_roadmap_changes는 세션이 아닌
+    로드맵 전역이라 어느 세션에서 제안받든 승인 대상은 하나의 로드맵이다.
+    """
+
+    __tablename__ = "course_roadmap_chat_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    roadmap_id: Mapped[int] = mapped_column(ForeignKey("course_roadmaps.id"), index=True)
+    title: Mapped[str | None] = mapped_column(String(255))
+
+
 class CourseRoadmapChatMessage(TimestampMixin, Base):
     """로드맵 AI 상담 대화 기록.
 
-    로드맵당 하나의 연속된 대화로 취급한다(멀티 세션/스레드 없음). 매 요청마다
-    클라이언트가 전체 히스토리를 다시 보내는 대신 서버가 이 테이블에서 복원해
-    Anthropic Messages API에 넘긴다.
+    이제 (roadmap_id, session_id)로 스레드를 구분한다. 히스토리 복원은 session_id
+    기준으로 좁혀서 하고, 세션이 다르면 서로의 대화가 컨텍스트에 섞이지 않는다.
     """
 
     __tablename__ = "course_roadmap_chat_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     roadmap_id: Mapped[int] = mapped_column(ForeignKey("course_roadmaps.id"), index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("course_roadmap_chat_sessions.id"), index=True
+    )
     role: Mapped[str] = mapped_column(String(20))  # user | assistant
     content: Mapped[str] = mapped_column(Text)
 
