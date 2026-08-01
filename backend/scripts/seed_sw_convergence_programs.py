@@ -99,6 +99,8 @@ SW_COMMON_COURSE_DEFS = [
     ("SF1101073", "데이터분석입문"),
     ("SF1101074", "AI이해를위한파이썬기초"),
     ("SF1101080", "AI리터러시의이해"),
+    ("SF1101081", "메타버스활용프로젝트"),
+    ("SF1101083", "데이터마이닝"),
     ("SF1101084", "데이터리터러시의이해"),
 ]
 SW_COMMON_CATEGORY = "일반선택"
@@ -196,6 +198,85 @@ TRACK_COURSES: dict[str, dict] = {
             ("PY3500217", "뇌정보처리", GROUP_DEPARTMENT_MAJOR),
         ],
         "sw_common_all": True,
+    },
+    "정치데이터사이언스": {
+        "rule": "학과전공과목 12학점(지정 4과목 전부) + SW융합공통교과목 중 3과목(9학점)",
+        "courses": [
+            ("PD3100387", "정치학연구방법론", GROUP_DEPARTMENT_MAJOR),
+            ("PD3100385", "외교정책론", GROUP_DEPARTMENT_MAJOR),
+            ("PD2001650", "시민정치론", GROUP_DEPARTMENT_MAJOR),
+            ("PD2001649", "정치철학의 쟁점", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
+    # TRACKS의 이름이 "행정관리과학(DMS)"라 base_name(첫 '(' 앞)은 "행정관리과학"이 된다.
+    "행정관리과학": {
+        "rule": (
+            "학과전공과목 15학점(전필 2과목 필수 + 전선 중 3과목 선택) + "
+            "SW융합공통교과목 중 2과목(6학점). 권장 공통과목: 데이터리터러시의이해, "
+            "AI리터러시의이해, 데이터마이닝"
+        ),
+        "courses": [
+            # 자료의 'R 기반 조사방법론'(PA2001673)은 DB에 없다. 행정학과 37과목 중
+            # 조사방법론은 이것 하나뿐이고 이수구분·학년·학기(전공필수 2-1)가 정확히
+            # 일치해 팀 확인 후 연결했다.
+            ("PA2003845", "생성형 AI를 활용한 조사방법론", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("PA3600451", "공공데이터분석론", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("PA2001666", "GIS 기반 행정자료분석", GROUP_DEPARTMENT_MAJOR),
+            ("PA2001669", "인공지능과 디지털 거버넌스", GROUP_DEPARTMENT_MAJOR),
+            ("PA2001668", "빅데이터기반 정책결정론", GROUP_DEPARTMENT_MAJOR),
+            ("PA2001667", "빅데이터기반 정책평가론", GROUP_DEPARTMENT_MAJOR),
+            ("PA2001670", "지산학 연계 캡스톤 디자인(지역문제 액션러닝)", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
+    "공공데이터분석": {
+        "rule": "학과전공과목 15학점(지정 5과목 전부) + SW융합공통교과목 중 2과목(6학점)",
+        "courses": [
+            ("PP1600782", "공공관리의이해", GROUP_DEPARTMENT_MAJOR),
+            ("PP3600195", "공공정책론", GROUP_DEPARTMENT_MAJOR),
+            ("PP3300286", "e-정부론", GROUP_DEPARTMENT_MAJOR),
+            ("PP3600120", "데이터정책론", GROUP_DEPARTMENT_MAJOR),
+            ("PP3300288", "사회조사방법론", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
+    "디지털패션": {
+        "rule": (
+            "학과전공과목 12학점(패션리테일링 필수 + 전선 중 3과목 선택) + "
+            "SW융합공통교과목 중 3과목(9학점)"
+        ),
+        "courses": [
+            ("CT3500922", "패션리테일링", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            # 자료 CT3600617 -> 현행 CT1501204. 의류학과 내 동명 과목이 이것 하나뿐이다.
+            ("CT1501204", "디지털패션디자인", GROUP_DEPARTMENT_MAJOR),
+            ("CT2600563", "텍스타일디자인CAD", GROUP_DEPARTMENT_MAJOR),
+            ("CT3500208", "패션마켓리서치", GROUP_DEPARTMENT_MAJOR),
+            ("CT2001288", "온라인패션비즈니스경영", GROUP_DEPARTMENT_MAJOR),
+            # 자료 CT3500492 '어패럴패턴CAD' -> 현행 CT2003062로 이름이 확장됐다.
+            # 학년·학기(4-1)가 같고 자료의 교과목 개요에도 3D 가상착의가 명시돼 있다.
+            ("CT2003062", "어패럴패턴CAD및3D가상피팅", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
+    "AI 스포츠과학": {
+        "rule": (
+            "학과전공과목 15학점 + SW융합공통교과목 중 2과목(6학점). "
+            "공통과목은 데이터분석입문·메타버스활용프로젝트·데이터마이닝 3개로 한정된다."
+        ),
+        "courses": [
+            ("SC2600329", "운동처방", GROUP_DEPARTMENT_MAJOR),
+            # 자료는 '...논문작성법', DB는 '...논문작성방법'. 코드가 같아 같은 과목이다.
+            ("SC3600184", "스포츠통계처리및논문작성방법", GROUP_DEPARTMENT_MAJOR),
+            ("SC2700167", "스포츠심리학", GROUP_DEPARTMENT_MAJOR),
+            # 이 트랙만 공통과목을 3개로 특정한다(다른 트랙처럼 전체 후보가 아님).
+            ("SF1101073", "데이터분석입문", f"{GROUP_SW_COMMON}(택2)"),
+            ("SF1101081", "메타버스활용프로젝트", f"{GROUP_SW_COMMON}(택2)"),
+            ("SF1101083", "데이터마이닝", f"{GROUP_SW_COMMON}(택2)"),
+        ],
+        # 보류: 'SC3600515 스폰서십마케팅'은 학과 53과목 중 유일한 스폰서십 과목
+        # (SC2001898)이 이수구분·학기가 모두 달라 확신이 없고, 'SC3300968 스포츠공학'은
+        # 학과에 아예 없다. 학사 확인 후 추가한다.
     },
 }
 
