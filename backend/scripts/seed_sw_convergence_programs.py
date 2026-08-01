@@ -54,7 +54,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.db import SessionLocal
 from app.domains.academics.models import (
@@ -105,6 +105,16 @@ SW_COMMON_COURSE_DEFS = [
     ("SF1101084", "데이터리터러시의이해"),
     ("SF1101085", "인공지능기초수학"),
 ]
+# 연계전공 4개가 공통으로 전공선택에 넣는 소프트웨어융합교육원 개설 과목.
+# 위 SW융합공통교과목(SF11010xx)과는 별개 과목군이고 계절학기에만 열린다.
+SW_FOUNDATION_COURSE_DEFS = [
+    ("ES1200313", "소프트웨어융합기초(I)"),
+    ("ES1200338", "소프트웨어융합기초(II)"),
+    ("ES1200427", "소프트웨어융합기초(III)"),
+    ("ES1200634", "소프트웨어융합기초(IV)"),
+]
+SW_FOUNDATION_SEMESTER = "여름계절수업"
+
 SW_COMMON_CATEGORY = "일반선택"
 SW_COMMON_CREDITS = 3.0
 SW_COMMON_YEAR = "전학년"
@@ -372,6 +382,247 @@ TRACKS = [
     ("도시·환경·생태 데이터분석", "생명자원과학대학", "조경학과"),
 ]
 
+# 자료의 개설학과 약어 -> 라이브 계층의 학과명.
+# 자료 각 연계전공 표의 "※개설학과" 범례에서 옮겼다. EE(전자공학전공)와
+# ET(전기공학전공)는 둘 다 전기전자공학부 소속이라 학부 단위로 좁힌다
+# (세부전공까지 좁히면 학부 공통 과목이 빠진다).
+LINKED_HOST_DEPARTMENTS = {
+    "CP": "정보컴퓨터공학부",
+    "CB": "정보컴퓨터공학부",
+    "MA": "수학과",
+    "IE": "산업공학과",
+    "EC": "경제학부",
+    "DB": "경영학과",
+    "ST": "통계학과",
+    "DM": "기계공학부",
+    "EE": "전기전자공학부",
+    "ET": "전기전자공학부",
+    "SF": SW_COMMON_DEPARTMENT,
+}
+
+# 연계전공 인정 과목. (개설학과 약어, 교과목명, 이수구분).
+# 교과목번호가 프로그램 전용이라 쓸 수 없어 (개설학과, 이름)으로 찾는다
+# — _resolve_linked_courses 참고.
+GROUP_LINKED_REQUIRED = "전공필수"
+GROUP_LINKED_ELECTIVE = "전공선택"
+
+LINKED_COURSES: dict[str, dict] = {
+    "산업수학SW": {
+        "rule": "전공필수 29학점 + 전공선택 19학점, 총 48학점",
+        "courses": [
+            ("CP", "프로그래밍원리와실습", GROUP_LINKED_REQUIRED),
+            ("CP", "C++프로그래밍과실습", GROUP_LINKED_REQUIRED),
+            ("MA", "정수론", GROUP_LINKED_REQUIRED),
+            ("MA", "미분방정식(II)", GROUP_LINKED_REQUIRED),
+            ("CP", "자료구조", GROUP_LINKED_REQUIRED),
+            ("MA", "확률과통계", GROUP_LINKED_REQUIRED),
+            ("MA", "수학적프로그래밍", GROUP_LINKED_REQUIRED),
+            ("MA", "수리모델론", GROUP_LINKED_REQUIRED),
+            ("MA", "산업수학및실무", GROUP_LINKED_REQUIRED),
+            ("CP", "컴퓨터및프로그래밍입문", GROUP_LINKED_ELECTIVE),
+            ("MA", "수학(II)", GROUP_LINKED_ELECTIVE),
+            ("EC", "미시경제학", GROUP_LINKED_ELECTIVE),
+            ("MA", "선형대수학(I)", GROUP_LINKED_ELECTIVE),
+            ("CP", "이산수학(I)", GROUP_LINKED_ELECTIVE),
+            ("EE", "전자기학(I)", GROUP_LINKED_ELECTIVE),
+            ("MA", "해석학(I)", GROUP_LINKED_ELECTIVE),
+            ("DM", "유체역학", GROUP_LINKED_ELECTIVE),
+            ("CP", "이산수학(II)", GROUP_LINKED_ELECTIVE),
+            ("DB", "재무관리", GROUP_LINKED_ELECTIVE),
+            ("ST", "통계프로그래밍언어(I)", GROUP_LINKED_ELECTIVE),
+            ("CP", "플랫폼기반프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("MA", "보험수학입문", GROUP_LINKED_ELECTIVE),
+            ("MA", "실변수함수론(I)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(I)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(II)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(III)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(IV)", GROUP_LINKED_ELECTIVE),
+        ],
+    },
+    "빅데이터": {
+        "rule": "전공필수 32학점 + 전공선택 16학점, 총 48학점",
+        "courses": [
+            ("CP", "프로그래밍원리와실습", GROUP_LINKED_REQUIRED),
+            ("CP", "C++프로그래밍과실습", GROUP_LINKED_REQUIRED),
+            ("IE", "공학통계(I)", GROUP_LINKED_REQUIRED),
+            ("IE", "경영과학(I)", GROUP_LINKED_REQUIRED),
+            ("IE", "공학통계(II)", GROUP_LINKED_REQUIRED),
+            ("CP", "자료구조", GROUP_LINKED_REQUIRED),
+            ("CP", "소프트웨어공학", GROUP_LINKED_REQUIRED),
+            ("CP", "데이터베이스", GROUP_LINKED_REQUIRED),
+            ("IE", "데이터베이스", GROUP_LINKED_REQUIRED),
+            ("CP", "데이터마이닝", GROUP_LINKED_ELECTIVE),
+            ("IE", "데이터마이닝", GROUP_LINKED_ELECTIVE),
+            ("CP", "인공지능개론", GROUP_LINKED_ELECTIVE),
+            ("IE", "인공지능개론", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터및프로그래밍입문", GROUP_LINKED_ELECTIVE),
+            ("IE", "경제성공학", GROUP_LINKED_ELECTIVE),
+            ("IE", "산업데이터과학", GROUP_LINKED_ELECTIVE),
+            ("IE", "기술경영", GROUP_LINKED_ELECTIVE),
+            ("CP", "웹응용프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("CP", "플랫폼기반프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("IE", "경영과학(II)", GROUP_LINKED_ELECTIVE),
+            ("CP", "운영체제", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터구조", GROUP_LINKED_ELECTIVE),
+            ("IE", "경영정보시스템", GROUP_LINKED_ELECTIVE),
+            ("IE", "생산시스템공학", GROUP_LINKED_ELECTIVE),
+            ("IE", "스마트서비스설계", GROUP_LINKED_ELECTIVE),
+            ("CP", "사물인터넷", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(I)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(II)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(III)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(IV)", GROUP_LINKED_ELECTIVE),
+        ],
+    },
+    "임베디드SW": {
+        "rule": "전공필수 31학점 + 전공선택 17학점, 총 48학점",
+        "courses": [
+            ("CP", "프로그래밍원리와실습", GROUP_LINKED_REQUIRED),
+            ("EE", "AI프로그래밍", GROUP_LINKED_REQUIRED),
+            ("EE", "회로이론(I)", GROUP_LINKED_REQUIRED),
+            ("CP", "C++프로그래밍과실습", GROUP_LINKED_REQUIRED),
+            ("EE", "전자기학(I)", GROUP_LINKED_REQUIRED),
+            ("EE", "신호및시스템", GROUP_LINKED_REQUIRED),
+            ("EE", "전자회로(I)", GROUP_LINKED_REQUIRED),
+            ("CP", "자료구조", GROUP_LINKED_REQUIRED),
+            ("CP", "운영체제", GROUP_LINKED_REQUIRED),
+            ("CP", "컴퓨터구조", GROUP_LINKED_REQUIRED),
+            ("EE", "컴퓨터구조", GROUP_LINKED_REQUIRED),
+            ("CP", "임베디드시스템", GROUP_LINKED_REQUIRED),
+            ("EE", "임베디드시스템", GROUP_LINKED_REQUIRED),
+            ("CP", "컴퓨터및프로그래밍입문", GROUP_LINKED_ELECTIVE),
+            ("CP", "유닉스기초", GROUP_LINKED_ELECTIVE),
+            ("CP", "플랫폼기반프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("CP", "시스템소프트웨어", GROUP_LINKED_ELECTIVE),
+            ("EE", "마이크로프로세서응용", GROUP_LINKED_ELECTIVE),
+            ("EE", "수치해석", GROUP_LINKED_ELECTIVE),
+            ("EE", "제어공학", GROUP_LINKED_ELECTIVE),
+            ("CP", "유닉스응용프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("CP", "데이터통신", GROUP_LINKED_ELECTIVE),
+            ("EE", "데이터통신", GROUP_LINKED_ELECTIVE),
+            ("EE", "디지털시스템설계", GROUP_LINKED_ELECTIVE),
+            ("EE", "제어시스템설계", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터네트워크", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터비전개론", GROUP_LINKED_ELECTIVE),
+            ("EE", "SoC설계개론", GROUP_LINKED_ELECTIVE),
+            ("EE", "디지털신호처리", GROUP_LINKED_ELECTIVE),
+            ("EE", "디지털통신개론", GROUP_LINKED_ELECTIVE),
+            ("CP", "임베디드소프트웨어설계", GROUP_LINKED_ELECTIVE),
+            ("EE", "스마트제어시스템", GROUP_LINKED_ELECTIVE),
+            ("CP", "사물인터넷", GROUP_LINKED_ELECTIVE),
+            ("CP", "인공지능개론", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(I)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(II)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(III)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(IV)", GROUP_LINKED_ELECTIVE),
+        ],
+    },
+    "에너지IoT": {
+        "rule": "전공필수 28학점 + 전공선택 20학점, 총 48학점",
+        "courses": [
+            ("CP", "전기전자공학개론", GROUP_LINKED_REQUIRED),
+            ("ET", "전기회로(I)", GROUP_LINKED_REQUIRED),
+            ("CP", "프로그래밍원리와실습", GROUP_LINKED_REQUIRED),
+            ("ET", "AI프로그래밍", GROUP_LINKED_REQUIRED),
+            ("CP", "C++프로그래밍과실습", GROUP_LINKED_REQUIRED),
+            ("ET", "전자기학(I)", GROUP_LINKED_REQUIRED),
+            ("ET", "전기회로(II)", GROUP_LINKED_REQUIRED),
+            ("CP", "자료구조", GROUP_LINKED_REQUIRED),
+            ("ET", "자료구조", GROUP_LINKED_REQUIRED),
+            ("ET", "전자회로(I)", GROUP_LINKED_REQUIRED),
+            ("ET", "컴퓨터구조", GROUP_LINKED_REQUIRED),
+            ("CP", "컴퓨터구조", GROUP_LINKED_REQUIRED),
+            ("CP", "소프트웨어공학", GROUP_LINKED_REQUIRED),
+            ("CP", "컴퓨터및프로그래밍입문", GROUP_LINKED_ELECTIVE),
+            ("ET", "프로그래밍언어", GROUP_LINKED_ELECTIVE),
+            ("ET", "논리회로및설계", GROUP_LINKED_ELECTIVE),
+            ("CP", "논리회로및설계", GROUP_LINKED_ELECTIVE),
+            ("CP", "유닉스기초", GROUP_LINKED_ELECTIVE),
+            ("ET", "신호및시스템", GROUP_LINKED_ELECTIVE),
+            ("ET", "파이썬데이터사이언스", GROUP_LINKED_ELECTIVE),
+            ("CP", "플랫폼기반프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("ET", "확률통계", GROUP_LINKED_ELECTIVE),
+            ("CP", "확률통계", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터알고리즘", GROUP_LINKED_ELECTIVE),
+            ("CP", "데이터통신", GROUP_LINKED_ELECTIVE),
+            ("ET", "전기기기(I)", GROUP_LINKED_ELECTIVE),
+            ("ET", "제어공학(I)", GROUP_LINKED_ELECTIVE),
+            ("CP", "운영체제", GROUP_LINKED_ELECTIVE),
+            ("ET", "마이크로프로세서응용", GROUP_LINKED_ELECTIVE),
+            ("CP", "데이터베이스", GROUP_LINKED_ELECTIVE),
+            ("CP", "임베디드시스템", GROUP_LINKED_ELECTIVE),
+            ("ET", "전력전자", GROUP_LINKED_ELECTIVE),
+            ("CP", "컴퓨터네트워크", GROUP_LINKED_ELECTIVE),
+            ("ET", "수치해석", GROUP_LINKED_ELECTIVE),
+            ("ET", "전력공학(I)", GROUP_LINKED_ELECTIVE),
+            ("CP", "정보보안", GROUP_LINKED_ELECTIVE),
+            ("ET", "플라즈마공학", GROUP_LINKED_ELECTIVE),
+            ("ET", "전동기제어공학", GROUP_LINKED_ELECTIVE),
+            ("CP", "사물인터넷", GROUP_LINKED_ELECTIVE),
+            ("ET", "전력경제및스마트그리드", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(I)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(II)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(III)", GROUP_LINKED_ELECTIVE),
+            ("SF", "소프트웨어융합기초(IV)", GROUP_LINKED_ELECTIVE),
+        ],
+    },
+    "산업AI": {
+        "rule": (
+            "전공필수 12학점 + 전공선택 36학점, 총 48학점. "
+            "전공필수는 4과목(12학점)을 선택하되 반드시 3개 이상의 학과 개설 과목을 이수해야 함"
+        ),
+        "courses": [
+            ("IE", "최적화개론", GROUP_LINKED_REQUIRED),
+            ("CB", "인공지능수학", GROUP_LINKED_REQUIRED),
+            ("EE", "머신러닝을위한기초수학", GROUP_LINKED_REQUIRED),
+            ("ET", "AI프로그래밍", GROUP_LINKED_REQUIRED),
+            ("EE", "AI프로그래밍", GROUP_LINKED_REQUIRED),
+            ("CB", "AI프로그래밍", GROUP_LINKED_REQUIRED),
+            ("IE", "산업데이터과학", GROUP_LINKED_REQUIRED),
+            ("CB", "데이터과학입문", GROUP_LINKED_REQUIRED),
+            ("ET", "파이썬데이터사이언스", GROUP_LINKED_REQUIRED),
+            ("CB", "인공지능개론", GROUP_LINKED_REQUIRED),
+            ("IE", "인공지능개론", GROUP_LINKED_REQUIRED),
+            ("EE", "인공지능개론", GROUP_LINKED_REQUIRED),
+            ("CB", "머신러닝", GROUP_LINKED_REQUIRED),
+            ("ET", "머신러닝", GROUP_LINKED_REQUIRED),
+            ("CB", "딥러닝프로그래밍", GROUP_LINKED_REQUIRED),
+            ("IE", "딥러닝", GROUP_LINKED_REQUIRED),
+            ("IE", "산업인공지능응용", GROUP_LINKED_ELECTIVE),
+            ("IE", "공학통계(I)", GROUP_LINKED_ELECTIVE),
+            ("ET", "논리회로및설계", GROUP_LINKED_ELECTIVE),
+            ("CB", "웹응용프로그래밍", GROUP_LINKED_ELECTIVE),
+            ("CB", "자료구조", GROUP_LINKED_ELECTIVE),
+            ("ET", "자료구조", GROUP_LINKED_ELECTIVE),
+            ("ET", "확률통계", GROUP_LINKED_ELECTIVE),
+            ("CB", "컴퓨터알고리즘", GROUP_LINKED_ELECTIVE),
+            ("IE", "통계적선형모형", GROUP_LINKED_ELECTIVE),
+            ("EE", "수치해석", GROUP_LINKED_ELECTIVE),
+            ("EE", "제어공학", GROUP_LINKED_ELECTIVE),
+            ("ET", "제어공학(I)", GROUP_LINKED_ELECTIVE),
+            ("EE", "마이크로프로세서응용", GROUP_LINKED_ELECTIVE),
+            ("IE", "데이터마이닝", GROUP_LINKED_ELECTIVE),
+            ("CB", "데이터마이닝", GROUP_LINKED_ELECTIVE),
+            ("IE", "데이터베이스", GROUP_LINKED_ELECTIVE),
+            ("CB", "데이터베이스", GROUP_LINKED_ELECTIVE),
+            ("ET", "제어공학(II)", GROUP_LINKED_ELECTIVE),
+            ("EE", "제어시스템설계", GROUP_LINKED_ELECTIVE),
+            ("IE", "시뮬레이션", GROUP_LINKED_ELECTIVE),
+            ("IE", "스마트제조", GROUP_LINKED_ELECTIVE),
+            ("CB", "생성모델", GROUP_LINKED_ELECTIVE),
+            ("ET", "전력경제및스마트그리드", GROUP_LINKED_ELECTIVE),
+            ("EE", "임베디드시스템", GROUP_LINKED_ELECTIVE),
+            ("CB", "컴퓨터비전개론", GROUP_LINKED_ELECTIVE),
+            ("CB", "지능형IoT플랫폼", GROUP_LINKED_ELECTIVE),
+            ("ET", "지능형로봇공학", GROUP_LINKED_ELECTIVE),
+            ("EE", "AI바이오의료영상", GROUP_LINKED_ELECTIVE),
+            ("IE", "강화학습개론", GROUP_LINKED_ELECTIVE),
+            ("EE", "데이터통신", GROUP_LINKED_ELECTIVE),
+            ("CB", "인간컴퓨터상호작용", GROUP_LINKED_ELECTIVE),
+        ],
+    },
+}
+
 LINKED_MAJORS = [
     ("산업수학SW", "자연과학대학", "수학과"),
     ("빅데이터", "공과대학", "산업공학과"),
@@ -391,6 +642,33 @@ CONVERGENCE_MAJORS_AS_DEPARTMENT = [
 def _squash(name: str) -> str:
     """과목명 비교용 정규화. 공백 차이만 흡수한다."""
     return name.replace(" ", "").strip()
+
+
+def _resolve_linked_courses(db, host_department: str, course_name: str) -> list[Course]:
+    """연계전공 인정 과목을 (개설학과, 과목명)으로 찾는다. 후보가 여럿이면 모두 돌려준다.
+
+    연계전공은 교과목번호가 프로그램 전용이라(같은 '프로그래밍원리와실습'이
+    산업수학SW는 MS1600702, 빅데이터는 BD1600702) courses의 course_code로 매칭할 수
+    없다. 뒷 7자리가 과목 고유번호처럼 보이지만 실제 개설학과는 다른 번호를 쓰는
+    경우가 많아(자료의 CP 과목이 뒷자리로는 의생명융합공학부에 잡힘) 신뢰할 수 없다.
+
+    그래서 자료의 개설학과 표기로 범위를 좁힌 뒤 이름으로 찾는다. 한 학부 안에서
+    세부전공별로 같은 이름의 과목이 따로 개설된 경우(정보컴퓨터공학부의 컴퓨터공학·
+    인공지능·디자인테크놀로지전공)는 후보를 모두 인정 과목으로 붙인다 — 연계전공은
+    "2개 이상 학과가 각 전공에 개설된 교과목을 선택하여 편성"하는 제도라 학생이 어느
+    전공에서 듣든 인정되는 것이 자연스럽고, 하나만 고르면 임의 선택이 되기 때문이다.
+    """
+    return list(
+        db.scalars(
+            select(Course)
+            .join(Department, Department.id == Course.department_id)
+            .where(
+                Department.name == host_department,
+                func.replace(Course.course_name, " ", "") == _squash(course_name),
+            )
+            .order_by(Course.course_code)
+        ).all()
+    )
 
 
 def _find_department(db, school_id: int, college_name: str, department_name: str) -> Department | None:
@@ -443,7 +721,12 @@ def _ensure_sw_common_courses(db, school_id: int) -> tuple[list[Course], int, in
 
     courses: list[Course] = []
     created = existing = 0
-    for code, name in SW_COMMON_COURSE_DEFS:
+    definitions = [(c, n, SW_COMMON_SEMESTER) for c, n in SW_COMMON_COURSE_DEFS]
+    # 소프트웨어융합기초는 계절학기 개설이라 학기값만 다르다. 연계전공 전공선택에만
+    # 쓰이므로 SW융합공통교과목 후보(sw_common_all)에는 넣지 않는다.
+    definitions += [(c, n, SW_FOUNDATION_SEMESTER) for c, n in SW_FOUNDATION_COURSE_DEFS]
+
+    for code, name, semester in definitions:
         course = db.scalars(select(Course).where(Course.course_code == code)).first()
         if course is None:
             course = Course(
@@ -453,14 +736,15 @@ def _ensure_sw_common_courses(db, school_id: int) -> tuple[list[Course], int, in
                 category=SW_COMMON_CATEGORY,
                 credits=SW_COMMON_CREDITS,
                 year=SW_COMMON_YEAR,
-                semester=SW_COMMON_SEMESTER,
+                semester=semester,
             )
             db.add(course)
             db.flush()
             created += 1
         else:
             existing += 1
-        courses.append(course)
+        if semester == SW_COMMON_SEMESTER:
+            courses.append(course)
     return courses, created, existing
 
 
@@ -515,6 +799,60 @@ def _upsert_program_courses(
             )
         )
         created += 1
+    return created, existing, missing
+
+
+def _upsert_linked_courses(
+    db, department_id: int, major_id: int, spec: dict
+) -> tuple[int, int, list[str]]:
+    """연계전공 인정 과목을 program_courses에 멱등 upsert한다.
+
+    (개설학과, 이름)으로 찾고 후보가 여럿이면 모두 붙인다 — _resolve_linked_courses 참고.
+    """
+    created = existing = 0
+    missing: list[str] = []
+    # 한 프로그램 안에서 같은 과목이 두 번 잡히는 걸 막는다. 자료가 개설학과를
+    # EE(전자공학전공)/ET(전기공학전공)로 나눠 적어도 둘 다 전기전자공학부로 해석되므로
+    # 따로 적힌 두 항목이 동일한 과목 집합으로 풀린다(예: 산업AI의 AI프로그래밍).
+    # 먼저 나온 이수구분을 유지한다 — 전공필수가 전공선택보다 앞에 오도록 데이터를 적었다.
+    seen_course_ids: set[int] = set()
+    for abbrev, course_name, group in spec["courses"]:
+        host = LINKED_HOST_DEPARTMENTS.get(abbrev)
+        if host is None:
+            missing.append(f"{abbrev} {course_name} — 개설학과 약어 미매핑")
+            continue
+        courses = _resolve_linked_courses(db, host, course_name)
+        if not courses:
+            missing.append(f"{host} '{course_name}' — 해당 학과에 없음")
+            continue
+        for course in courses:
+            if course.id in seen_course_ids:
+                continue
+            seen_course_ids.add(course.id)
+            row = db.scalars(
+                select(ProgramCourse).where(
+                    ProgramCourse.department_id == department_id,
+                    ProgramCourse.major_id == major_id,
+                    ProgramCourse.course_id == course.id,
+                    ProgramCourse.curriculum_year == CURRICULUM_YEAR,
+                )
+            ).first()
+            if row is not None:
+                row.requirement_group = group
+                row.category = course.category
+                existing += 1
+                continue
+            db.add(
+                ProgramCourse(
+                    department_id=department_id,
+                    major_id=major_id,
+                    course_id=course.id,
+                    requirement_group=group,
+                    category=course.category,
+                    curriculum_year=CURRICULUM_YEAR,
+                )
+            )
+            created += 1
     return created, existing, missing
 
 
@@ -596,6 +934,16 @@ def seed(apply: bool) -> int:
             # 연계전공이 트랙 과목을 가져간다 — 산업공학과에는 '산업AI'가 트랙(21학점)과
             # 연계전공(48학점)으로 둘 다 있어서 base_name만으로는 구분되지 않는다.
             spec = TRACK_COURSES.get(base_name) if kind == "트랙" else None
+            linked_spec = LINKED_COURSES.get(base_name) if kind == "연계" else None
+            if linked_spec is not None:
+                l_new, l_old, l_missing = _upsert_linked_courses(
+                    db, department.id, major.id, linked_spec
+                )
+                created_courses += l_new
+                existing_courses += l_old
+                print(f"         └ 인정과목 신규 {l_new} / 기존 {l_old}  (이수 규칙 판정 미구현)")
+                for item in l_missing:
+                    skipped.append(f"{major_name} 과목 {item}")
             if spec is not None:
                 c_new, c_old, c_missing = _upsert_program_courses(
                     db, department.id, major.id, spec, sw_common_courses
