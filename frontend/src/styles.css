@@ -8048,3 +8048,38 @@ body.theme-dark .roadmap-head-stats span {
 .requirement-strip article {
   min-height: 0;
 }
+
+/* 학기 카드의 교과 / 비교과 그룹 구분 (Figma 175:1801) */
+.semester-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0 6px;
+  border: 0;
+}
+
+.semester-group-head h4 {
+  flex: 1;
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.semester-group-head strong {
+  color: var(--shell-dim);
+  font-size: 13px;
+}
+
+.semester-group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.semester-group-dot.is-course {
+  background: #2570ff;
+}
+
+.semester-group-dot.is-activity {
+  background: #16a34a;
+}

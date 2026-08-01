@@ -1,7 +1,9 @@
 import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { getApiErrorMessage } from "../api/client";
+import { getActivities } from "../api/profile";
+import type { ActivityRecord } from "../api/profile";
 import {
   chatWithRoadmapAgent,
   confirmRoadmapChanges,
@@ -105,6 +107,23 @@ function cloneTimeline(timeline: TimelineTerm[]): TimelineTerm[] {
 function summarizeTimelineItems(items: TimelineItem[]) {
   const academicItems = items.filter((item) => item.category.startsWith("전공") || item.category.startsWith("교양"));
   return academicItems.length === items.length ? `${academicItems.length * 3}학점 계획` : `${items.length}개 계획`;
+}
+
+/** 비교과로 볼 이수구분. 로드맵 카드에서 교과 활동과 나누어 보여준다. */
+const NON_CURRICULAR_CATEGORIES = ["자격증", "진로 활동", "비교과", "대외활동", "공모전", "인턴십", "프로젝트", "상담", "어학"];
+
+function isNonCurricular(category: string) {
+  return NON_CURRICULAR_CATEGORIES.some((keyword) => category.includes(keyword));
+}
+
+/** 교과 먼저, 비교과 다음 순서로 묶고 각 그룹의 첫 항목을 표시한다. */
+function groupTimelineItems<T extends { category: string }>(items: T[]) {
+  const courses = items.filter((item) => !isNonCurricular(item.category));
+  const activities = items.filter((item) => isNonCurricular(item.category));
+  return [
+    ...courses.map((item, index) => ({ item, kind: "course" as const, isFirst: index === 0, count: courses.length })),
+    ...activities.map((item, index) => ({ item, kind: "activity" as const, isFirst: index === 0, count: activities.length })),
+  ];
 }
 
 const initialTimeline: TimelineTerm[] = [
@@ -795,7 +814,7 @@ function MockRoadmapPage() {
                       <strong>{timelineTerm.summary}</strong>
                     </div>
                     <ul className="semester-course-list">
-                      {timelineTerm.items.map((item, itemIndex) => isEditingRoadmap ? (
+                      {isEditingRoadmap ? timelineTerm.items.map((item, itemIndex) => (
                         <li className="semester-course-edit-row" key={`${timelineTerm.term}-${itemIndex}`}>
                           <label className="semester-edit-name">
                             <span>항목 이름</span>
@@ -842,16 +861,25 @@ function MockRoadmapPage() {
                             <Trash2 size={16} aria-hidden="true" />
                           </button>
                         </li>
-                      ) : (
-                        <li className="semester-course-row" key={item.name}>
-                          <div>
-                            <strong>{item.name}</strong>
-                            <span>{item.category}</span>
-                          </div>
-                          <span className={`semester-course-status ${timelineStatusClassNames[item.status]}`}>
-                            {item.status}
-                          </span>
-                        </li>
+                      )) : groupTimelineItems(timelineTerm.items).map(({ item, kind, isFirst, count }) => (
+                        <Fragment key={`${kind}-${item.name}`}>
+                          {isFirst ? (
+                            <li className="semester-group-head">
+                              <span className={`semester-group-dot is-${kind}`} aria-hidden="true" />
+                              <h4>{kind === "course" ? "교과 활동" : "비교과 활동"}</h4>
+                              <strong>{kind === "course" ? `${count}과목` : `${count}건`}</strong>
+                            </li>
+                          ) : null}
+                          <li className="semester-course-row">
+                            <div>
+                              <strong>{item.name}</strong>
+                              <span>{item.category}</span>
+                            </div>
+                            <span className={`semester-course-status ${timelineStatusClassNames[item.status]}`}>
+                              {item.status}
+                            </span>
+                          </li>
+                        </Fragment>
                       ))}
                     </ul>
                     {isEditingRoadmap ? (
@@ -1145,6 +1173,21 @@ function sameCategory(left: string | null, right: string | null) {
   return (left ?? "").replace(/\s/g, "") === (right ?? "").replace(/\s/g, "");
 }
 
+/** 활동 시작일을 학기 키(연도-학기)로 환산한다. 3~8월은 1학기, 나머지는 2학기로 본다. */
+function buildActivityTermMap(activities: ActivityRecord[]) {
+  const map = new Map<string, ActivityRecord[]>();
+  activities.forEach((activity) => {
+    const date = activity.start_date ?? activity.end_date;
+    if (!date) return;
+    const [yearText, monthText] = date.split("-");
+    const month = Number(monthText);
+    if (!yearText || !Number.isFinite(month)) return;
+    const key = `${yearText}-${month >= 3 && month <= 8 ? "1학기" : "2학기"}`;
+    map.set(key, [...(map.get(key) ?? []), activity]);
+  });
+  return map;
+}
+
 function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
   const regularTerms: ApiTimelineTerm[] = [];
   for (let grade = 1; grade <= 4; grade += 1) {
@@ -1263,6 +1306,7 @@ function ConnectedRoadmapPage() {
   const [aiError, setAiError] = useState("");
   const [failedPrompt, setFailedPrompt] = useState("");
   const [requirementScrollState, setRequirementScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
@@ -1375,6 +1419,13 @@ function ConnectedRoadmapPage() {
 
   const visibleItems = useMemo(() => draftItems ?? roadmap?.items ?? [], [draftItems, roadmap]);
   const timeline = useMemo(() => buildApiTimeline(visibleItems), [visibleItems]);
+  const activityTermMap = useMemo(() => buildActivityTermMap(activities), [activities]);
+
+  useEffect(() => {
+    getActivities()
+      .then(setActivities)
+      .catch(() => setActivities([]));
+  }, []);
   const requirementGroups = useMemo(
     () => buildApiRequirementGroups(graduation, roadmap?.items ?? []),
     [graduation, roadmap],
@@ -1733,11 +1784,35 @@ function ConnectedRoadmapPage() {
                           )}
                         </li>
                       ) : (
-                        <li className="semester-course-row" key={item.id}>
-                          <div><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
-                          <span className={`semester-course-status ${item.status === "completed" ? "status-completed" : "status-planned"}`}>{item.status === "completed" ? "이수 완료" : "이수 예정"}</span>
-                        </li>
+                        <Fragment key={item.id}>
+                          {term.items[0]?.id === item.id ? (
+                            <li className="semester-group-head">
+                              <span className="semester-group-dot is-course" aria-hidden="true" />
+                              <h4>교과 활동</h4>
+                              <strong>{term.items.length}과목</strong>
+                            </li>
+                          ) : null}
+                          <li className="semester-course-row">
+                            <div><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
+                            <span className={`semester-course-status ${item.status === "completed" ? "status-completed" : "status-planned"}`}>{item.status === "completed" ? "이수 완료" : "이수 예정"}</span>
+                          </li>
+                        </Fragment>
                       ))}
+                      {!isEditingRoadmap && term.year && (activityTermMap.get(`${term.year}-${term.semester}`)?.length ?? 0) > 0 ? (
+                        <>
+                          <li className="semester-group-head">
+                            <span className="semester-group-dot is-activity" aria-hidden="true" />
+                            <h4>비교과 활동</h4>
+                            <strong>{activityTermMap.get(`${term.year}-${term.semester}`)!.length}건</strong>
+                          </li>
+                          {activityTermMap.get(`${term.year}-${term.semester}`)!.map((activity) => (
+                            <li className="semester-course-row" key={`activity-${activity.id}`}>
+                              <div><strong>{activity.title}</strong><span>{activity.category ?? "비교과"}{activity.organization ? ` · ${activity.organization}` : ""}</span></div>
+                              <span className="semester-course-status status-completed">{activity.end_date ? "완료" : "진행 중"}</span>
+                            </li>
+                          ))}
+                        </>
+                      ) : null}
                     </ul>
                     {isEditingRoadmap && term.grade && term.semester ? (
                       addingTerm === term.key ? (
