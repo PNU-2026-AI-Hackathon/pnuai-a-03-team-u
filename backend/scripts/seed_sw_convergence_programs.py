@@ -183,6 +183,20 @@ TRACK_COURSES: dict[str, dict] = {
         ],
         "sw_common_all": True,
     },
+    "심리데이터사이언스": {
+        "rule": "학과전공과목 15학점(8과목 중 5과목 선택) + SW융합공통교과목 중 2과목(6학점)",
+        "courses": [
+            ("PY3600441", "심리통계및실습(I)", GROUP_DEPARTMENT_MAJOR),
+            ("PY3500222", "연구설계및실습", GROUP_DEPARTMENT_MAJOR),
+            ("PY1600548", "과학으로서의심리학", GROUP_DEPARTMENT_MAJOR),
+            ("PY3800687", "사회신경과학", GROUP_DEPARTMENT_MAJOR),
+            ("PY2100847", "공학심리학", GROUP_DEPARTMENT_MAJOR),
+            ("PY3500220", "감정과학", GROUP_DEPARTMENT_MAJOR),
+            ("PY3600439", "임상신경심리학", GROUP_DEPARTMENT_MAJOR),
+            ("PY3500217", "뇌정보처리", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
 }
 
 # 개설 주체가 세부전공이라 상위 학과 밑에 붙인 것들 (기록용).
