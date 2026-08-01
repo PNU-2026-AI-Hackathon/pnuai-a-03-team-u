@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { MouseEvent } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -7,6 +8,19 @@ import {
 } from "../../data/studentProfileStorage";
 import { BrandMark } from "./BrandMark";
 import { themeLabels, useThemeMode, type ThemeMode } from "./useThemeMode";
+
+const ACADEMIC_CALENDAR_URL = "https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076";
+
+/**
+ * 외부 링크를 항상 새 창으로 연다. 미리보기 패널처럼 target="_blank"를 무시하는
+ * 환경에서 서비스 화면이 통째로 교체되고 뒤로가기도 막히는 걸 막는다.
+ */
+function openInNewWindow(event: MouseEvent<HTMLAnchorElement>) {
+  // 새 탭/새 창으로 여는 보조키 조합은 브라우저 기본 동작에 맡긴다.
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+  event.preventDefault();
+  window.open(event.currentTarget.href, "_blank", "noopener,noreferrer");
+}
 
 const pageMeta: Record<string, { eyebrow: string; title: string }> = {
   "/": {
@@ -100,7 +114,14 @@ export function AppLayout() {
 
         <div className="sidebar-section">
           <p>바로가기</p>
-          <a href="https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076" target="_blank" rel="noopener noreferrer">학사 일정</a>
+          <a
+            href={ACADEMIC_CALENDAR_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={openInNewWindow}
+          >
+            학사 일정
+          </a>
           <NavLink to="/activities">추천 활동</NavLink>
           <a href="#advisor">상담 예약</a>
         </div>
