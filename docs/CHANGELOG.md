@@ -14,6 +14,71 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-07-29 (blackest21)
+
+이번 세션에서 4개 주제 반영. 마이그레이션(`e1f2a3b4c5d6`) 실행이 필요하고, `course_offerings`
+적재 파이프라인은 Docker 로컬 검증 후 Supabase 반영이 남았다.
+
+- **[bug fix] 휴학 학기 반영 planned_grade 계산 (`backend/app/domains/planning/history.py`)**:
+  3학년 2학기 휴학 후 복학한 학생의 실제 3-2 수강분이 로드맵에서 4-1로 잡히던 버그.
+  기존 로직이 `year - curriculum_year + 1`처럼 달력 연도만 썼기 때문. 이수 기록의
+  정규 학기(1/2)만 시간순으로 정렬해 1-based 순번을 매기고 `(rank+1)//2`로 학년,
+  홀/짝으로 학기를 도출하도록 재작성(`_build_semester_rank`, `_curriculum_term`).
+  프론트가 `${planned_grade}-${planned_semester}`로 bucket하기 때문에 planned_semester도
+  커리큘럼 기준으로 저장해야 3-2가 제자리에 뜬다. upsert 키에서 planned_semester를
+  빼서(달력→커리큘럼 마이그레이션 시 중복 방지) `status=completed, source=manual` 조건으로만
+  기존 행을 찾도록 완화. 2021 입학 + 2023-2 휴학 시나리오 유닛 검증 통과.
+
+- **[feat] 로드맵 추천 후보 확장 — 이전 학년 미이수 과목까지 (`backend/app/domains/planning/roadmap_chat.py`)**:
+  "4학년 1학기 추천"을 요청하면 4-1 개설 과목만 뽑아 이전 학년에 못 들은 미이수분이
+  후보에서 빠지던 문제. 시스템 프롬프트 규칙과 `search_courses` 툴 description을 수정해
+  **grade 필터를 웬만하면 걸지 말고 semester+category만 걸도록** 유도. 이전 학년 권장
+  과목이라도 학생이 아직 안 들었으면 요청 학기 배치 우선순위에 두고, planned_grade는
+  실제 배치할 학년으로 저장하도록 규칙 명시(2학년 권장 전공필수를 4-1에 배치할 땐
+  planned_grade=4). category 필드 description에는 세분류(효원균형교양/효원창의교양/
+  효원핵심교양/기초교양)까지 나열해 균형만 채우고 싶다 같은 요청에 정확히 반응하게 함
+  (별칭 확장은 이미 `_CATEGORY_ALIASES`에 있어 그대로 활용).
+
+- **[feat] AI 대화 세션 관리 API (`backend/app/domains/planning/models.py`, `roadmap_chat.py`,
+  `backend/app/api/roadmap_agent.py`, `migrations/versions/e1f2a3b4c5d6_add_roadmap_chat_sessions.py`)**:
+  기존엔 로드맵당 하나의 연속 스레드였는데, 사용자가 "새 대화 시작"으로 컨텍스트를
+  끊을 수 있도록 세션 개념 도입. 새 테이블 `course_roadmap_chat_sessions(id, roadmap_id,
+  title, timestamps)`, `course_roadmap_chat_messages`에 `session_id` FK 추가. 마이그레이션에서
+  기존 메시지는 로드맵당 "기본 대화" 세션 하나로 backfill(NOT NULL 승격은 backfill 완료
+  후). `run_roadmap_chat`이 `session_id` 옵션을 받고, 히스토리 로딩은 session_id로 좁힘.
+  새 API: `POST /agent/sessions`(생성), `GET /agent/sessions`(목록·message_count 포함),
+  `DELETE /agent/sessions/{id}`(세션+메시지 삭제, pending_changes는 유지). 기존
+  `POST /agent/chat`은 `session_id` 옵션 필드 추가, 응답에 session_id 포함. 기존
+  `POST /agent/reset`은 세션까지 지우도록 확장. **pending_roadmap_changes는 세션이
+  아니라 로드맵 전역 유지** — 어느 세션에서 제안받든 승인 대상은 하나의 로드맵이라
+  일관성을 위해. session title은 첫 메시지 앞 20자로 자동 생성(별도 LLM 호출 없음).
+
+- **[feat] 시간표 추천 AI + Onestop 수강편람 importer**:
+  - 크롤러가 만든 `raw_data/crawled_data/onestop_course_catalog/{year}_{semester}/*.csv`를
+    `course_offerings`+`course_times`로 적재하는 importer 신설
+    (`backend/scripts/import_course_offerings.py`, `backend/app/ingestion/parsers/onestop_course_catalog.py`).
+    파서는 `timetable_raw`의 3가지 형태(`HH:MM-HH:MM`, `HH:MM(분수)`, `(외부)병원실습` 태그)를
+    처리해 2026-1(6605세션)·2026-2(2292세션) 모두 100% 파싱. importer는 upsert 키
+    `(course_id, year, semester, section)`로 멱등, 재실행 시 CourseTime을 전량 삭제
+    후 재삽입(강의실/시간 변경 흡수).
+  - 2026-2 수강편람 크롤 완료(전 카테고리 4282행). 단 이 시점 2학기 시간표는 개설 정보 중
+    시간이 배정된 건 33%뿐 — 학기 개시 전 편람 초기 상태 특성. 시간이 확정된 뒤 크롤을
+    한 번 더 돌려 importer 재실행하면 됨(멱등).
+  - 시간표 추천 코어(`backend/app/domains/planning/timetable.py`): 대상 학기의 로드맵
+    항목에 대해 실제 개설 분반을 조회, (a) 미개설 항목은 `unavailable_courses`로 분리,
+    (b) 남은 항목의 분반 조합을 요일·시간 충돌 없이 짜서 완전 조합 상위 M개(`feasible_schedules`),
+    (c) 완전 조합이 없으면 부분 조합 상위 M개(`partial_schedules`, 최소 학점 = cap × 0.5,
+    N-2 이상 크기), (d) 학점 상한 초과 조합은 `over_cap_schedules`로 분리, (e) 미개설·
+    문제 과목에 대해 학과 교육과정 내 대체 후보(`replacement_suggestions`)를 뽑되
+    "확정 세트의 어떤 분반과도 안 겹치는 분반이 하나도 없는" 후보는 조용히 배제 —
+    사용자 재시도 UX 보호. 조합 랭킹은 요일 수 오름차순 → 같은 요일 공백 시간 오름차순 →
+    학점 많은 순. 대체 후보는 대체 대상의 권장 학년 근접도 → 개설 분반 많은 순.
+    엔드포인트: `GET /me/roadmaps/{id}/timetable/recommend?year=&semester=`. LLM 미사용
+    (결정론적). 이 응답이 반환하는 `unavailable_courses`가 있으면 프론트는 기존 로드맵
+    상담 채팅으로 유도해 사용자가 로드맵을 조정한 뒤 시간표를 다시 호출하는 흐름.
+  - 코어 로직 유닛 검증(충돌 감지·조합 랭킹·부분 조합·`_grade_to_int` 케이스) 통과.
+    실측 검증은 로컬 Postgres에 course_offerings 적재 후 진행 예정.
+
 ## 2026-07-22 (blackest21)
 
 - **PNU 통합로그인(SSO) 개편으로 `POST /me/portal-sync` 자동 로그인이 막힘 — 원인은 우리 코드가 아니라 PNU 사이트 버그**:

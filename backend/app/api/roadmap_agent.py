@@ -20,10 +20,17 @@ from app.domains.courses.models import Course
 from app.domains.planning.models import (
     CourseRoadmap,
     CourseRoadmapChatMessage,
+    CourseRoadmapChatSession,
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
-from app.domains.planning.roadmap_chat import apply_pending_changes, run_roadmap_chat
+from app.domains.planning.roadmap_chat import (
+    apply_pending_changes,
+    create_chat_session,
+    delete_chat_session,
+    list_chat_sessions,
+    run_roadmap_chat,
+)
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/me/roadmaps/{roadmap_id}/agent", tags=["roadmap-agent"])
@@ -38,6 +45,7 @@ def _get_owned_roadmap(db: Session, user_id: int, roadmap_id: int) -> CourseRoad
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: int | None = None
 
 
 class SuggestedActionResponse(BaseModel):
@@ -113,6 +121,7 @@ def _resolve_change_course_names(
 
 class ChatResponse(BaseModel):
     reply: str
+    session_id: int
     pending_changes: list[PendingChangeResponse]
     suggested_actions: list[SuggestedActionResponse]
 
@@ -225,18 +234,102 @@ def chat_with_roadmap_agent(
     db: Session = Depends(get_db),
 ):
     """AI와 대화하며 로드맵 변경안을 받는다. 이 호출만으로는 아무것도 저장되지 않는다 —
-    반환된 pending_changes를 /confirm으로 승인해야 실제 반영된다."""
+    반환된 pending_changes를 /confirm으로 승인해야 실제 반영된다.
+
+    session_id를 지정하면 그 세션 컨텍스트로 이어 대화한다. 지정하지 않으면 이 로드맵의
+    가장 최근 세션을 이어 쓰거나, 아예 세션이 없으면 이번 메시지로 새 세션을 만든다.
+    """
     roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
-    result = run_roadmap_chat(db, current_user, roadmap, payload.message)
+    try:
+        result = run_roadmap_chat(
+            db, current_user, roadmap, payload.message, session_id=payload.session_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     name_map = _resolve_change_course_names(db, result["pending_changes"])
     return ChatResponse(
         reply=result["reply"],
+        session_id=result["session_id"],
         pending_changes=[
             PendingChangeResponse.from_model(c, name_map.get(c.id))
             for c in result["pending_changes"]
         ],
         suggested_actions=_load_conversation(db, roadmap_id).suggested_actions,
     )
+
+
+class SessionResponse(BaseModel):
+    session_id: int
+    title: str | None
+    created_at: str
+    updated_at: str
+    message_count: int
+
+    @classmethod
+    def from_model(cls, session: CourseRoadmapChatSession, message_count: int) -> "SessionResponse":
+        return cls(
+            session_id=session.id,
+            title=session.title,
+            created_at=session.created_at.isoformat() if session.created_at else "",
+            updated_at=session.updated_at.isoformat() if session.updated_at else "",
+            message_count=message_count,
+        )
+
+
+class CreateSessionRequest(BaseModel):
+    title: str | None = None
+
+
+@router.post("/sessions", response_model=SessionResponse)
+def create_session(
+    roadmap_id: int,
+    payload: CreateSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
+    session = create_chat_session(db, roadmap, title=payload.title)
+    return SessionResponse.from_model(session, message_count=0)
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+def list_sessions(
+    roadmap_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
+    sessions = list_chat_sessions(db, roadmap)
+    if not sessions:
+        return []
+    # 각 세션의 메시지 수를 한 번의 쿼리로 계산
+    from sqlalchemy import func
+
+    counts = dict(
+        db.execute(
+            CourseRoadmapChatMessage.__table__.select()
+            .with_only_columns(
+                CourseRoadmapChatMessage.session_id,
+                func.count(CourseRoadmapChatMessage.id),
+            )
+            .where(CourseRoadmapChatMessage.session_id.in_([s.id for s in sessions]))
+            .group_by(CourseRoadmapChatMessage.session_id)
+        ).all()
+    )
+    return [SessionResponse.from_model(s, counts.get(s.id, 0)) for s in sessions]
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    roadmap_id: int,
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
+    if not delete_chat_session(db, roadmap, session_id):
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    return {"deleted": session_id}
 
 
 class ConfirmRequest(BaseModel):
@@ -264,6 +357,7 @@ def confirm_pending_changes(
 
 class ResetResponse(BaseModel):
     deleted_messages: int
+    deleted_sessions: int
     deleted_pending: int
 
 
@@ -273,15 +367,20 @@ def reset_roadmap_agent_session(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """이 로드맵의 상담 대화 기록과 아직 반영 안 된 pending change를 모두 지운다.
-    프론트 '화면 대화 초기화' 버튼이 이 엔드포인트를 부른다. 이전에는 프론트에서만
-    상태를 리셋하고 DB 히스토리가 남아있어, 다음 채팅 시작 시 백엔드가 여전히 과거
-    대화를 다 로드해 LLM에 넘기던 문제가 있었다.
+    """이 로드맵의 모든 대화 세션·메시지·아직 반영 안 된 pending change를 지운다.
+
+    세션 개념 도입 후에도 "전체 초기화" 진입점은 유지한다 — 개별 세션만 지우려면
+    DELETE /sessions/{session_id}를 쓰면 된다. 이후 새 채팅 요청은 새 세션을 만든다.
     """
     roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
     deleted_messages = (
         db.query(CourseRoadmapChatMessage)
         .filter(CourseRoadmapChatMessage.roadmap_id == roadmap.id)
+        .delete(synchronize_session=False)
+    )
+    deleted_sessions = (
+        db.query(CourseRoadmapChatSession)
+        .filter(CourseRoadmapChatSession.roadmap_id == roadmap.id)
         .delete(synchronize_session=False)
     )
     deleted_pending = (
@@ -293,4 +392,8 @@ def reset_roadmap_agent_session(
         .delete(synchronize_session=False)
     )
     db.commit()
-    return ResetResponse(deleted_messages=deleted_messages, deleted_pending=deleted_pending)
+    return ResetResponse(
+        deleted_messages=deleted_messages,
+        deleted_sessions=deleted_sessions,
+        deleted_pending=deleted_pending,
+    )
