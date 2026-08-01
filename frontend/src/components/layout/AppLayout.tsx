@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import {
+  CalendarDays,
+  ChevronRight,
+  ClipboardList,
+  LineSquiggle,
+  LogOut,
+  PanelsTopLeft,
+  Sparkles,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import {
   STUDENT_PROFILE_UPDATED_EVENT,
@@ -34,6 +44,15 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
   },
 };
 
+/** 상단 네비 항목. `to`가 없으면 아직 화면이 없는 준비 중 메뉴다. */
+const navEntries: { label: string; icon: LucideIcon; to?: string }[] = [
+  { label: "성장 로드맵", icon: LineSquiggle, to: "/roadmap" },
+  { label: "추천 활동", icon: Sparkles, to: "/activities" },
+  { label: "시간표", icon: PanelsTopLeft },
+  { label: "이력서 작성", icon: ClipboardList },
+  { label: "달력", icon: CalendarDays },
+];
+
 function resolveTheme(mode: ThemeMode) {
   if (mode === "auto") {
     const hour = new Date().getHours();
@@ -46,7 +65,6 @@ export function AppLayout() {
   const location = useLocation();
   const { user, logoutUser } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
-  const [collapsed, setCollapsed] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [profileOverrides, setProfileOverrides] = useState(readProfileOverrides);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -74,97 +92,83 @@ export function AppLayout() {
   const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
 
   return (
-    <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
-      <aside className="sidebar" aria-label="주요 메뉴">
-        <NavLink className="brand" to="/">
+    <div className="app-frame">
+      <header className="topnav">
+        <NavLink className="topnav-brand" to="/">
           <BrandMark id="plan-u-face-app" />
           <span>
             Plan <strong>U</strong>
           </span>
         </NavLink>
 
-        <button
-          className="sidebar-toggle"
-          type="button"
-          aria-label={collapsed ? "사이드 메뉴 펼치기" : "사이드 메뉴 접기"}
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((value) => !value)}
-        >
-          ‹
-        </button>
+        <nav className="topnav-menu" aria-label="주요 메뉴">
+          {navEntries.map(({ label, icon: Icon, to }) =>
+            to ? (
+              <NavLink
+                key={label}
+                className={({ isActive }) => `topnav-link${isActive ? " active" : ""}`}
+                to={to}
+              >
+                <Icon size={20} aria-hidden="true" />
+                <span>{label}</span>
+              </NavLink>
+            ) : (
+              <span key={label} className="topnav-link is-pending" title="준비 중인 메뉴입니다">
+                <Icon size={20} aria-hidden="true" />
+                <span>{label}</span>
+                <em>준비 중</em>
+              </span>
+            ),
+          )}
 
-        <nav className="nav-stack">
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/" end>
-            <span className="nav-icon">⌂</span>
-            <span>Home</span>
-          </NavLink>
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/roadmap">
-            <span className="nav-icon">⌁</span>
-            <span>성장 로드맵</span>
-          </NavLink>
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/activities">
-            <span className="nav-icon">✦</span>
-            <span>추천 활동</span>
-          </NavLink>
-          <a className="nav-item schedule-link" href="#schedule">
-            <span className="nav-icon">▣</span>
-            <span>시간표 작성</span>
-          </a>
-        </nav>
+          <span className="topnav-divider" aria-hidden="true" />
 
-        <div className="sidebar-section">
-          <p>바로가기</p>
-          <a href="https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076" target="_blank" rel="noopener noreferrer">학사 일정</a>
-          <NavLink to="/activities">추천 활동</NavLink>
-          <a href="#advisor">상담 예약</a>
-        </div>
-
-        <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">
-          <div className="avatar">{displayName.slice(0, 1)}</div>
-          <div>
-            <strong>{displayName} 님</strong>
-            <span>나의 프로필 보기</span>
+          <div className={`theme-picker${themeOpen ? " open" : ""}`}>
+            <button
+              className="theme-mode-button"
+              type="button"
+              aria-label={`현재 ${themeLabels[themeMode]} 모드, 클릭하면 테마가 변경됩니다`}
+              aria-expanded={themeOpen}
+              onClick={() => setThemeOpen((value) => !value)}
+            >
+              {themeLabels[themeMode]}
+            </button>
+            <div className="theme-menu" role="menu" aria-label="테마 선택">
+              {(Object.keys(themeLabels) as ThemeMode[]).map((mode) => (
+                <button
+                  className={themeMode === mode ? "selected" : ""}
+                  key={mode}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setThemeMode(mode);
+                    setThemeOpen(false);
+                  }}
+                >
+                  {themeLabels[mode]}
+                </button>
+              ))}
+            </div>
           </div>
-        </NavLink>
-      </aside>
+
+          <NavLink className="topnav-profile" to="/info" aria-label="나의 프로필 보기">
+            <span className="avatar">{displayName.slice(0, 1)}</span>
+            <span>{displayName} 님</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </NavLink>
+
+          <NavLink className="topnav-link logout-link" to="/auth" onClick={logoutUser}>
+            <LogOut size={20} aria-hidden="true" />
+            <span>로그아웃</span>
+          </NavLink>
+        </nav>
+      </header>
 
       <main className="workspace">
         <header className="topbar">
           <div>
             <p className="eyebrow">{meta.eyebrow}</p>
             <h1>{meta.title}</h1>
-          </div>
-          <div className="top-actions">
-            <div className={`theme-picker${themeOpen ? " open" : ""}`}>
-              <button
-                className="theme-mode-button"
-                type="button"
-                aria-label={`현재 ${themeLabels[themeMode]} 모드, 클릭하면 테마가 변경됩니다`}
-                aria-expanded={themeOpen}
-                onClick={() => setThemeOpen((value) => !value)}
-              >
-                {themeLabels[themeMode]}
-              </button>
-              <div className="theme-menu" role="menu" aria-label="테마 선택">
-                {(Object.keys(themeLabels) as ThemeMode[]).map((mode) => (
-                  <button
-                    className={themeMode === mode ? "selected" : ""}
-                    key={mode}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setThemeMode(mode);
-                      setThemeOpen(false);
-                    }}
-                  >
-                    {themeLabels[mode]}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <NavLink className="user-chip logout-chip" to="/auth" onClick={logoutUser}>
-              로그아웃
-            </NavLink>
           </div>
         </header>
         <Outlet />
