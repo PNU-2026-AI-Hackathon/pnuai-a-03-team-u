@@ -9,6 +9,7 @@ import { ChatPage } from "../pages/ChatPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
+import { OnboardingPage } from "../pages/OnboardingPage";
 import { RoadmapPage } from "../pages/RoadmapPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -43,6 +44,8 @@ export function AppRouter() {
             <Route path="/info" element={<InfoPage />} />
             <Route path="/roadmap" element={<RoadmapPage />} />
           </Route>
+          {/* 회원가입 STEP 2·3. 학사정보 불러오기가 인증을 요구해서 로그인 뒤에 이어진다. */}
+          <Route path="/onboarding" element={<RequireAuth><OnboardingPage /></RequireAuth>} />
           {/* AI 대화만 시안대로 상단 네비 셸을 쓴다. */}
           <Route element={<RequireAuth><ChatShell /></RequireAuth>}>
             <Route path="/chat" element={<ChatPage />} />
