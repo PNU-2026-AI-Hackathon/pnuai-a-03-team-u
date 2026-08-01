@@ -45,11 +45,10 @@ function groupSessions(sessions: RoadmapChatSession[]) {
   return groups.filter((group) => group.items.length > 0);
 }
 
+/** 서버가 보낸 detail만 그대로 쓰고, 통신 실패 같은 축약어(Network Error)는 우리 문구로 덮는다. */
 function errorMessage(error: unknown, fallback: string) {
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message) || fallback;
-  }
-  return fallback;
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  return typeof detail === "string" && detail.trim() ? detail : fallback;
 }
 
 export function ChatPage() {

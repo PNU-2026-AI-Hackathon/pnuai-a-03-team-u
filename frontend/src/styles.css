@@ -6690,11 +6690,6 @@ body.theme-dark {
   cursor: pointer;
 }
 
-.workspace.is-flush {
-  padding: 0;
-  background: var(--shell-canvas);
-}
-
 /* --- AI 대화 화면 ------------------------------------------------------- */
 
 .chat-screen {

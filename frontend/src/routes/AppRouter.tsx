@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AppLayout } from "../components/layout/AppLayout";
+import { ChatShell } from "../components/layout/ChatShell";
 import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { AuthPage } from "../pages/AuthPage";
 import { ChatPage } from "../pages/ChatPage";
@@ -39,9 +40,12 @@ export function AppRouter() {
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />
-            <Route path="/chat" element={<ChatPage />} />
             <Route path="/info" element={<InfoPage />} />
             <Route path="/roadmap" element={<RoadmapPage />} />
+          </Route>
+          {/* AI 대화만 시안대로 상단 네비 셸을 쓴다. */}
+          <Route element={<RequireAuth><ChatShell /></RequireAuth>}>
+            <Route path="/chat" element={<ChatPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
