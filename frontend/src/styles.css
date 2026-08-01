@@ -7813,3 +7813,95 @@ body.theme-dark .auth-field.is-locked,
 body.theme-dark .timetable-course.is-conflict {
   background: #0b111d;
 }
+
+/* --- Home 시안 반영 (Figma 175:1801) ----------------------------------- */
+
+.student-program {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.program-tag {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 11px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.dashboard-record-list.is-bulleted li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.dashboard-record-list.is-bulleted li div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.record-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 4px;
+}
+
+.record-dot.is-green {
+  background: #16a34a;
+}
+
+.record-dot.is-red {
+  background: #ef4444;
+}
+
+.credit-chart-bar {
+  display: block;
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--shell-line);
+}
+
+.credit-chart-bar::before {
+  display: block;
+  width: var(--fill, 0%);
+  height: 100%;
+  border-radius: 2px;
+  background: #16a34a;
+  content: "";
+}
+
+.advisor-record-link {
+  padding: 10px;
+  border: 1px solid var(--shell-line);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+/* 시안은 학부·전공·부전공 / 학년·진로·복수전공 3열 배치다. */
+.profile-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advisor-record-link {
+  display: block;
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .profile-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

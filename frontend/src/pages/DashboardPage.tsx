@@ -148,12 +148,16 @@ export function DashboardPage() {
   const requiredCredits = graduation?.required_total_credits ?? (isMockStudentDataEnabled ? 130 : null);
   const remainingCredits = requiredCredits === null ? null : Math.max(0, requiredCredits - earnedCredits);
   const creditProgress = requiredCredits ? Math.min(100, Math.round((earnedCredits / requiredCredits) * 100)) : 0;
+  const minorMajor = user?.academic_programs?.find((program) => program.program_type === "minor")?.major ?? "-";
+  const dualMajor = user?.academic_programs?.find((program) => program.program_type === "dual")?.major ?? "-";
   const profileFacts = [
     ...(profileProgramNames.length === 1
       ? [[department.trim() ? "학과" : "전공", profileProgramNames[0]]]
       : [["학부", department], ["전공", major]]),
+    ["부전공", minorMajor],
     ["학년", `${academicYear}학년`],
     ["진로", careerGoal],
+    ["복수전공", dualMajor],
   ];
   const storedSemesterCredits = useMemo(() => getSemesterCredits(courses ?? []), [courses]);
   const semesterCredits = storedSemesterCredits.length > 0
@@ -185,7 +189,16 @@ export function DashboardPage() {
             <h2>
               {profileName} <span>({studentId})</span>
             </h2>
-            <p>{profileProgramNames.join(" · ")}</p>
+            <p className="student-program">
+              <span className="program-tag">전</span>
+              {profileProgramNames.join(" · ")}
+            </p>
+            {minorMajor !== "-" ? (
+              <p className="student-program">
+                <span className="program-tag">부</span>
+                {minorMajor}
+              </p>
+            ) : null}
             <p>{academicYear}학년 · 졸업 요건 점검 중</p>
           </div>
         </div>
@@ -250,21 +263,27 @@ export function DashboardPage() {
               <strong>{isAdvisorSaving ? "저장 중" : currentConsultationStatus}</strong>
             </button>
           </div>
+          <Link className="advisor-record-link" to="/info#advisor">
+            상담 기록 보기
+          </Link>
         </article>
 
         <article className="card activity-card dashboard-summary-card">
           <div className="card-title">
             <div>
-              <p className="eyebrow">Non-Curricular</p>
-              <h3>비교과 활동</h3>
+              <p className="eyebrow">활동</p>
+              <h3>활동 목록</h3>
             </div>
             <strong>{activities?.length ?? fallbackActivities.length}건</strong>
           </div>
-          <ul className="dashboard-record-list">
-            {visibleActivities.map((activity) => (
+          <ul className="dashboard-record-list is-bulleted">
+            {visibleActivities.map((activity, index) => (
               <li key={activity.id}>
-                <span>{activity.category ?? "활동"}</span>
-                <strong>{activity.title}</strong>
+                <span className={`record-dot ${index % 2 === 0 ? "is-green" : "is-red"}`} aria-hidden="true" />
+                <div>
+                  <strong>{activity.title}</strong>
+                  <span>{activity.category ?? "활동"}</span>
+                </div>
               </li>
             ))}
             {dashboardActivities.length === 0 ? <li className="empty">등록된 활동 없음</li> : null}
@@ -277,8 +296,8 @@ export function DashboardPage() {
         <article className="card certificate-card dashboard-summary-card">
           <div className="card-title">
             <div>
-              <p className="eyebrow">Certificate · Language</p>
-              <h3>자격증 · 어학</h3>
+              <p className="eyebrow">자격증</p>
+              <h3>현재 딴 자격증</h3>
             </div>
             <strong>{credentials.length}개</strong>
           </div>
@@ -304,6 +323,11 @@ export function DashboardPage() {
               <div key={label}>
                 <small>{label}</small>
                 <strong>{credit}<span>학점</span></strong>
+                <span
+                  className="credit-chart-bar"
+                  aria-hidden="true"
+                  style={{ "--fill": `${Math.min(100, (Number(credit) / 21) * 100)}%` } as React.CSSProperties}
+                />
               </div>
             ))}
           </div>
@@ -326,6 +350,7 @@ export function DashboardPage() {
             <span>여름계절</span>
             <span>겨울계절</span>
             <span>여름방학</span>
+            <span>겨울방학</span>
             <span>휴학</span>
           </div>
         </article>
