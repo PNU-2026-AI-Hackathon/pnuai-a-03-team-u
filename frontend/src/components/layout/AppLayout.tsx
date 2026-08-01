@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
   STUDENT_PROFILE_UPDATED_EVENT,
@@ -47,6 +47,7 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
 
 export function AppLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, logoutUser } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
   const [collapsed, setCollapsed] = useState(false);
@@ -61,8 +62,27 @@ export function AppLayout() {
   }, []);
 
   useEffect(() => {
+    // 다른 화면에서 넘어온 바로가기는 해당 영역까지 스크롤한다.
+    const anchorId = (location.state as { scrollTo?: string } | null)?.scrollTo;
+    if (anchorId) {
+      // 브라우저 스크롤 복원이 끝난 다음 프레임에 이동해야 덮이지 않는다.
+      const frame = window.requestAnimationFrame(() => {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [location.pathname]);
+  }, [location.pathname, location.state]);
+
+  /** 상담 예약은 Home의 지도 교수 카드로 보낸다. */
+  function goToAdvisorCard(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    if (location.pathname === "/") {
+      document.getElementById("advisor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    navigate("/", { state: { scrollTo: "advisor" } });
+  }
 
   const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
 
@@ -123,7 +143,7 @@ export function AppLayout() {
             학사 일정
           </a>
           <NavLink to="/activities">추천 활동</NavLink>
-          <a href="#advisor">상담 예약</a>
+          <a href="/" onClick={goToAdvisorCard}>상담 예약</a>
         </div>
 
         <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">
