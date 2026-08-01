@@ -7905,3 +7905,22 @@ body.theme-dark .timetable-course.is-conflict {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* --- 추천 활동 시안 반영 (Figma 175:1801) ------------------------------- */
+
+.activity-category-strip article span {
+  display: grid;
+  place-items: center;
+}
+
+/* 시안은 D-day와 분류 배지가 왼쪽에 나란히 붙는다. */
+.activity-card-top.is-leading {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.activity-card-tags span {
+  border: 1px solid #b9e6c9;
+  background: transparent;
+  color: #067647;
+}
