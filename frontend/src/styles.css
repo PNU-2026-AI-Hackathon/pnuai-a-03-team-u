@@ -7995,3 +7995,56 @@ body.theme-dark .timetable-course.is-conflict {
   justify-self: start;
   width: fit-content;
 }
+
+/* --- 성장 로드맵 시안 반영 (Figma 175:1801) ----------------------------- */
+
+.roadmap-head-stats {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.roadmap-head-stats div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 78px;
+  padding: 12px;
+  border: 1px solid #f4c7c9;
+  border-radius: 12px;
+  background: #fff5f5;
+}
+
+.roadmap-head-stats strong {
+  color: #e5484d;
+  font-size: 22px;
+}
+
+.roadmap-head-stats span {
+  color: #b42318;
+  font-size: 12px;
+}
+
+.requirement-credit-ratio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--shell-accent);
+  font-size: 15px;
+}
+
+body.theme-dark .roadmap-head-stats div {
+  border-color: #5b2b2f;
+  background: #2a1618;
+}
+
+body.theme-dark .roadmap-head-stats span {
+  color: #ff9d9d;
+}
+
+/* 요건 카드에서 문구 한 줄이 빠져 기존 최소 높이가 남는다. */
+.requirement-strip article {
+  min-height: 0;
+}

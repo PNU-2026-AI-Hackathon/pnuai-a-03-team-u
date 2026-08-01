@@ -633,8 +633,18 @@ function MockRoadmapPage() {
     <section className="roadmap-shell" data-current-tab={activeTab}>
       <div className="roadmap-shell-body">
       <section className="roadmap-head">
+        <div className="roadmap-head-stats" aria-label="남은 요건 요약">
+          <div>
+            <strong>{requirementGroups.filter((group) => group.earned < group.required).length}</strong>
+            <span>남은 요건</span>
+          </div>
+          <div>
+            <strong>{requirementGroups.reduce((sum, group) => sum + Math.max(group.required - group.earned, 0), 0)}</strong>
+            <span>남은 학점</span>
+          </div>
+        </div>
         <div>
-          <p className="eyebrow">남은 요건</p>
+          <p className="eyebrow">로드맵</p>
           <h2>데이터사이언스전공 로드맵</h2>
           <p>졸업 요건, 전공 심화, 진로 준비를 한 화면에서 추적합니다.</p>
         </div>
@@ -722,12 +732,11 @@ function MockRoadmapPage() {
                       >
                         <div className="requirement-summary-head">
                           <h3>{group.category}</h3>
-                          <strong>{progress}%</strong>
+                          <strong className="requirement-credit-ratio">
+                            {group.earned}/{group.required}
+                            {remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}
+                          </strong>
                         </div>
-                        <p className="requirement-credit-status">
-                          <strong>{group.required}학점 중</strong>
-                          <span>{remaining === 0 ? "모두 이수" : `${remaining}학점 남음`}</span>
-                        </p>
                         <div
                           className="requirement-summary-progress"
                           role="progressbar"
@@ -738,7 +747,13 @@ function MockRoadmapPage() {
                         >
                           <span style={{ width: `${progress}%` }} />
                         </div>
-                        <small>{group.earned} / {group.required}학점 이수</small>
+                        <small>
+                          {remaining === 0
+                            ? "요건 충족 완료"
+                            : group.courses[0]
+                            ? `${group.courses[0].name} ${group.courses[0].credits}학점 ${group.courses[0].status}`
+                            : `${remaining}학점 추가 이수 필요`}
+                        </small>
                       </article>
                     );
                   })}
@@ -1627,8 +1642,18 @@ function ConnectedRoadmapPage() {
     <section className="roadmap-shell" data-current-tab={activeTab}>
       <div className="roadmap-shell-body">
       <section className="roadmap-head">
+        <div className="roadmap-head-stats" aria-label="남은 요건 요약">
+          <div>
+            <strong>{requirementGroups.filter((group) => group.earned < group.required).length}</strong>
+            <span>남은 요건</span>
+          </div>
+          <div>
+            <strong>{requirementGroups.reduce((sum, group) => sum + Math.max(group.required - group.earned, 0), 0)}</strong>
+            <span>남은 학점</span>
+          </div>
+        </div>
         <div>
-          <p className="eyebrow">남은 요건</p>
+          <p className="eyebrow">로드맵</p>
           <h2>{roadmapTitle}</h2>
           <p>{roadmap.summary || "졸업 요건과 앞으로 이수할 과목을 한 화면에서 관리합니다."}</p>
         </div>
@@ -1675,10 +1700,9 @@ function ConnectedRoadmapPage() {
                     const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
                     return (
                       <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
-                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong>{progress}%</strong></div>
-                        <p className="requirement-credit-status"><strong>{group.required}학점 중</strong><span>{remaining === 0 ? "모두 이수" : `${remaining}학점 남음`}</span></p>
+                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
                         <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
-                        <small>{group.earned} / {group.required}학점 이수</small>
+                        <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
                       </article>
                     );
                   }) : <p className="roadmap-inline-empty">학생지원시스템 동기화 후 이수 현황이 표시됩니다.</p>}
