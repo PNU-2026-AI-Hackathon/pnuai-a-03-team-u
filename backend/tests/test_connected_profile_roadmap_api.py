@@ -30,6 +30,7 @@ from app.domains.courses.models import Course
 from app.domains.planning.models import (
     CourseRoadmap,
     CourseRoadmapChatMessage,
+    CourseRoadmapChatSession,
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
@@ -51,6 +52,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
             StudentCourseRecord.__table__,
             CourseRoadmap.__table__,
             CourseRoadmapItem.__table__,
+            CourseRoadmapChatSession.__table__,
             CourseRoadmapChatMessage.__table__,
             PendingRoadmapChange.__table__,
         ]
@@ -60,6 +62,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
         self.db = Session(self.engine)
         self.db.query(PendingRoadmapChange).delete()
         self.db.query(CourseRoadmapChatMessage).delete()
+        self.db.query(CourseRoadmapChatSession).delete()
         self.db.query(CourseRoadmapItem).delete()
         self.db.query(CourseRoadmap).delete()
         self.db.query(StudentCourseRecord).delete()
@@ -257,15 +260,21 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
         roadmap = CourseRoadmap(user_id=self.user.id, title="내 로드맵")
         self.db.add(roadmap)
         self.db.flush()
+        # 메시지는 반드시 세션에 속한다(session_id NOT NULL).
+        session = CourseRoadmapChatSession(roadmap_id=roadmap.id, title="기본 대화")
+        self.db.add(session)
+        self.db.flush()
         self.db.add_all(
             [
                 CourseRoadmapChatMessage(
                     roadmap_id=roadmap.id,
+                    session_id=session.id,
                     role="user",
                     content="전공 필수 과목을 먼저 보고 싶어",
                 ),
                 CourseRoadmapChatMessage(
                     roadmap_id=roadmap.id,
+                    session_id=session.id,
                     role="assistant",
                     content="필수 과목부터 확인할게요.",
                 ),
