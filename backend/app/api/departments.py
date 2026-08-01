@@ -1,0 +1,74 @@
+"""학과/학부 검색(자동완성). 회원가입·프로필 편집에서 학과를 고를 때 쓴다.
+
+과목 입력을 `GET /courses/search`로만 하게 막아 오타를 구조적으로 차단한 것과
+같은 이유다. 학과명을 자유 텍스트로 받으면 정식 편제에 없는 이름(예: 부산대
+정식 명칭은 "경제학부"인데 "경제학과"로 입력)이 그대로 들어오고,
+`resolve_hierarchy`가 "미지정" 단과대 아래에 과목 0개·졸업요건 0행짜리 학과를
+새로 만들어 버린다. 그 계정은 과목 검색·졸업요건 조회·로드맵 추천이 전부 빈
+결과가 된다.
+
+회원가입은 로그인 전에 일어나므로 이 라우터는 인증을 요구하지 않는다.
+노출되는 정보는 학교 공개 편제(단과대/학과/전공 이름)뿐이다.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.db import get_db
+from app.domains.academics.hierarchy import UNASSIGNED_COLLEGE
+from app.domains.academics.models import College, Department, Major
+
+router = APIRouter(prefix="/departments", tags=["departments"])
+
+
+class DepartmentSearchResult(BaseModel):
+    id: int
+    name: str
+    college: str
+    # 학부제라 세부 전공이 나뉘는 경우의 선택지. "OO과"처럼 학과 자체가 전공
+    # 단위면 빈 리스트이고, 이때 사용자는 전공을 따로 고르지 않는다.
+    majors: list[str]
+
+
+@router.get("/search", response_model=list[DepartmentSearchResult])
+def search_departments(
+    q: str = "",
+    limit: int = 20,
+    db: Session = Depends(get_db),
+) -> list[DepartmentSearchResult]:
+    """학과/학부명으로 검색한다. q가 비면 전체 목록을 앞에서부터 돌려준다.
+
+    "미지정" 단과대 소속은 제외한다 — 과거 자유 입력으로 잘못 생성된 껍데기라
+    사용자가 새로 고르면 안 되는 값이다.
+    """
+    query = (
+        select(Department, College)
+        .join(College, College.id == Department.college_id)
+        .where(College.name != UNASSIGNED_COLLEGE)
+    )
+    q = q.strip()
+    if q:
+        query = query.where(Department.name.ilike(f"%{q}%"))
+
+    rows = db.execute(query.order_by(Department.name).limit(limit)).all()
+    if not rows:
+        return []
+
+    department_ids = [department.id for department, _ in rows]
+    majors_by_department: dict[int, list[str]] = {}
+    for major in db.scalars(select(Major).where(Major.department_id.in_(department_ids))).all():
+        majors_by_department.setdefault(major.department_id, []).append(major.name)
+
+    return [
+        DepartmentSearchResult(
+            id=department.id,
+            name=department.name,
+            college=college.name,
+            majors=sorted(majors_by_department.get(department.id, [])),
+        )
+        for department, college in rows
+    ]
