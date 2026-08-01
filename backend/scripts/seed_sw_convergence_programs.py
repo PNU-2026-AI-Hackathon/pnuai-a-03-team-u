@@ -157,6 +157,19 @@ TRACK_COURSES: dict[str, dict] = {
             ("SF1101080", "AI리터러시의이해", f"{GROUP_SW_COMMON}(택1-B)"),
         ],
     },
+    "데이터사이언스와복지": {
+        # 5과목 15학점이 전부 지정 과목이라 "N과목 중 선택" 조건이 없다.
+        # 교과목번호의 SW 접두는 소프트웨어가 아니라 사회복지학과 코드다.
+        "rule": "학과전공과목 15학점(지정 5과목 전부) + SW융합공통교과목 중 2과목(6학점)",
+        "courses": [
+            ("SW2400655", "사회복지조사론", GROUP_DEPARTMENT_MAJOR),
+            ("SW2000092", "사회복지자료분석론", GROUP_DEPARTMENT_MAJOR),
+            ("SW2000088", "지역사회복지론", GROUP_DEPARTMENT_MAJOR),
+            ("SW2000090", "사회복지행정론", GROUP_DEPARTMENT_MAJOR),
+            ("SW2000087", "사회복지정책론", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
 }
 
 # 개설 주체가 세부전공이라 상위 학과 밑에 붙인 것들 (기록용).
