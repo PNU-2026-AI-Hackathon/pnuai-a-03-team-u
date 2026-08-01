@@ -7319,3 +7319,497 @@ body.theme-dark .topnav .theme-mode-button {
   text-align: center;
   text-decoration: none;
 }
+
+/* --- 시간표 작성 (Figma 175:1801) -------------------------------------- */
+
+.timetable-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.timetable-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  border: 1px solid var(--shell-line);
+  border-radius: 20px;
+  background: var(--panel);
+}
+
+.timetable-head h2 {
+  margin: 4px 0;
+  color: var(--ink);
+  font-size: 24px;
+}
+
+.timetable-head p:last-child {
+  margin: 0;
+  color: var(--shell-dim);
+  font-size: 14px;
+}
+
+.timetable-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timetable-select select {
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.timetable-save {
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--shell-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.timetable-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.timetable-error {
+  margin: 0;
+  padding: 14px 18px;
+  border: 1px solid #f4c7c9;
+  border-radius: 16px;
+  background: #fff1f2;
+  color: #b42318;
+  font-size: 14px;
+}
+
+.timetable-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.timetable-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--shell-line);
+  border-radius: 20px;
+  background: var(--panel);
+}
+
+.timetable-panel h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.timetable-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--shell-line);
+  border-radius: 12px;
+  color: var(--shell-dim);
+}
+
+.timetable-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  outline: none;
+}
+
+.timetable-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.timetable-filters button {
+  padding: 8px 16px;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--shell-dim);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.timetable-filters button.selected {
+  border-color: transparent;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+}
+
+.timetable-course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timetable-empty {
+  margin: 0;
+  color: var(--shell-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.timetable-course {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--shell-line);
+  border-radius: 12px;
+}
+
+.timetable-course strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.timetable-course p {
+  margin: 4px 0 0;
+  color: var(--shell-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timetable-course button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.timetable-course button.is-placed {
+  background: #ddf7dd;
+  color: #067647;
+}
+
+.timetable-course.is-conflict {
+  background: var(--shell-canvas);
+}
+
+.timetable-conflict-badge {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #ffe4e4;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timetable-grid-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timetable-badge {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timetable-badge.is-warn {
+  background: #ffe4e4;
+  color: #b42318;
+}
+
+.timetable-hint {
+  margin: -8px 0 0;
+  color: var(--shell-dim);
+  font-size: 13px;
+}
+
+.timetable-grid {
+  display: grid;
+  grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 44px;
+  border: 1px solid var(--shell-line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.timetable-grid-corner,
+.timetable-grid-day,
+.timetable-grid-hour,
+.timetable-grid-cell {
+  border-right: 1px solid var(--shell-line);
+  border-bottom: 1px solid var(--shell-line);
+}
+
+.timetable-grid-day {
+  display: grid;
+  background: var(--shell-canvas);
+  color: var(--shell-dim);
+  font-size: 13px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.timetable-grid-hour {
+  display: grid;
+  grid-column: 1;
+  color: var(--shell-dim);
+  font-size: 12px;
+  place-items: center;
+}
+
+.timetable-block {
+  z-index: 1;
+  overflow: hidden;
+  margin: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.timetable-block strong {
+  display: block;
+  font-size: 12px;
+}
+
+.timetable-block span {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.tone-base {
+  background: #ffe4e4;
+  color: #9f1d24;
+}
+
+.tone-required {
+  background: #dceafe;
+  color: #1d4ed8;
+}
+
+.tone-elective {
+  background: #ddf7dd;
+  color: #067647;
+}
+
+.tone-general {
+  background: #fdf3d7;
+  color: #92700e;
+}
+
+.tone-liberal {
+  background: #efe4ff;
+  color: #6d28d9;
+}
+
+.timetable-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  color: var(--shell-dim);
+  font-size: 12px;
+  list-style: none;
+}
+
+.timetable-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.timetable-ai header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timetable-ai header p {
+  margin: 2px 0 0;
+  color: var(--shell-dim);
+  font-size: 13px;
+}
+
+.timetable-ai-face .brand-mark {
+  width: 36px;
+  height: 36px;
+}
+
+.timetable-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 180px;
+  max-height: 320px;
+  padding: 16px;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: var(--shell-canvas);
+}
+
+.timetable-chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timetable-chat-row.user {
+  align-items: flex-end;
+}
+
+.timetable-chat-who {
+  color: var(--shell-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.timetable-chat-row p {
+  max-width: 90%;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.timetable-chat-row.user p {
+  background: var(--shell-active);
+  color: var(--shell-accent);
+}
+
+.timetable-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.timetable-quick button {
+  padding: 8px 14px;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.timetable-composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+}
+
+.timetable-composer input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+}
+
+.timetable-composer button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--shell-accent);
+  color: #fff;
+  cursor: pointer;
+  place-items: center;
+}
+
+.timetable-composer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+body.theme-dark .timetable-head,
+body.theme-dark .timetable-panel {
+  background: #101827;
+}
+
+@media (max-width: 1400px) {
+  .timetable-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .timetable-ai {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .timetable-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timetable-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* --panel은 다크 테마에서도 흰색이라 패널 배경은 개별로 덮어야 한다. */
+body.theme-dark .auth-shell,
+body.theme-dark .auth-panel,
+body.theme-dark .auth-field,
+body.theme-dark .auth-tabs button,
+body.theme-dark .auth-highlights li,
+body.theme-dark .timetable-quick button,
+body.theme-dark .timetable-filters button,
+body.theme-dark .timetable-chat-row p {
+  background: #101827;
+}
+
+body.theme-dark .auth-field.is-locked,
+body.theme-dark .timetable-course.is-conflict {
+  background: #0b111d;
+}

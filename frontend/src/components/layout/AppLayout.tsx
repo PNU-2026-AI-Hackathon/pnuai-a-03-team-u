@@ -25,6 +25,10 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
     eyebrow: "Student Data",
     title: "내 정보",
   },
+  "/timetable": {
+    eyebrow: "2026년도 2학기",
+    title: "시간표 작성",
+  },
 };
 
 export function AppLayout() {
@@ -85,10 +89,13 @@ export function AppLayout() {
             <span className="nav-icon">✦</span>
             <span>추천 활동</span>
           </NavLink>
-          <a className="nav-item schedule-link" href="#schedule">
+          <NavLink
+            className={({ isActive }) => `nav-item schedule-link${isActive ? " active" : ""}`}
+            to="/timetable"
+          >
             <span className="nav-icon">▣</span>
             <span>시간표 작성</span>
-          </a>
+          </NavLink>
         </nav>
 
         <div className="sidebar-section">
