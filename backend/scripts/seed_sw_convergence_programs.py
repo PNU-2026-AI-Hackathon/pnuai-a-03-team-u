@@ -85,22 +85,76 @@ _EXCLUDED_TRACKS: set[str] = set()
 GROUP_DEPARTMENT_MAJOR = "학과전공과목"
 GROUP_SW_COMMON = "SW융합공통교과목"
 
-# 트랙별 인정 과목. course_code로만 매칭한다(이름 매칭은 오매칭 위험).
-# min_courses는 "해당 과목 중 최소 N과목 이상 선택 이수" 조건 — 아직 판정 로직 없음.
+# SW융합 공통교과목 개설 주체. AIS 2026 시드는 학과 편제 기준이라 학과가 아닌
+# 소프트웨어융합교육원 개설 과목이 통째로 빠져 있다(SF 접두 과목 0건). 공통교과목은
+# 모든 트랙의 요건(6~9학점)에 걸리므로 여기서 개설 주체와 과목을 함께 만든다.
+# 학위를 주는 학과가 아니므로 회원가입 학과 선택 목록에서는 제외한다
+# (app/api/departments.py의 NON_DEGREE_DEPARTMENTS).
+SW_COMMON_COLLEGE = "소프트웨어융합교육원"
+SW_COMMON_DEPARTMENT = "소프트웨어융합교육원"
+
+# 자료에 나온 SW융합 공통교과목. 전부 3학점, 학년·학기 무관, 이수구분 '일선'.
+# courses에 없으면 만들고, 있으면 그대로 쓴다.
+SW_COMMON_COURSE_DEFS = [
+    ("SF1101073", "데이터분석입문"),
+    ("SF1101074", "AI이해를위한파이썬기초"),
+    ("SF1101080", "AI리터러시의이해"),
+    ("SF1101084", "데이터리터러시의이해"),
+]
+SW_COMMON_CATEGORY = "일반선택"
+SW_COMMON_CREDITS = 3.0
+SW_COMMON_YEAR = "전학년"
+SW_COMMON_SEMESTER = "전학기"
+
+# 트랙별 인정 과목. (교과목번호, 교과목명, requirement_group) 3-튜플.
+#
+# 매칭은 course_code로만 한다 — 이름 매칭은 오매칭 위험이 크다(자료의
+# '도서관데이터분석실습'은 실제로 LI2001639이고, 자료에 적힌 LI2001637은 현행
+# '디지털자료관리'다). 다만 코드가 구버전인 경우도 있어(소셜미디어데이터분석은
+# 자료 CO2001037이 DB에 없고 CO2001309가 현행), 그런 건 팀 확인 후 여기 코드를 고친다.
+#
+# requirement_group에 "(필수)"/"(택1-A)" 같은 하위 묶음을 담는다. flat
+# graduation_requirements는 이수구분별 학점 합계만 담아 이런 조건을 표현할 수 없어서다.
+# **판정 로직은 아직 없다** — 데이터만 보존하고, 14개 트랙을 다 받은 뒤 규칙 스키마를
+# 설계한다.
 TRACK_COURSES: dict[str, dict] = {
     "문헌정보데이터분석": {
-        "min_courses": 4,
-        "category": "전공선택",
+        "rule": "학과전공과목 중 최소 4과목 이상 선택 + SW융합공통교과목 중 최소 2과목",
         "courses": [
-            ("LI3400542", "정보시스템론"),
+            ("LI3400542", "정보시스템론", GROUP_DEPARTMENT_MAJOR),
             # 자료의 '문헌정보분석론'(LI3400427)은 2026 편제에 없고 이 과목으로 대체됨.
-            ("LI2001635", "도서관데이터분석개론"),
-            ("LI3400547", "정보검색론"),
-            # 자료의 '도서관데이터분석실습' 자리. 코드(LI2001637)는 그대로고 이름만 바뀌었다.
-            # 같은 이름의 LI2001639가 따로 있으니 이름으로 매칭하면 안 된다.
-            ("LI2001637", "디지털자료관리"),
-            ("LI2001640", "메타데이터설계"),
-            ("LI2001645", "프로젝트관리론"),
+            ("LI2001635", "도서관데이터분석개론", GROUP_DEPARTMENT_MAJOR),
+            ("LI3400547", "정보검색론", GROUP_DEPARTMENT_MAJOR),
+            # 자료의 '도서관데이터분석실습' 자리. 코드는 그대로고 이름만 바뀌었다.
+            ("LI2001637", "디지털자료관리", GROUP_DEPARTMENT_MAJOR),
+            ("LI2001640", "메타데이터설계", GROUP_DEPARTMENT_MAJOR),
+            ("LI2001645", "프로젝트관리론", GROUP_DEPARTMENT_MAJOR),
+        ],
+        # 공통교과목이 자료에 특정되지 않고 "중 최소 2과목"으로만 적혀 있어,
+        # 개설된 공통교과목 전체를 후보로 붙인다.
+        "sw_common_all": True,
+    },
+    "미디어데이터사이언스": {
+        "rule": (
+            "학과전공과목 15학점(7과목 중 5과목) + SW융합공통교과목 6학점. "
+            "빅데이터분석의이해와활용 필수, 데이터저널리즘/소셜미디어데이터분석 중 1과목 필수. "
+            "SW공통은 (데이터분석입문|AI이해를위한파이썬기초) 1과목 + "
+            "(데이터리터러시의이해|AI리터러시의이해) 1과목."
+        ),
+        "courses": [
+            ("CO3500882", "빅데이터분석의이해와활용", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("CO2200100", "커뮤니케이션연구방법론", GROUP_DEPARTMENT_MAJOR),
+            ("CO2300715", "뉴미디어와사회", GROUP_DEPARTMENT_MAJOR),
+            ("CO3000486", "온라인PR", GROUP_DEPARTMENT_MAJOR),
+            ("CO3600447", "커뮤니케이션기초통계", GROUP_DEPARTMENT_MAJOR),
+            ("CO2001071", "데이터저널리즘", f"{GROUP_DEPARTMENT_MAJOR}(택1-A)"),
+            # 자료는 CO2001037이지만 DB에 없다. 이름·학과·학점·이수구분이 모두 일치하는
+            # 현행 코드가 CO2001309 하나뿐이라 팀 확인 후 이쪽으로 연결.
+            ("CO2001309", "소셜미디어데이터분석", f"{GROUP_DEPARTMENT_MAJOR}(택1-A)"),
+            ("SF1101073", "데이터분석입문", f"{GROUP_SW_COMMON}(택1-A)"),
+            ("SF1101074", "AI이해를위한파이썬기초", f"{GROUP_SW_COMMON}(택1-A)"),
+            ("SF1101084", "데이터리터러시의이해", f"{GROUP_SW_COMMON}(택1-B)"),
+            ("SF1101080", "AI리터러시의이해", f"{GROUP_SW_COMMON}(택1-B)"),
         ],
     },
 }
@@ -170,24 +224,74 @@ def _get_or_create_major(db, department_id: int, name: str) -> tuple[Major, bool
     return major, True
 
 
+def _ensure_sw_common_courses(db, school_id: int) -> tuple[list[Course], int, int]:
+    """소프트웨어융합교육원 학과와 SW융합 공통교과목을 만들어 둔다(멱등).
+
+    AIS 시드가 학과 편제만 가져와서 이 과목들이 courses에 아예 없다. 트랙 요건의
+    6~9학점을 차지하므로 여기서 직접 만든다.
+    """
+    college = db.scalars(
+        select(College).where(College.school_id == school_id, College.name == SW_COMMON_COLLEGE)
+    ).first()
+    if college is None:
+        college = College(school_id=school_id, name=SW_COMMON_COLLEGE)
+        db.add(college)
+        db.flush()
+
+    department = db.scalars(
+        select(Department).where(
+            Department.college_id == college.id, Department.name == SW_COMMON_DEPARTMENT
+        )
+    ).first()
+    if department is None:
+        department = Department(college_id=college.id, name=SW_COMMON_DEPARTMENT)
+        db.add(department)
+        db.flush()
+
+    courses: list[Course] = []
+    created = existing = 0
+    for code, name in SW_COMMON_COURSE_DEFS:
+        course = db.scalars(select(Course).where(Course.course_code == code)).first()
+        if course is None:
+            course = Course(
+                course_code=code,
+                course_name=name,
+                department_id=department.id,
+                category=SW_COMMON_CATEGORY,
+                credits=SW_COMMON_CREDITS,
+                year=SW_COMMON_YEAR,
+                semester=SW_COMMON_SEMESTER,
+            )
+            db.add(course)
+            db.flush()
+            created += 1
+        else:
+            existing += 1
+        courses.append(course)
+    return courses, created, existing
+
+
 def _upsert_program_courses(
-    db, department_id: int, major_id: int | None, spec: dict
+    db, department_id: int, major_id: int | None, spec: dict, sw_common: list[Course]
 ) -> tuple[int, int, list[str]]:
     """트랙의 인정 과목을 program_courses에 멱등 upsert한다.
 
-    course_code로만 매칭하고, 못 찾은 코드는 조용히 넘기지 않고 돌려준다.
+    course_code로만 매칭하고, 못 찾았거나 이름이 다르면 조용히 넘기지 않고 돌려준다.
     """
+    entries: list[tuple[str, str, str]] = list(spec["courses"])
+    if spec.get("sw_common_all"):
+        # 자료가 공통교과목을 특정하지 않고 "중 최소 N과목"으로만 적은 트랙.
+        entries += [(c.course_code, c.course_name, GROUP_SW_COMMON) for c in sw_common]
+
     created = existing = 0
     missing: list[str] = []
-    for code, expected_name in spec["courses"]:
+    for code, expected_name, group in entries:
         course = db.scalars(select(Course).where(Course.course_code == code)).first()
         if course is None:
-            missing.append(f"{code} ({expected_name})")
+            missing.append(f"{code} ({expected_name}) — DB에 없음")
             continue
         if course.course_name != expected_name:
-            missing.append(
-                f"{code}: DB '{course.course_name}' != 자료 '{expected_name}' — 확인 필요"
-            )
+            missing.append(f"{code}: DB '{course.course_name}' != 자료 '{expected_name}'")
             continue
         row = db.scalars(
             select(ProgramCourse).where(
@@ -200,8 +304,8 @@ def _upsert_program_courses(
             )
         ).first()
         if row is not None:
-            row.requirement_group = GROUP_DEPARTMENT_MAJOR
-            row.category = spec.get("category")
+            row.requirement_group = group
+            row.category = course.category
             existing += 1
             continue
         db.add(
@@ -209,8 +313,8 @@ def _upsert_program_courses(
                 department_id=department_id,
                 major_id=major_id,
                 course_id=course.id,
-                requirement_group=GROUP_DEPARTMENT_MAJOR,
-                category=spec.get("category"),
+                requirement_group=group,
+                category=course.category,
                 curriculum_year=CURRICULUM_YEAR,
             )
         )
@@ -258,6 +362,13 @@ def seed(apply: bool) -> int:
             print("!! 학교 '부산대학교'가 없습니다. seed_school_hierarchy를 먼저 실행하세요.")
             return 1
 
+        sw_common_courses, sw_new, sw_old = _ensure_sw_common_courses(db, school.id)
+        print(
+            f"  [공통] {SW_COMMON_DEPARTMENT} 개설 SW융합공통교과목 "
+            f"신규 {sw_new} / 기존 {sw_old}"
+        )
+        print()
+
         plan: list[tuple[str, str, str, str, int | None]] = []
         for name, college, dept in TRACKS:
             if name in _EXCLUDED_TRACKS:
@@ -288,15 +399,11 @@ def seed(apply: bool) -> int:
             spec = TRACK_COURSES.get(base_name)
             if spec is not None:
                 c_new, c_old, c_missing = _upsert_program_courses(
-                    db, department.id, major.id, spec
+                    db, department.id, major.id, spec, sw_common_courses
                 )
                 created_courses += c_new
                 existing_courses += c_old
-                min_n = spec.get("min_courses")
-                print(
-                    f"         └ 인정과목 신규 {c_new} / 기존 {c_old}"
-                    + (f"  (최소 {min_n}과목 선택 조건 — 판정 미구현)" if min_n else "")
-                )
+                print(f"         └ 인정과목 신규 {c_new} / 기존 {c_old}  (이수 규칙 판정 미구현)")
                 for item in c_missing:
                     skipped.append(f"{major_name} 과목 {item}")
 
