@@ -7924,3 +7924,74 @@ body.theme-dark .timetable-course.is-conflict {
   background: transparent;
   color: #067647;
 }
+
+/* --- 내 정보 시안 반영 (Figma 175:1801) --------------------------------- */
+
+.sync-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 14px;
+}
+
+.sync-hint strong {
+  font-weight: 700;
+}
+
+.profile-term-pill {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.info-profile-card .profile-program {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-profile-card .profile-program span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.program-tag {
+  display: grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--shell-active);
+  color: var(--shell-accent);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  place-items: center;
+}
+
+.graduation-total-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--shell-line);
+}
+
+.graduation-total-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: #16a34a;
+}
+
+.profile-term-pill {
+  justify-self: start;
+  width: fit-content;
+}
