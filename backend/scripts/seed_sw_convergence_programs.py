@@ -100,8 +100,10 @@ SW_COMMON_COURSE_DEFS = [
     ("SF1101074", "AI이해를위한파이썬기초"),
     ("SF1101080", "AI리터러시의이해"),
     ("SF1101081", "메타버스활용프로젝트"),
+    ("SF1101082", "창의적프로그래밍"),
     ("SF1101083", "데이터마이닝"),
     ("SF1101084", "데이터리터러시의이해"),
+    ("SF1101085", "인공지능기초수학"),
 ]
 SW_COMMON_CATEGORY = "일반선택"
 SW_COMMON_CREDITS = 3.0
@@ -277,6 +279,71 @@ TRACK_COURSES: dict[str, dict] = {
         # 보류: 'SC3600515 스폰서십마케팅'은 학과 53과목 중 유일한 스폰서십 과목
         # (SC2001898)이 이수구분·학기가 모두 달라 확신이 없고, 'SC3300968 스포츠공학'은
         # 학과에 아예 없다. 학사 확인 후 추가한다.
+    },
+    "디자인컴퓨팅": {
+        "rule": "학과전공과목 15학점(지정 5과목) + SW융합공통교과목 중 2과목(6학점)",
+        # **전공 5과목 전부 DB에 없어 보류 상태다.** 개설 주체가 디자인학과가 아니라
+        # 디자인앤테크놀로지전공인데 AIS 시드에 그 전공 과목이 들어오지 않은 것으로 보인다
+        # (디자인학과에는 '컴퓨터그래픽(I)(II)'·'타이포그라피(I)(II)'만 있고 자료의
+        # 컴퓨터그래픽스/피지컬컴퓨팅/키네틱타이포그래피/HCI/컴퓨터비전은 없다).
+        # 미매칭: VF3500076 컴퓨터그래픽스, VF3500077 피지컬컴퓨팅,
+        #         VF3500072 키네틱타이포그래피, VF3600180 HCI, VF3500081 컴퓨터비전
+        "courses": [],
+        "sw_common_all": True,
+    },
+    "바이오메디컬디바이스&데이터": {
+        "rule": (
+            "학과전공과목 15학점(회로이론·유기화학·생체고체역학 필수 + 나머지 5과목 중 2과목) + "
+            "SW융합공통교과목 중 2과목(6학점, 데이터분석입문·데이터리터러시의이해·데이터마이닝)"
+        ),
+        "courses": [
+            ("BX3600080", "회로이론", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("BX3600075", "유기화학", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            # 보류: BX2001140 생체고체역학(필수), BX2001130 바이오 인공장기 — DB에 없음
+            ("BX3600092", "바이오센서공학", GROUP_DEPARTMENT_MAJOR),
+            ("BX3600428", "웨어러블 디바이스", GROUP_DEPARTMENT_MAJOR),
+            ("BX2001183", "바이오이미징", GROUP_DEPARTMENT_MAJOR),
+            ("BX3600099", "나노의학", GROUP_DEPARTMENT_MAJOR),
+            ("SF1101073", "데이터분석입문", f"{GROUP_SW_COMMON}(택2)"),
+            ("SF1101084", "데이터리터러시의이해", f"{GROUP_SW_COMMON}(택2)"),
+            ("SF1101083", "데이터마이닝", f"{GROUP_SW_COMMON}(택2)"),
+        ],
+    },
+    "산업AI": {
+        "rule": (
+            "학과전공과목 15학점(공학통계(I)·데이터마이닝 필수 + 8과목 중 3과목) + "
+            "SW융합공통교과목 6학점: (AI이해를위한파이썬기초|창의적프로그래밍) 1과목 이상 + "
+            "(인공지능기초수학|데이터분석입문) 1과목 이상"
+        ),
+        "courses": [
+            ("IE2400210", "공학통계(I)", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("IE2400223", "데이터마이닝", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("IE3600657", "최적화개론", GROUP_DEPARTMENT_MAJOR),
+            ("IE3500627", "산업데이터과학", GROUP_DEPARTMENT_MAJOR),
+            # 보류: IE3500452 통계적선형모형 — DB에 없음
+            ("IE3600168", "인공지능개론", GROUP_DEPARTMENT_MAJOR),
+            ("IE3500735", "스마트제조", GROUP_DEPARTMENT_MAJOR),
+            # 자료 IE3600666 -> 현행 IE3600432 (산업공학과 내 동명 과목 유일)
+            ("IE3600432", "시설계획및물류시스템", GROUP_DEPARTMENT_MAJOR),
+            ("IE2001445", "딥러닝", GROUP_DEPARTMENT_MAJOR),
+            ("IE3600669", "강화학습개론", GROUP_DEPARTMENT_MAJOR),
+            ("SF1101074", "AI이해를위한파이썬기초", f"{GROUP_SW_COMMON}(택1-A)"),
+            ("SF1101082", "창의적프로그래밍", f"{GROUP_SW_COMMON}(택1-A)"),
+            ("SF1101085", "인공지능기초수학", f"{GROUP_SW_COMMON}(택1-B)"),
+            ("SF1101073", "데이터분석입문", f"{GROUP_SW_COMMON}(택1-B)"),
+        ],
+    },
+    "도시·환경·생태 데이터분석": {
+        "rule": "학과전공과목 15학점(지정 5과목) + SW융합공통교과목 중 2과목(6학점). 2025 신설",
+        "courses": [
+            ("LD3600040", "조경공간정보분석", GROUP_DEPARTMENT_MAJOR),
+            ("LD2001629", "데이터분석의 기초", GROUP_DEPARTMENT_MAJOR),
+            # 보류: LD2001630 데이터분석론 — DB에 없음
+            ("LD2001631", "도시환경분석과시각화", GROUP_DEPARTMENT_MAJOR),
+            # 자료 LD2001632 -> 현행 LD2003333 (조경학과 내 동명 과목 유일)
+            ("LD2003333", "데이터기반 조경계획", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
     },
 }
 
@@ -525,7 +592,10 @@ def seed(apply: bool) -> int:
                 f"{credits}학점 major={'NEW' if is_new else 'exist'} req={action}{suffix}"
             )
 
-            spec = TRACK_COURSES.get(base_name)
+            # TRACK_COURSES는 융합트랙 전용이다. kind로 거르지 않으면 같은 이름의
+            # 연계전공이 트랙 과목을 가져간다 — 산업공학과에는 '산업AI'가 트랙(21학점)과
+            # 연계전공(48학점)으로 둘 다 있어서 base_name만으로는 구분되지 않는다.
+            spec = TRACK_COURSES.get(base_name) if kind == "트랙" else None
             if spec is not None:
                 c_new, c_old, c_missing = _upsert_program_courses(
                     db, department.id, major.id, spec, sw_common_courses
