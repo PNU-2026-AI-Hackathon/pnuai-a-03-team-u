@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,7 @@ class SignupRequest(BaseModel):
     password: str
     name: str
     student_id: str
+    academic_year: int | None = Field(default=None, ge=1, le=6)
     school: str | None = None
     college: str | None = None
     department: str | None = None
@@ -95,6 +96,7 @@ class UserResponse(BaseModel):
     student_id: str | None
     department: str | None
     major: str | None
+    academic_year: int | None
     career_goal: str | None
     advisor_name: str | None
     advisor_consulted: bool
@@ -128,6 +130,7 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         student_id=user.student_id,
         department=_department_name(db, user.department_id),
         major=_major_name(db, user.major_id),
+        academic_year=user.academic_year,
         career_goal=user.career_goal,
         advisor_name=user.advisor_name,
         advisor_consulted=user.advisor_consulted,
@@ -163,6 +166,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
         name=payload.name,
         student_id=payload.student_id,
+        academic_year=payload.academic_year,
         department_id=top_department_id,
         career_goal=payload.career_goal,
     )

@@ -7,8 +7,11 @@ course_roadmap_items를 건드리지 않는다. 실제 반영은 POST .../confir
 
 from __future__ import annotations
 
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -37,6 +40,11 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class SuggestedActionResponse(BaseModel):
+    label: str
+    prompt: str
+
+
 class PendingChangeResponse(BaseModel):
     change_id: int
     action: str
@@ -50,7 +58,11 @@ class PendingChangeResponse(BaseModel):
     reason: str | None
 
     @classmethod
-    def from_model(cls, change: PendingRoadmapChange, course_name: str | None) -> "PendingChangeResponse":
+    def from_model(
+        cls,
+        change: PendingRoadmapChange,
+        course_name: str | None = None,
+    ) -> "PendingChangeResponse":
         return cls(
             change_id=change.id,
             action=change.action,
@@ -102,6 +114,107 @@ def _resolve_change_course_names(
 class ChatResponse(BaseModel):
     reply: str
     pending_changes: list[PendingChangeResponse]
+    suggested_actions: list[SuggestedActionResponse]
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationResponse(BaseModel):
+    messages: list[ChatMessageResponse]
+    pending_changes: list[PendingChangeResponse]
+    suggested_actions: list[SuggestedActionResponse]
+
+
+def _suggested_actions(messages: list[CourseRoadmapChatMessage]) -> list[SuggestedActionResponse]:
+    latest_user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    if any(keyword in latest_user_message for keyword in ("필수", "전공필수")):
+        actions = [
+            ("필수 과목 학기 배치", "남은 필수 과목을 학기별로 배치해줘."),
+            ("선수 과목 점검", "필수 과목의 선수 관계와 이수 순서를 점검해줘."),
+            ("학점 부담 조정", "필수 과목을 유지하면서 학기별 학점 부담을 조정해줘."),
+        ]
+    elif any(keyword in latest_user_message for keyword in ("학점", "부담", "가볍")):
+        actions = [
+            ("가장 무거운 학기", "현재 계획에서 학점 부담이 가장 큰 학기를 찾아줘."),
+            ("과목 재배치", "학기별 학점이 비슷해지도록 과목을 재배치해줘."),
+            ("남은 요건 확인", "재배치 후에도 부족한 졸업요건이 있는지 확인해줘."),
+        ]
+    elif any(keyword in latest_user_message for keyword in ("추천", "진로", "취업")):
+        actions = [
+            ("추천 과목 배치", "방금 추천한 과목을 적절한 학기에 배치해줘."),
+            ("진로 연관성 확인", "현재 로드맵이 제 진로 목표와 어떻게 연결되는지 설명해줘."),
+            ("필수 요건 점검", "추천 과목을 반영해도 필수 요건을 충족하는지 확인해줘."),
+        ]
+    else:
+        actions = [
+            ("남은 요건 확인", "현재 계획에서 아직 부족한 졸업요건을 정리해줘."),
+            ("필수 과목 점검", "남은 전공 필수 과목을 우선해서 점검해줘."),
+            ("학점 부담 조정", "학기별 예정 학점을 균형 있게 조정해줘."),
+        ]
+    return [SuggestedActionResponse(label=label, prompt=prompt) for label, prompt in actions]
+
+
+def _load_conversation(db: Session, roadmap_id: int) -> ConversationResponse:
+    messages = db.scalars(
+        select(CourseRoadmapChatMessage)
+        .where(CourseRoadmapChatMessage.roadmap_id == roadmap_id)
+        .order_by(CourseRoadmapChatMessage.id)
+    ).all()
+    pending_changes = db.scalars(
+        select(PendingRoadmapChange)
+        .where(
+            PendingRoadmapChange.roadmap_id == roadmap_id,
+            PendingRoadmapChange.status == "pending",
+        )
+        .order_by(PendingRoadmapChange.id)
+    ).all()
+    name_map = _resolve_change_course_names(db, pending_changes)
+    return ConversationResponse(
+        messages=[ChatMessageResponse.model_validate(message) for message in messages],
+        pending_changes=[
+            PendingChangeResponse.from_model(change, name_map.get(change.id))
+            for change in pending_changes
+        ],
+        suggested_actions=_suggested_actions(messages),
+    )
+
+
+@router.get("/messages", response_model=ConversationResponse)
+def get_roadmap_messages(
+    roadmap_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_owned_roadmap(db, current_user.id, roadmap_id)
+    return _load_conversation(db, roadmap_id)
+
+
+@router.delete("/messages", status_code=204)
+def delete_roadmap_messages(
+    roadmap_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_owned_roadmap(db, current_user.id, roadmap_id)
+    db.execute(
+        delete(PendingRoadmapChange).where(PendingRoadmapChange.roadmap_id == roadmap_id)
+    )
+    db.execute(
+        delete(CourseRoadmapChatMessage).where(
+            CourseRoadmapChatMessage.roadmap_id == roadmap_id
+        )
+    )
+    db.commit()
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -122,12 +235,13 @@ def chat_with_roadmap_agent(
             PendingChangeResponse.from_model(c, name_map.get(c.id))
             for c in result["pending_changes"]
         ],
+        suggested_actions=_load_conversation(db, roadmap_id).suggested_actions,
     )
 
 
 class ConfirmRequest(BaseModel):
-    approved: list[int] = []
-    rejected: list[int] = []
+    approved: list[int] = Field(default_factory=list)
+    rejected: list[int] = Field(default_factory=list)
 
 
 class ConfirmResponse(BaseModel):

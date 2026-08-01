@@ -24,7 +24,15 @@ import type {
   LanguageScorePayload,
   LanguageScoreRecord,
 } from "../api/profile";
-import { getGraduationProgress, isMockStudentDataEnabled, syncPortalData } from "../api/studentInfo";
+import { updateMyProfile } from "../api/auth";
+import {
+  getCourseRecords,
+  getGraduationProgress,
+  isMockStudentDataEnabled,
+  replaceCourseRecords,
+  saveGraduationOverride,
+  syncPortalData,
+} from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -201,10 +209,10 @@ export function InfoPage() {
   const { user, isAuthenticated, refreshUser } = useAuth();
   const [loginId, setLoginId] = useState("");
   const [portalPassword, setPortalPassword] = useState("");
-  const [courses, setCourses] = useState<CourseRecord[]>(readStoredCourses);
+  const [courses, setCourses] = useState<CourseRecord[]>(() => isMockStudentDataEnabled ? readStoredCourses() : []);
   const [studentRecord] = useState<Record<string, string>>(readStoredStudentRecord);
-  const [graduation, setGraduation] = useState<GraduationProgram | null>(readGraduationOverride);
-  const [profileOverrides, setProfileOverrides] = useState<ProfileOverrides | null>(readProfileOverrides);
+  const [graduation, setGraduation] = useState<GraduationProgram | null>(() => isMockStudentDataEnabled ? readGraduationOverride() : null);
+  const [profileOverrides, setProfileOverrides] = useState<ProfileOverrides | null>(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [profileEditDraft, setProfileEditDraft] = useState<ProfileOverrides>({ name: "", major: "", academicYear: 1 });
   const [profileEditError, setProfileEditError] = useState("");
@@ -236,13 +244,17 @@ export function InfoPage() {
     if (!isAuthenticated && !isMockStudentDataEnabled) return;
 
     setIsGraduationLoading(true);
-    getGraduationProgress()
-      .then((data) => {
-        const storedOverride = readGraduationOverride();
+    Promise.all([getCourseRecords(), getGraduationProgress()])
+      .then(([courseRecords, data]) => {
+        const storedOverride = isMockStudentDataEnabled ? readGraduationOverride() : null;
         const fetchedGraduation = data.programs.find((program) => program.program_type === "primary") ?? data.programs[0] ?? null;
+        setCourses(courseRecords);
         setGraduation(storedOverride ?? fetchedGraduation);
       })
-      .catch(() => setGraduation(null))
+      .catch(() => {
+        setCourses([]);
+        setGraduation(null);
+      })
       .finally(() => setIsGraduationLoading(false));
   }, [isAuthenticated]);
 
@@ -272,7 +284,9 @@ export function InfoPage() {
     ? studentRecord["전공"] ?? user?.major
     : user?.major ?? studentRecord["전공"] ?? user?.academic_programs.find((program) => program.program_type === "primary")?.major;
   const baseProfileDepartment = isMockStudentDataEnabled ? studentRecord["학부"] ?? user?.department : user?.department ?? studentRecord["학부"];
-  const baseAcademicYear = isMockStudentDataEnabled ? 3 : getAcademicYear(profileStudentId ?? null);
+  const baseAcademicYear = isMockStudentDataEnabled
+    ? 3
+    : normalizeAcademicYear(user?.academic_year) ?? getAcademicYear(profileStudentId ?? null);
   const profileName = profileOverrides?.name ?? baseProfileName;
   const profileDepartment = profileOverrides?.department ?? baseProfileDepartment;
   const profileMajor = profileOverrides?.major ?? baseProfileMajor;
@@ -294,8 +308,10 @@ export function InfoPage() {
     setIsLoading(true);
     try {
       const result = await syncPortalData(loginId.trim(), portalPassword);
-      window.sessionStorage.setItem(COURSE_RECORDS_KEY, JSON.stringify(result.courses));
-      window.sessionStorage.setItem(STUDENT_RECORD_KEY, JSON.stringify(result.student_record));
+      if (isMockStudentDataEnabled) {
+        window.sessionStorage.setItem(COURSE_RECORDS_KEY, JSON.stringify(result.courses));
+        window.sessionStorage.setItem(STUDENT_RECORD_KEY, JSON.stringify(result.student_record));
+      }
       setPortalPassword("");
       if (!isMockStudentDataEnabled) await refreshUser();
       window.location.reload();
@@ -340,7 +356,7 @@ export function InfoPage() {
     setProfileEditError("");
   }
 
-  function saveProfileEditor() {
+  async function saveProfileEditor() {
     if (!profileEditDraft.name.trim() || (!profileEditDraft.department?.trim() && !profileEditDraft.major.trim())) {
       setProfileEditError("이름과 학부/학과 또는 전공을 입력해 주세요.");
       return;
@@ -364,18 +380,43 @@ export function InfoPage() {
       academicYear: Math.min(6, Math.max(1, profileEditDraft.academicYear)),
     };
     const nextGraduation = graduationEditDraft ? normalizeGraduation(graduationEditDraft) : null;
-    setProfileOverrides(nextOverrides);
-    setCourses(courseEditDraft);
-    setGraduation(nextGraduation);
-    window.sessionStorage.setItem(PROFILE_OVERRIDES_KEY, JSON.stringify(nextOverrides));
-    window.sessionStorage.setItem(COURSE_RECORDS_KEY, JSON.stringify(courseEditDraft));
-    if (nextGraduation) {
-      window.sessionStorage.setItem(GRADUATION_OVERRIDE_KEY, JSON.stringify(nextGraduation));
-    } else {
-      window.sessionStorage.removeItem(GRADUATION_OVERRIDE_KEY);
+    setIsProfileSaving(true);
+    setProfileEditError("");
+    try {
+      await updateMyProfile({
+        name: nextOverrides.name,
+        department: nextOverrides.department,
+        major: nextOverrides.major || null,
+        academic_year: nextOverrides.academicYear,
+      });
+      const savedCourses = await replaceCourseRecords(courseEditDraft);
+      const graduationResult = hasGraduationEdited && nextGraduation
+        ? await saveGraduationOverride(nextGraduation)
+        : await getGraduationProgress();
+      const savedGraduation = graduationResult.programs.find((program) => program.program_type === "primary")
+        ?? graduationResult.programs[0]
+        ?? null;
+
+      setCourses(savedCourses);
+      setGraduation(savedGraduation);
+      if (isMockStudentDataEnabled) {
+        setProfileOverrides(nextOverrides);
+        window.sessionStorage.setItem(PROFILE_OVERRIDES_KEY, JSON.stringify(nextOverrides));
+        window.sessionStorage.setItem(COURSE_RECORDS_KEY, JSON.stringify(savedCourses));
+        if (savedGraduation) {
+          window.sessionStorage.setItem(GRADUATION_OVERRIDE_KEY, JSON.stringify(savedGraduation));
+        }
+      } else {
+        setProfileOverrides(null);
+        await refreshUser();
+      }
+      notifyStudentProfileUpdated();
+      cancelProfileEditor();
+    } catch (error) {
+      setProfileEditError(getProfileErrorMessage(error));
+    } finally {
+      setIsProfileSaving(false);
     }
-    notifyStudentProfileUpdated();
-    cancelProfileEditor();
   }
 
   function updateCourseGrade(course: CourseRecord, grade: string) {
@@ -391,6 +432,7 @@ export function InfoPage() {
     }
 
     setCourseEditDraft((current) => [...current, {
+      id: Math.min(-1, ...current.map((course) => course.id - 1)),
       course_name: newCourseDraft.courseName.trim(),
       category: newCourseDraft.category || null,
       credits,
@@ -398,6 +440,7 @@ export function InfoPage() {
       semester: newCourseDraft.semester,
       grade: newCourseDraft.grade || null,
       match_status: "manual",
+      source: "manual",
     }]);
     setNewCourseDraft(emptyCourseDraft());
     setCourseEditError("");
@@ -675,8 +718,8 @@ export function InfoPage() {
           {profileEditError ? <p className="profile-edit-error" role="alert">{profileEditError}</p> : null}
           {isProfileEditing ? (
             <div className="profile-main-actions">
-              <button type="button" onClick={saveProfileEditor}><Save size={15} aria-hidden="true" />저장하기</button>
-              <button type="button" onClick={cancelProfileEditor}><X size={15} aria-hidden="true" />취소</button>
+              <button type="button" onClick={() => void saveProfileEditor()} disabled={isProfileSaving}><Save size={15} aria-hidden="true" />{isProfileSaving ? "저장 중..." : "저장하기"}</button>
+              <button type="button" onClick={cancelProfileEditor} disabled={isProfileSaving}><X size={15} aria-hidden="true" />취소</button>
             </div>
           ) : (
             <button type="button" onClick={openProfileEditor}><Pencil size={15} aria-hidden="true" />편집하기</button>

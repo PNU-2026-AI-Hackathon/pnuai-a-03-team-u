@@ -2022,6 +2022,24 @@ body.theme-dark .password-reset-icon {
   font-weight: 800;
 }
 
+.api-curriculum-flow li {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.api-curriculum-flow li strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.api-curriculum-flow li small {
+  width: 100%;
+  margin-left: 18px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .curriculum-flow li::before {
   content: "";
   width: 10px;
@@ -4112,6 +4130,11 @@ body.theme-dark .password-reset-icon {
 
 .curriculum-legend .doing::before {
   border-color: var(--blue);
+}
+
+.curriculum-legend .planned::before {
+  border-color: transparent;
+  background: var(--yellow);
 }
 
 .requirement-strip-wrap {
@@ -6455,6 +6478,52 @@ body.theme-dark .evidence-list strong {
 .advisor-current-status strong {
   color: var(--blue);
   font-size: 18px;
+}
+
+.advisor-card .advisor-status-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.advisor-status-toggle > span {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: #cbd5e1;
+  transition: background-color 160ms ease;
+}
+
+.advisor-status-toggle > span::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.advisor-status-toggle[aria-checked="true"] > span {
+  background: var(--blue);
+}
+
+.advisor-status-toggle[aria-checked="true"] > span::after {
+  transform: translateX(16px);
+}
+
+.advisor-status-toggle:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 body.theme-dark .advisor-current-status {

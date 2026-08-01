@@ -83,6 +83,9 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
         if department_id:
             user.department_id = department_id
         user.major_id = major_id
+        academic_year = re.sub(r"\D", "", record.get("학년", ""))
+        if academic_year:
+            user.academic_year = int(academic_year)
 
     program = (
         db.query(UserAcademicProgram)

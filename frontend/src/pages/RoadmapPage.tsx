@@ -9,10 +9,12 @@ import {
   createRoadmapItem,
   deleteRoadmapItem,
   getCurrentRoadmap,
+  getMyCurriculum,
+  getRoadmapConversation,
   searchCourses,
   updateRoadmapItem,
 } from "../api/roadmaps";
-import type { CourseSearchResult, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
+import type { CourseSearchResult, Curriculum, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
 import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { GraduationProgram } from "../api/studentInfo";
 import { isMockAuthEnabled } from "../api/auth";
@@ -1225,6 +1227,7 @@ function ConnectedRoadmapPage() {
   const { user } = useAuth();
   const [roadmap, setRoadmap] = useState<Roadmap | null>(null);
   const [graduation, setGraduation] = useState<GraduationProgram | null>(null);
+  const [curriculum, setCurriculum] = useState<Curriculum | null>(null);
   const [activeTab, setActiveTab] = useState<RoadmapTab>("semester");
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [pageError, setPageError] = useState("");
@@ -1259,15 +1262,32 @@ function ConnectedRoadmapPage() {
     setIsPageLoading(true);
     setPageError("");
     try {
-      const [nextRoadmap, graduationResult] = await Promise.all([
+      const [nextRoadmap, graduationResult, curriculumResult] = await Promise.all([
         getCurrentRoadmap(),
         getGraduationProgress().catch(() => null),
+        getMyCurriculum().catch(() => null),
       ]);
       setRoadmap(nextRoadmap);
+      setCurriculum(curriculumResult);
       const primaryProgram = graduationResult?.programs.find((program) => program.program_type === "primary")
         ?? graduationResult?.programs[0]
         ?? null;
       setGraduation(primaryProgram);
+      const conversation = await getRoadmapConversation(nextRoadmap.id).catch(() => null);
+      if (conversation) {
+        setMessages(conversation.messages.length > 0
+          ? conversation.messages.map((message) => ({
+              id: `saved-${message.id}`,
+              speaker: message.role === "assistant" ? "AI" : "나",
+              text: message.content,
+            }))
+          : apiInitialMessages);
+        setPendingChanges(conversation.pending_changes);
+        setSelectedChangeIds(new Set(conversation.pending_changes.map((change) => change.change_id)));
+        setSuggestedActions(conversation.suggested_actions.length > 0
+          ? conversation.suggested_actions
+          : initialSuggestedActions);
+      }
     } catch (error) {
       setPageError(getApiErrorMessage(error, "로드맵을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
     } finally {
@@ -1504,11 +1524,7 @@ function ConnectedRoadmapPage() {
       setMessages((current) => [...current, { id: `ai-${Date.now()}`, speaker: "AI", text: response.reply }]);
       setPendingChanges(response.pending_changes);
       setSelectedChangeIds(new Set(response.pending_changes.map((change) => change.change_id)));
-      setSuggestedActions([
-        { label: "남은 요건 확인", prompt: "현재 계획에서 아직 부족한 졸업요건을 정리해줘." },
-        { label: "학점 부담 조정", prompt: "학기별 예정 학점을 균형 있게 조정해줘." },
-        { label: "필수 과목 점검", prompt: "남은 전공 필수 과목을 우선해서 점검해줘." },
-      ]);
+      setSuggestedActions(response.suggested_actions);
     } catch (error) {
       setAiError(getApiErrorMessage(error, "AI 답변을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
       setFailedPrompt(trimmedValue);
@@ -1568,24 +1584,22 @@ function ConnectedRoadmapPage() {
   }
 
   async function handleResetConversation() {
-    // 백엔드에서도 대화 히스토리와 미승인 pending 변경을 삭제해서, 다음 채팅에
-    // 이전 대화가 다시 로드되지 않게 한다. 예전에는 로컬 state만 리셋해서 UI는
-    // 새 대화처럼 보이지만 백엔드는 과거를 다 기억하는 정합성 이슈가 있었다.
-    if (roadmap) {
-      try {
-        await resetRoadmapAgentSession(roadmap.id);
-      } catch (error) {
-        setAiError(getApiErrorMessage(error, "대화 초기화에 실패했습니다."));
-        return;
-      }
-    }
-    setMessages(apiInitialMessages);
-    setSuggestedActions(initialSuggestedActions);
-    setPendingChanges([]);
-    setSelectedChangeIds(new Set());
-    setPrompt("");
+    if (!roadmap || isAiLoading) return;
+    setIsAiLoading(true);
     setAiError("");
-    setFailedPrompt("");
+    try {
+      await resetRoadmapAgentSession(roadmap.id);
+      setMessages(apiInitialMessages);
+      setSuggestedActions(initialSuggestedActions);
+      setPendingChanges([]);
+      setSelectedChangeIds(new Set());
+      setPrompt("");
+      setFailedPrompt("");
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "대화 초기화에 실패했습니다."));
+    } finally {
+      setIsAiLoading(false);
+    }
   }
 
   if (isPageLoading) {
@@ -1734,9 +1748,11 @@ function ConnectedRoadmapPage() {
             </section>
           ) : (
             <section id="curriculum-panel" className="curriculum-map course-system" role="tabpanel" aria-labelledby="curriculum-tab">
-              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{user?.major ?? "학과"} 이수 흐름</h2></div><span>{graduation?.curriculum_year ? `${graduation.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
-              <div className="curriculum-flow">{curriculumFlow.map((group) => <article key={group.title}><span className="flow-step">{group.step}</span><h3>{group.title}</h3><ul>{group.courses.map(([course, status]) => <li className={status} key={course}>{course}</li>)}</ul></article>)}</div>
-              <div className="curriculum-legend" aria-label="과목 이수 상태 범례"><span className="done">이수 완료</span><span className="doing">수강 중</span><span className="planned">이수 예정</span></div>
+              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div><span>{curriculum?.curriculum_year ? `${curriculum.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
+              {curriculum?.groups.length ? (
+                <div className="curriculum-flow api-curriculum-flow">{curriculum.groups.map((group, index) => <article key={group.grade}><span className="flow-step">{group.grade === "공통" ? "공통" : `${index + 1}단계`}</span><h3>{group.title}</h3><ul>{group.courses.map((course) => <li className={course.status} key={course.id}><strong>{course.course_name}</strong><small>{[course.semester ? `${course.semester}학기` : null, course.category, course.credits !== null ? `${course.credits}학점` : null].filter(Boolean).join(" · ")}</small></li>)}</ul></article>)}</div>
+              ) : <p className="roadmap-inline-empty">등록된 학과 이수체계도 데이터가 없습니다.</p>}
+              <div className="curriculum-legend" aria-label="과목 이수 상태 범례"><span className="done">이수 완료</span><span className="planned">로드맵 반영</span><span className="available">이수 가능</span></div>
             </section>
           )}
         </div>

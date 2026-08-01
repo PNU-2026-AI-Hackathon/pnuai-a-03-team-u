@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.courses import router as courses_router
+from app.api.curriculum import router as curriculum_router
 from app.api.graduation import router as graduation_router
 from app.api.portal_sync import router as portal_sync_router
 from app.api.profile import router as profile_router
@@ -35,6 +36,7 @@ app.include_router(auth_router)
 app.include_router(portal_sync_router)
 app.include_router(profile_router)
 app.include_router(courses_router)
+app.include_router(curriculum_router)
 app.include_router(roadmaps_router)
 app.include_router(roadmap_agent_router)
 app.include_router(graduation_router)
