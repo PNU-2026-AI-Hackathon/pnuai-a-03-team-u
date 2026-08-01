@@ -6,6 +6,7 @@ import {
   ClipboardList,
   LineSquiggle,
   LogOut,
+  MessageSquare,
   PanelsTopLeft,
   Sparkles,
 } from "lucide-react";
@@ -47,6 +48,7 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
 /** 상단 네비 항목. `to`가 없으면 아직 화면이 없는 준비 중 메뉴다. */
 const navEntries: { label: string; icon: LucideIcon; to?: string }[] = [
   { label: "성장 로드맵", icon: LineSquiggle, to: "/roadmap" },
+  { label: "AI 대화", icon: MessageSquare, to: "/chat" },
   { label: "추천 활동", icon: Sparkles, to: "/activities" },
   { label: "시간표", icon: PanelsTopLeft },
   { label: "이력서 작성", icon: ClipboardList },
@@ -64,7 +66,7 @@ function resolveTheme(mode: ThemeMode) {
 export function AppLayout() {
   const location = useLocation();
   const { user, logoutUser } = useAuth();
-  const meta = pageMeta[location.pathname] ?? pageMeta["/"];
+  const meta = pageMeta[location.pathname];
   const [themeOpen, setThemeOpen] = useState(false);
   const [profileOverrides, setProfileOverrides] = useState(readProfileOverrides);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -164,13 +166,15 @@ export function AppLayout() {
         </nav>
       </header>
 
-      <main className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">{meta.eyebrow}</p>
-            <h1>{meta.title}</h1>
-          </div>
-        </header>
+      <main className={`workspace${meta ? "" : " is-flush"}`}>
+        {meta ? (
+          <header className="topbar">
+            <div>
+              <p className="eyebrow">{meta.eyebrow}</p>
+              <h1>{meta.title}</h1>
+            </div>
+          </header>
+        ) : null}
         <Outlet />
       </main>
     </div>

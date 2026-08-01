@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AppLayout } from "../components/layout/AppLayout";
 import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { AuthPage } from "../pages/AuthPage";
+import { ChatPage } from "../pages/ChatPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
@@ -38,6 +39,7 @@ export function AppRouter() {
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />
+            <Route path="/chat" element={<ChatPage />} />
             <Route path="/info" element={<InfoPage />} />
             <Route path="/roadmap" element={<RoadmapPage />} />
           </Route>

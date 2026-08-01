@@ -70,8 +70,18 @@ export type PendingRoadmapChange = {
 
 export type RoadmapChatResponse = {
   reply: string;
+  session_id: number;
   pending_changes: PendingRoadmapChange[];
   suggested_actions: SuggestedAction[];
+};
+
+/** 같은 로드맵 안에서 독립된 대화 스레드 하나. */
+export type RoadmapChatSession = {
+  session_id: number;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
 };
 
 export type SuggestedAction = {
@@ -146,9 +156,35 @@ export async function deleteRoadmapItem(roadmapId: number, itemId: number) {
   await apiClient.delete(`/me/roadmaps/${roadmapId}/items/${itemId}`);
 }
 
-export async function chatWithRoadmapAgent(roadmapId: number, message: string) {
-  const { data } = await apiClient.post<RoadmapChatResponse>(`/me/roadmaps/${roadmapId}/agent/chat`, { message });
+export async function chatWithRoadmapAgent(
+  roadmapId: number,
+  message: string,
+  sessionId?: number,
+) {
+  const { data } = await apiClient.post<RoadmapChatResponse>(`/me/roadmaps/${roadmapId}/agent/chat`, {
+    message,
+    session_id: sessionId ?? null,
+  });
   return data;
+}
+
+export async function listRoadmapSessions(roadmapId: number) {
+  const { data } = await apiClient.get<RoadmapChatSession[]>(
+    `/me/roadmaps/${roadmapId}/agent/sessions`,
+  );
+  return data;
+}
+
+export async function createRoadmapSession(roadmapId: number, title?: string) {
+  const { data } = await apiClient.post<RoadmapChatSession>(
+    `/me/roadmaps/${roadmapId}/agent/sessions`,
+    { title: title ?? null },
+  );
+  return data;
+}
+
+export async function deleteRoadmapSession(roadmapId: number, sessionId: number) {
+  await apiClient.delete(`/me/roadmaps/${roadmapId}/agent/sessions/${sessionId}`);
 }
 
 export async function confirmRoadmapChanges(
