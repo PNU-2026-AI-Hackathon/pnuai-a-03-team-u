@@ -170,6 +170,19 @@ TRACK_COURSES: dict[str, dict] = {
         ],
         "sw_common_all": True,
     },
+    "소셜데이터사이언스": {
+        "rule": "학과전공과목 15학점(6과목 중 5과목 선택) + SW융합공통교과목 중 2과목(6학점)",
+        "courses": [
+            ("SO2100703", "사회조사방법론", GROUP_DEPARTMENT_MAJOR),
+            ("SO1500550", "사회통계학", GROUP_DEPARTMENT_MAJOR),
+            # 자료는 띄어쓰기, DB(AIS)는 붙여쓰기 — 공백 차이는 _squash가 흡수한다.
+            ("SO2001652", "디지털과 영상사회학", GROUP_DEPARTMENT_MAJOR),
+            ("SO3600456", "과학기술과 사회", GROUP_DEPARTMENT_MAJOR),
+            ("SO2001653", "소셜데이터의 이해와분석", GROUP_DEPARTMENT_MAJOR),
+            ("SO2800973", "인터넷과 정보사회", GROUP_DEPARTMENT_MAJOR),
+        ],
+        "sw_common_all": True,
+    },
 }
 
 # 개설 주체가 세부전공이라 상위 학과 밑에 붙인 것들 (기록용).
@@ -211,6 +224,11 @@ LINKED_MAJORS = [
 CONVERGENCE_MAJORS_AS_DEPARTMENT = [
     ("핀테크융합전공", "경영대학", "핀테크융합전공"),
 ]
+
+
+def _squash(name: str) -> str:
+    """과목명 비교용 정규화. 공백 차이만 흡수한다."""
+    return name.replace(" ", "").strip()
 
 
 def _find_department(db, school_id: int, college_name: str, department_name: str) -> Department | None:
@@ -303,7 +321,10 @@ def _upsert_program_courses(
         if course is None:
             missing.append(f"{code} ({expected_name}) — DB에 없음")
             continue
-        if course.course_name != expected_name:
+        # 공백만 다른 건 같은 과목으로 본다. 자료는 '과학기술과 사회'처럼 띄어 쓰고
+        # DB(AIS)는 '과학기술과사회'로 붙여 쓰는 경우가 흔하다. 그 외 차이는
+        # 코드 재부여/과목 개편일 수 있어 자동으로 넘기지 않고 사람이 확인한다.
+        if _squash(course.course_name) != _squash(expected_name):
             missing.append(f"{code}: DB '{course.course_name}' != 자료 '{expected_name}'")
             continue
         row = db.scalars(
