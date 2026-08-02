@@ -2,12 +2,16 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AppLayout } from "../components/layout/AppLayout";
+import { ChatShell } from "../components/layout/ChatShell";
 import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { AuthPage } from "../pages/AuthPage";
+import { ChatPage } from "../pages/ChatPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
+import { OnboardingPage } from "../pages/OnboardingPage";
 import { RoadmapPage } from "../pages/RoadmapPage";
+import { TimetablePage } from "../pages/TimetablePage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated, isBootstrapping } = useAuth();
@@ -40,6 +44,13 @@ export function AppRouter() {
             <Route path="/activities" element={<ActivitiesPage />} />
             <Route path="/info" element={<InfoPage />} />
             <Route path="/roadmap" element={<RoadmapPage />} />
+            <Route path="/timetable" element={<TimetablePage />} />
+          </Route>
+          {/* 회원가입 STEP 2·3. 학사정보 불러오기가 인증을 요구해서 로그인 뒤에 이어진다. */}
+          <Route path="/onboarding" element={<RequireAuth><OnboardingPage /></RequireAuth>} />
+          {/* AI 대화만 시안대로 상단 네비 셸을 쓴다. */}
+          <Route element={<RequireAuth><ChatShell /></RequireAuth>}>
+            <Route path="/chat" element={<ChatPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

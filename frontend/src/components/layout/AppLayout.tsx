@@ -1,19 +1,26 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import type { MouseEvent } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
   STUDENT_PROFILE_UPDATED_EVENT,
   readProfileOverrides,
 } from "../../data/studentProfileStorage";
 import { BrandMark } from "./BrandMark";
+import { themeLabels, useThemeMode, type ThemeMode } from "./useThemeMode";
 
-const themeLabels = {
-  auto: "자동",
-  light: "라이트",
-  dark: "다크",
-} as const;
+const ACADEMIC_CALENDAR_URL = "https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076";
 
-type ThemeMode = keyof typeof themeLabels;
+/**
+ * 외부 링크를 항상 새 창으로 연다. 미리보기 패널처럼 target="_blank"를 무시하는
+ * 환경에서 서비스 화면이 통째로 교체되고 뒤로가기도 막히는 걸 막는다.
+ */
+function openInNewWindow(event: MouseEvent<HTMLAnchorElement>) {
+  // 새 탭/새 창으로 여는 보조키 조합은 브라우저 기본 동작에 맡긴다.
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+  event.preventDefault();
+  window.open(event.currentTarget.href, "_blank", "noopener,noreferrer");
+}
 
 const pageMeta: Record<string, { eyebrow: string; title: string }> = {
   "/": {
@@ -32,34 +39,21 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
     eyebrow: "Student Data",
     title: "내 정보",
   },
+  "/timetable": {
+    eyebrow: "2026년도 2학기",
+    title: "시간표 작성",
+  },
 };
-
-function resolveTheme(mode: ThemeMode) {
-  if (mode === "auto") {
-    const hour = new Date().getHours();
-    return hour >= 18 || hour < 6 ? "dark" : "light";
-  }
-  return mode;
-}
 
 export function AppLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, logoutUser } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
   const [collapsed, setCollapsed] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [profileOverrides, setProfileOverrides] = useState(readProfileOverrides);
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const saved = window.localStorage.getItem("planUThemeMode");
-    return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
-  });
-
-  useEffect(() => {
-    const resolved = resolveTheme(themeMode);
-    document.body.classList.toggle("theme-dark", resolved === "dark");
-    document.body.dataset.themeMode = themeMode;
-    window.localStorage.setItem("planUThemeMode", themeMode);
-  }, [themeMode]);
+  const { themeMode, setThemeMode } = useThemeMode();
 
   useEffect(() => {
     const refreshProfile = () => setProfileOverrides(readProfileOverrides());
@@ -68,8 +62,27 @@ export function AppLayout() {
   }, []);
 
   useEffect(() => {
+    // 다른 화면에서 넘어온 바로가기는 해당 영역까지 스크롤한다.
+    const anchorId = (location.state as { scrollTo?: string } | null)?.scrollTo;
+    if (anchorId) {
+      // 브라우저 스크롤 복원이 끝난 다음 프레임에 이동해야 덮이지 않는다.
+      const frame = window.requestAnimationFrame(() => {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [location.pathname]);
+  }, [location.pathname, location.state]);
+
+  /** 상담 예약은 Home의 지도 교수 카드로 보낸다. */
+  function goToAdvisorCard(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    if (location.pathname === "/") {
+      document.getElementById("advisor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    navigate("/", { state: { scrollTo: "advisor" } });
+  }
 
   const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
 
@@ -102,21 +115,35 @@ export function AppLayout() {
             <span className="nav-icon">⌁</span>
             <span>성장 로드맵</span>
           </NavLink>
+          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/chat">
+            <span className="nav-icon">✉</span>
+            <span>AI 대화</span>
+          </NavLink>
           <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/activities">
             <span className="nav-icon">✦</span>
             <span>추천 활동</span>
           </NavLink>
-          <a className="nav-item schedule-link" href="#schedule">
+          <NavLink
+            className={({ isActive }) => `nav-item schedule-link${isActive ? " active" : ""}`}
+            to="/timetable"
+          >
             <span className="nav-icon">▣</span>
             <span>시간표 작성</span>
-          </a>
+          </NavLink>
         </nav>
 
         <div className="sidebar-section">
           <p>바로가기</p>
-          <a href="https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076" target="_blank" rel="noopener noreferrer">학사 일정</a>
+          <a
+            href={ACADEMIC_CALENDAR_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={openInNewWindow}
+          >
+            학사 일정
+          </a>
           <NavLink to="/activities">추천 활동</NavLink>
-          <a href="#advisor">상담 예약</a>
+          <a href="/" onClick={goToAdvisorCard}>상담 예약</a>
         </div>
 
         <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">

@@ -292,6 +292,8 @@ export function InfoPage() {
   const profileMajor = profileOverrides?.major ?? baseProfileMajor;
   const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? baseAcademicYear;
   const profileProgramNames = getDistinctProgramNames(profileDepartment, profileMajor);
+  const profileMinorMajor = user?.academic_programs?.find((program) => program.program_type === "minor")?.major ?? "";
+  const currentSemesterLabel = `${new Date().getMonth() + 1 <= 8 ? 1 : 2}학기 재학 중`;
   const totalCredits = displayedGraduation?.required_total_credits;
   const overallGpa = calculateGpa(displayedCourses);
   const overallMajorGpa = calculateGpa(displayedCourses, true);
@@ -659,8 +661,8 @@ export function InfoPage() {
       <section className="info-sync-panel">
         <div>
           <p className="eyebrow">Course Activity Sync</p>
-          <h2>교과 활동 불러오기</h2>
-          <p>학번과 학지시 비밀번호로 수강 과목, 학점, 성적 같은 교과 활동을 불러옵니다.</p>
+          <h2>교과 활동 자동 편집</h2>
+          <p>학번과 이름을 기준으로 수강 과목, 학점, 성적같은 교과 활동만 불러옵니다.</p>
         </div>
         <form className="sync-form" onSubmit={handleSync}>
           <label>
@@ -668,15 +670,18 @@ export function InfoPage() {
             <input value={loginId} onChange={(event) => setLoginId(event.target.value)} type="text" placeholder="예: 2023662247" autoComplete="username" disabled={isLoading} />
           </label>
           <label>
-            <span>학지시 비밀번호</span>
-            <input value={portalPassword} onChange={(event) => setPortalPassword(event.target.value)} type="password" autoComplete="current-password" disabled={isLoading} />
+            <span>비밀번호</span>
+            <input value={portalPassword} onChange={(event) => setPortalPassword(event.target.value)} type="password" placeholder="학생지원시스템 비밀번호 입력" autoComplete="current-password" disabled={isLoading} />
           </label>
           <button className={isLoading ? "is-loading" : ""} type="submit" disabled={isLoading}>
             {isLoading ? "불러오는 중..." : "교과 활동 불러오기"}
           </button>
           {errorMessage ? <p className="sync-error" role="alert">{errorMessage}</p> : null}
         </form>
-        <p className="sync-note">수강 과목, 이수 학점, 학기별 성적, 전공/교양 이수 구분</p>
+        <div className="sync-hint">
+          <strong>불러올 항목 예시</strong>
+          <span>수강과목, 이수학점, 학기별 성적, 전공/교양 이수 구분</span>
+        </div>
       </section>
 
       <section className="info-layout">
@@ -704,15 +709,28 @@ export function InfoPage() {
             </div>
           ) : (
             <>
-              <h2>{profileName ?? "이름 정보 없음"}</h2>
+              <span className="profile-term-pill">{currentSemesterLabel}</span>
+              <h2>
+                {profileName ?? "이름 정보 없음"}
+                {profileStudentId ? <span> ({profileStudentId})</span> : null}
+              </h2>
               <p className="profile-program">
                 {profileProgramNames.length > 0 ? (
-                  profileProgramNames.map((programName) => <span key={programName}>{programName}</span>)
+                  <span>
+                    <em className="program-tag">전</em>
+                    {profileProgramNames.join(" · ")}
+                  </span>
                 ) : (
                   <span>학적 정보를 불러오면 표시됩니다.</span>
                 )}
+                {profileMinorMajor ? (
+                  <span>
+                    <em className="program-tag">부</em>
+                    {profileMinorMajor}
+                  </span>
+                ) : null}
               </p>
-              <p>{academicYear ? `${academicYear}학년` : "학년 정보 없음"}</p>
+              <p>{academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}</p>
             </>
           )}
           {profileEditError ? <p className="profile-edit-error" role="alert">{profileEditError}</p> : null}
@@ -735,10 +753,20 @@ export function InfoPage() {
               </div>
               {!isProfileEditing ? <strong>
                 {displayedGraduation && totalCredits !== null && totalCredits !== undefined
-                  ? `${formatCredit(displayedGraduation.earned_total_credits)} / ${totalCredits}`
+                  ? `${formatCredit(displayedGraduation.earned_total_credits)}/${totalCredits}학점`
                   : "동기화 필요"}
               </strong> : null}
             </div>
+            {!isProfileEditing && displayedGraduation && totalCredits ? (
+              <div
+                className="graduation-total-bar"
+                aria-label={`전체 이수 진행률 ${Math.round((displayedGraduation.earned_total_credits / totalCredits) * 100)}%`}
+              >
+                <span
+                  style={{ width: `${Math.min(100, (displayedGraduation.earned_total_credits / totalCredits) * 100)}%` }}
+                />
+              </div>
+            ) : null}
             {isGraduationLoading ? <p className="info-state">졸업요건을 불러오는 중입니다.</p> : null}
             {!isGraduationLoading && !displayedGraduation ? <p className="info-state">교과 활동을 불러오면 졸업요건을 확인할 수 있습니다.</p> : null}
             {isProfileEditing && displayedGraduation ? (

@@ -45,7 +45,8 @@ export type SignupPayload = {
   password: string;
   name: string;
   student_id: string;
-  academic_year: number;
+  /** 서버에서도 선택 필드다. 회원가입 STEP 2에서 학사정보를 불러오면 채워진다. */
+  academic_year?: number;
   school?: string;
   college?: string;
   department?: string;
