@@ -665,6 +665,17 @@ LINKED_COURSES: dict[str, dict] = {
     },
 }
 
+# 연계전공은 총 48학점이 전공필수/전공선택으로 나뉘고 자료에 그 숫자가 명시돼 있다.
+# flat graduation_requirements의 required_major_required / required_major_elective에
+# 그대로 담는다. (융합트랙은 "학과전공 + SW공통"이라는 다른 축이라 총학점만 담는다.)
+LINKED_CREDIT_SPLIT = {
+    "산업수학SW": (29, 19),
+    "빅데이터": (32, 16),
+    "임베디드SW": (31, 17),
+    "에너지IoT": (28, 20),
+    "산업AI": (12, 36),
+}
+
 LINKED_MAJORS = [
     ("산업수학SW", "자연과학대학", "수학과"),
     ("빅데이터", "공과대학", "산업공학과"),
@@ -952,9 +963,19 @@ def _upsert_linked_courses(
 
 
 def _upsert_requirement(
-    db, department_id: int, major_id: int | None, total_credits: int | None
+    db,
+    department_id: int,
+    major_id: int | None,
+    total_credits: int | None,
+    major_required: int | None = None,
+    major_elective: int | None = None,
 ) -> str:
-    """같은 (department, major, program_type, curriculum_year) 행을 덮어쓴다(멱등)."""
+    """같은 (department, major, program_type, curriculum_year) 행을 덮어쓴다(멱등).
+
+    major_required/major_elective는 연계전공처럼 자료에 이수구분별 학점이 명시된
+    경우에만 채운다. 융합트랙은 "학과전공과목 + SW융합공통교과목"이라는 다른 축으로
+    쪼개져 있어 flat 테이블의 이수구분 컬럼에 담을 수 없으므로 None으로 둔다.
+    """
     existing = db.scalars(
         select(GraduationRequirement).where(
             GraduationRequirement.department_id == department_id,
@@ -967,6 +988,8 @@ def _upsert_requirement(
     ).first()
     if existing is not None:
         existing.required_total_credits = total_credits
+        existing.required_major_required = major_required
+        existing.required_major_elective = major_elective
         return "updated"
     db.add(
         GraduationRequirement(
@@ -974,6 +997,8 @@ def _upsert_requirement(
             major_id=major_id,
             program_type=PROGRAM_TYPE,
             curriculum_year=CURRICULUM_YEAR,
+            required_major_required=major_required,
+            required_major_elective=major_elective,
             required_total_credits=total_credits,
         )
     )
@@ -1018,10 +1043,18 @@ def seed(apply: bool) -> int:
                 continue
             major, is_new = _get_or_create_major(db, department.id, major_name)
             created_majors += int(is_new)
-            action = _upsert_requirement(db, department.id, major.id, credits)
+            # base_name은 아래 요건/과목 조회에 모두 쓰이므로 반드시 먼저 계산한다.
+            # (예전에 사용 뒤에 계산해서 각 프로그램이 직전 반복의 이름으로 학점을
+            #  찾는 off-by-one 버그가 있었다.)
+            base_name = major_name.split("(")[0]
+            split = LINKED_CREDIT_SPLIT.get(base_name) if kind == "연계" else None
+            action = _upsert_requirement(
+                db, department.id, major.id, credits,
+                major_required=split[0] if split else None,
+                major_elective=split[1] if split else None,
+            )
             created_reqs += int(action == "created")
             updated_reqs += int(action == "updated")
-            base_name = major_name.split("(")[0]
             note = HOST_MAJOR_NOTE.get(base_name)
             suffix = f"  (실제 개설: {note})" if note else ""
             print(
