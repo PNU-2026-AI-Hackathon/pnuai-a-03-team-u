@@ -115,6 +115,35 @@ SW_FOUNDATION_COURSE_DEFS = [
 ]
 SW_FOUNDATION_SEMESTER = "여름계절수업"
 
+# AIS 2026 시드에 없어서 자료(교육과정표) 기준으로 직접 만드는 과목.
+# (교과목번호, 교과목명, 개설학과, 세부전공 or None, 이수구분, 학점, 학년, 학기, 사유)
+#
+# **두 종류가 섞여 있으니 나중에 반드시 구분해서 재검토할 것.**
+#  (a) 시드 누락이 명백한 것 — 디자인앤테크놀로지전공은 과목이 0건인데 같은 학과의
+#      애니메이션전공 32건·시각디자인전공 39건은 정상이다. 컴퓨터그래픽스·피지컬컴퓨팅·
+#      HCI는 다른 학과에는 실재해서 개설 자체는 확실하다.
+#  (b) 폐지·개편 가능성이 있는 것 — 소속 학과가 정상 시드된 상태에서 전체 DB 어디에도
+#      없다(스포츠과학과 53과목, 산업공학과 61과목, 의생명융합공학부 84과목 모두 정상).
+#      자료가 구버전 코드를 여럿 갖고 있었던 점을 감안하면 2026 교육과정에서 빠졌을 수 있다.
+#      **이 과목들은 실제로 개설되지 않을 수 있고, 그러면 AI 로드맵이 수강 불가능한 과목을
+#      추천하게 된다.** 학사 확인 후 미개설로 판명되면 아래 목록에서 지우고
+#      program_courses의 해당 행도 함께 정리해야 한다.
+MISSING_COURSE_DEFS = [
+    # (a) 디자인앤테크놀로지전공 — 시드 누락
+    ("VF3500076", "컴퓨터그래픽스", "디자인학과", "디자인앤테크놀로지전공", "전공필수", 3.0, "2", "2", "seed-gap"),
+    ("VF3500077", "피지컬컴퓨팅", "디자인학과", "디자인앤테크놀로지전공", "전공필수", 3.0, "3", "1", "seed-gap"),
+    ("VF3500072", "키네틱타이포그래피", "디자인학과", "디자인앤테크놀로지전공", "전공필수", 3.0, "3", "1", "seed-gap"),
+    ("VF3600180", "HCI", "디자인학과", "디자인앤테크놀로지전공", "전공필수", 3.0, "3", "2", "seed-gap"),
+    ("VF3500081", "컴퓨터비전", "디자인학과", "디자인앤테크놀로지전공", "전공선택", 3.0, "3", "2", "seed-gap"),
+    # (b) 폐지·개편 가능성 있음 — 학사 확인 필요
+    ("SC3600515", "스폰서십마케팅", "스포츠과학과", None, "전공선택", 3.0, "4", "2", "unverified"),
+    ("SC3300968", "스포츠공학", "스포츠과학과", None, "전공선택", 3.0, "2", "2", "unverified"),
+    ("BX2001140", "생체고체역학", "의생명융합공학부", None, "전공선택", 3.0, "3", "1", "unverified"),
+    ("BX2001130", "바이오 인공장기", "의생명융합공학부", None, "전공선택", 3.0, "4", "1", "unverified"),
+    ("IE3500452", "통계적선형모형", "산업공학과", None, "전공선택", 3.0, "3", "1", "unverified"),
+    ("LD2001630", "데이터분석론", "조경학과", None, "전공선택", 3.0, "2", "2", "unverified"),
+]
+
 SW_COMMON_CATEGORY = "일반선택"
 SW_COMMON_CREDITS = 3.0
 SW_COMMON_YEAR = "전학년"
@@ -277,6 +306,9 @@ TRACK_COURSES: dict[str, dict] = {
             "공통과목은 데이터분석입문·메타버스활용프로젝트·데이터마이닝 3개로 한정된다."
         ),
         "courses": [
+            # 아래 2건은 MISSING_COURSE_DEFS로 생성한 과목(개설 여부 미확인).
+            ("SC3600515", "스폰서십마케팅", GROUP_DEPARTMENT_MAJOR),
+            ("SC3300968", "스포츠공학", GROUP_DEPARTMENT_MAJOR),
             ("SC2600329", "운동처방", GROUP_DEPARTMENT_MAJOR),
             # 자료는 '...논문작성법', DB는 '...논문작성방법'. 코드가 같아 같은 과목이다.
             ("SC3600184", "스포츠통계처리및논문작성방법", GROUP_DEPARTMENT_MAJOR),
@@ -286,9 +318,9 @@ TRACK_COURSES: dict[str, dict] = {
             ("SF1101081", "메타버스활용프로젝트", f"{GROUP_SW_COMMON}(택2)"),
             ("SF1101083", "데이터마이닝", f"{GROUP_SW_COMMON}(택2)"),
         ],
-        # 보류: 'SC3600515 스폰서십마케팅'은 학과 53과목 중 유일한 스폰서십 과목
-        # (SC2001898)이 이수구분·학기가 모두 달라 확신이 없고, 'SC3300968 스포츠공학'은
-        # 학과에 아예 없다. 학사 확인 후 추가한다.
+        # 참고: 스폰서십마케팅은 학과에 이름이 비슷한 SC2001898
+        # (스폰서십효과측정과데이터분석실전가이드)이 있지만 이수구분·학기가 모두 달라
+        # 같은 과목으로 보지 않고, 자료 코드 그대로 새로 만들었다.
     },
     "디자인컴퓨팅": {
         "rule": "학과전공과목 15학점(지정 5과목) + SW융합공통교과목 중 2과목(6학점)",
@@ -296,9 +328,14 @@ TRACK_COURSES: dict[str, dict] = {
         # 디자인앤테크놀로지전공인데 AIS 시드에 그 전공 과목이 들어오지 않은 것으로 보인다
         # (디자인학과에는 '컴퓨터그래픽(I)(II)'·'타이포그라피(I)(II)'만 있고 자료의
         # 컴퓨터그래픽스/피지컬컴퓨팅/키네틱타이포그래피/HCI/컴퓨터비전은 없다).
-        # 미매칭: VF3500076 컴퓨터그래픽스, VF3500077 피지컬컴퓨팅,
-        #         VF3500072 키네틱타이포그래피, VF3600180 HCI, VF3500081 컴퓨터비전
-        "courses": [],
+        # 5과목 전부 AIS 시드에 없어 MISSING_COURSE_DEFS로 직접 생성한다(시드 누락).
+        "courses": [
+            ("VF3500076", "컴퓨터그래픽스", GROUP_DEPARTMENT_MAJOR),
+            ("VF3500077", "피지컬컴퓨팅", GROUP_DEPARTMENT_MAJOR),
+            ("VF3500072", "키네틱타이포그래피", GROUP_DEPARTMENT_MAJOR),
+            ("VF3600180", "HCI", GROUP_DEPARTMENT_MAJOR),
+            ("VF3500081", "컴퓨터비전", GROUP_DEPARTMENT_MAJOR),
+        ],
         "sw_common_all": True,
     },
     "바이오메디컬디바이스&데이터": {
@@ -309,7 +346,9 @@ TRACK_COURSES: dict[str, dict] = {
         "courses": [
             ("BX3600080", "회로이론", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
             ("BX3600075", "유기화학", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
-            # 보류: BX2001140 생체고체역학(필수), BX2001130 바이오 인공장기 — DB에 없음
+            # 아래 2건은 MISSING_COURSE_DEFS로 생성한 과목(개설 여부 미확인).
+            ("BX2001140", "생체고체역학", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
+            ("BX2001130", "바이오 인공장기", GROUP_DEPARTMENT_MAJOR),
             ("BX3600092", "바이오센서공학", GROUP_DEPARTMENT_MAJOR),
             ("BX3600428", "웨어러블 디바이스", GROUP_DEPARTMENT_MAJOR),
             ("BX2001183", "바이오이미징", GROUP_DEPARTMENT_MAJOR),
@@ -330,7 +369,7 @@ TRACK_COURSES: dict[str, dict] = {
             ("IE2400223", "데이터마이닝", f"{GROUP_DEPARTMENT_MAJOR}(필수)"),
             ("IE3600657", "최적화개론", GROUP_DEPARTMENT_MAJOR),
             ("IE3500627", "산업데이터과학", GROUP_DEPARTMENT_MAJOR),
-            # 보류: IE3500452 통계적선형모형 — DB에 없음
+            ("IE3500452", "통계적선형모형", GROUP_DEPARTMENT_MAJOR),
             ("IE3600168", "인공지능개론", GROUP_DEPARTMENT_MAJOR),
             ("IE3500735", "스마트제조", GROUP_DEPARTMENT_MAJOR),
             # 자료 IE3600666 -> 현행 IE3600432 (산업공학과 내 동명 과목 유일)
@@ -348,7 +387,7 @@ TRACK_COURSES: dict[str, dict] = {
         "courses": [
             ("LD3600040", "조경공간정보분석", GROUP_DEPARTMENT_MAJOR),
             ("LD2001629", "데이터분석의 기초", GROUP_DEPARTMENT_MAJOR),
-            # 보류: LD2001630 데이터분석론 — DB에 없음
+            ("LD2001630", "데이터분석론", GROUP_DEPARTMENT_MAJOR),
             ("LD2001631", "도시환경분석과시각화", GROUP_DEPARTMENT_MAJOR),
             # 자료 LD2001632 -> 현행 LD2003333 (조경학과 내 동명 과목 유일)
             ("LD2003333", "데이터기반 조경계획", GROUP_DEPARTMENT_MAJOR),
@@ -423,11 +462,14 @@ LINKED_COURSES: dict[str, dict] = {
             ("MA", "수학(II)", GROUP_LINKED_ELECTIVE),
             ("EC", "미시경제학", GROUP_LINKED_ELECTIVE),
             ("MA", "선형대수학(I)", GROUP_LINKED_ELECTIVE),
-            ("CP", "이산수학(I)", GROUP_LINKED_ELECTIVE),
+            # 자료는 이산수학(I)(1-1)/이산수학(II)(2-2)로 나뉘지만 DB는 둘 다 '이산수학'이다.
+            # 학년·학기가 CB1501027(전공기초 1-1)·CB2001104(전공선택 2-2)와 정확히 맞아
+            # 같은 과목으로 보고 이름 '이산수학'으로 연결한다(동명 후보를 모두 붙이는
+            # 연계전공 원칙에 따라 두 과목이 함께 잡힌다).
+            ("CP", "이산수학", GROUP_LINKED_ELECTIVE),
             ("EE", "전자기학(I)", GROUP_LINKED_ELECTIVE),
             ("MA", "해석학(I)", GROUP_LINKED_ELECTIVE),
             ("DM", "유체역학", GROUP_LINKED_ELECTIVE),
-            ("CP", "이산수학(II)", GROUP_LINKED_ELECTIVE),
             ("DB", "재무관리", GROUP_LINKED_ELECTIVE),
             ("ST", "통계프로그래밍언어(I)", GROUP_LINKED_ELECTIVE),
             ("CP", "플랫폼기반프로그래밍", GROUP_LINKED_ELECTIVE),
@@ -802,6 +844,59 @@ def _upsert_program_courses(
     return created, existing, missing
 
 
+def _ensure_missing_courses(db, school_id: int) -> tuple[int, int, list[str]]:
+    """AIS 시드에 없는 과목을 자료 기준으로 만든다(멱등). MISSING_COURSE_DEFS 주석 참고."""
+    created = existing = 0
+    notes: list[str] = []
+    for code, name, dept_name, major_name, category, credits, year, semester, reason in (
+        MISSING_COURSE_DEFS
+    ):
+        course = db.scalars(select(Course).where(Course.course_code == code)).first()
+        if course is not None:
+            existing += 1
+            continue
+        department = _find_department_any_college(db, school_id, dept_name)
+        if department is None:
+            notes.append(f"{code} {name} — 학과 '{dept_name}' 없음")
+            continue
+        major_id = None
+        if major_name:
+            major = db.scalars(
+                select(Major).where(
+                    Major.department_id == department.id, Major.name == major_name
+                )
+            ).first()
+            if major is None:
+                notes.append(f"{code} {name} — 전공 '{major_name}' 없음")
+                continue
+            major_id = major.id
+        db.add(
+            Course(
+                course_code=code,
+                course_name=name,
+                department_id=department.id,
+                major_id=major_id,
+                category=category,
+                credits=credits,
+                year=year,
+                semester=semester,
+            )
+        )
+        created += 1
+        if reason == "unverified":
+            notes.append(f"{code} {name} — 개설 여부 미확인(학사 확인 필요)")
+    db.flush()
+    return created, existing, notes
+
+
+def _find_department_any_college(db, school_id: int, name: str) -> Department | None:
+    return db.scalars(
+        select(Department)
+        .join(College, College.id == Department.college_id)
+        .where(College.school_id == school_id, Department.name == name)
+    ).first()
+
+
 def _upsert_linked_courses(
     db, department_id: int, major_id: int, spec: dict
 ) -> tuple[int, int, list[str]]:
@@ -901,6 +996,10 @@ def seed(apply: bool) -> int:
             f"  [공통] {SW_COMMON_DEPARTMENT} 개설 SW융합공통교과목 "
             f"신규 {sw_new} / 기존 {sw_old}"
         )
+        miss_new, miss_old, miss_notes = _ensure_missing_courses(db, school.id)
+        print(f"  [보완] AIS 시드 누락 과목 신규 {miss_new} / 기존 {miss_old}")
+        for note in miss_notes:
+            print(f"         ! {note}")
         print()
 
         plan: list[tuple[str, str, str, str, int | None]] = []
