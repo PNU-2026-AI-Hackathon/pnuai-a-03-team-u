@@ -870,9 +870,16 @@ def _build_student_context_block(db: Session, user: User) -> str:
     for p in programs:
         dept_name = db.get(_Department, p.department_id).name if p.department_id else "학과 미지정"
         major_name = db.get(_Major, p.major_id).name if p.major_id else None
-        label = {"primary": "주전공", "double": "복수전공", "minor": "부전공", "teaching": "교직"}.get(
-            p.program_type or "", p.program_type or "unknown"
-        )
+        # 키는 UserAcademicProgram.program_type의 실제 값과 정확히 맞춰야 한다
+        # (auth._VALID_PROGRAM_TYPES). 예전엔 "double"/"teaching"처럼 존재하지 않는
+        # 키가 적혀 있어서 복수전공 학생이 LLM에게 "dual: OO학과"로 전달됐다.
+        # SW융합트랙·연계전공·융합전공은 전부 interdisciplinary로 들어온다.
+        label = {
+            "primary": "주전공",
+            "dual": "복수전공",
+            "minor": "부전공",
+            "interdisciplinary": "융합·연계전공",
+        }.get(p.program_type or "", p.program_type or "unknown")
         line = f"  - {label}: {dept_name}"
         if major_name:
             line += f" / {major_name}"

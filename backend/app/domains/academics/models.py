@@ -120,3 +120,38 @@ class GraduationRequirement(TimestampMixin, Base):
     required_general_required: Mapped[int | None] = mapped_column(Integer)
     required_general_elective: Mapped[int | None] = mapped_column(Integer)
     required_free_elective: Mapped[int | None] = mapped_column(Integer)
+
+
+class ProgramCourse(TimestampMixin, Base):
+    """다중전공 프로그램(SW융합트랙·연계전공·융합전공)의 인정 과목.
+
+    `courses`는 department_id/major_id를 하나씩만 가져서 "정보컴퓨터공학부 과목이면서
+    동시에 경영학과 SW융합트랙 인정 과목"을 표현할 수 없다. 프로그램은 자기 학과
+    과목과 타 학과 개설 과목(SW융합 공통교과목 등)을 함께 인정하므로 다대다가 필요하다.
+
+    프로그램 식별은 (department_id, major_id)다 — majors 행으로 만든 트랙/연계전공은
+    major_id가 차고, 핀테크융합전공처럼 학과 자체가 프로그램인 경우는 major_id가 null이다.
+
+    `requirement_group`은 이수 기준의 축을 담는다. SW융합트랙은 "학과전공과목 12~15학점
+    + SW융합 공통교과목 6~9학점"처럼 flat graduation_requirements의 이수구분 컬럼
+    (전공필수/전공선택/교양…)과 다른 축으로 쪼개져 있어 그쪽에 담을 수 없다.
+    """
+
+    __tablename__ = "program_courses"
+    __table_args__ = (
+        UniqueConstraint(
+            "department_id", "major_id", "course_id", "curriculum_year",
+            name="uq_program_course",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), index=True)
+    # 학과 자체가 프로그램 단위인 경우(핀테크융합전공)는 null.
+    major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+    # "학과전공과목" | "SW융합공통교과목" 등 이수 기준상의 묶음.
+    requirement_group: Mapped[str | None] = mapped_column(String(50))
+    # 프로그램 안에서의 이수구분(전선/일선 등). 원 학과에서의 category와 다를 수 있다.
+    category: Mapped[str | None] = mapped_column(String(50))
+    curriculum_year: Mapped[str | None] = mapped_column(String(10))
