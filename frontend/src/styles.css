@@ -1,17 +1,21 @@
+/* 색값은 Figma 변수(PemQy2Hgq6jfzfnlBtX2V3)를 기준으로 맞춘다.
+   --blue/--canvas/--rose는 각각 Figma의 main/background/sub5_red와 한두 자리씩
+   어긋나 있었다. 육안으로는 구분이 안 되지만 --shell-accent(=main #2570ff)를 쓴
+   영역과 --blue를 쓴 영역이 서로 다른 파랑으로 렌더링되고 있었다. */
 :root {
-  --ink: #111827;
+  --ink: #111827; /* Figma black */
   --muted: #7b8494;
   --line: #e5e9f0;
-  --panel: #ffffff;
-  --canvas: #f4f7fb;
+  --panel: #ffffff; /* Figma white */
+  --canvas: #f5f7fb; /* Figma background */
   --nav: #141a25;
   --nav-soft: #202938;
-  --blue: #2578ff;
+  --blue: #2570ff; /* Figma main */
   --sky: #55c7e9;
   --mint: #74dc9a;
   --green: #66d69a;
   --yellow: #f5cf39;
-  --rose: #ffebe8;
+  --rose: #ffebeb; /* Figma sub5_red */
   --shadow: 0 18px 45px rgba(25, 35, 55, 0.08);
 }
 
