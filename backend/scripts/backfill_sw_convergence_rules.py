@@ -98,7 +98,11 @@ def main():
         upsert_count = 0
         update_count = 0
         skip_count = 0
-        for (dept_id, major_id, curr_year), cs in sorted(by_program.items()):
+        # NULL 값 sort 안 되게 tuple key 정규화
+        def _sort_key(item):
+            (d, m, y), _ = item
+            return (d or 0, m or 0, y or "")
+        for (dept_id, major_id, curr_year), cs in sorted(by_program.items(), key=_sort_key):
             dept = db.get(Department, dept_id)
             major = db.get(Major, major_id) if major_id else None
             special = build_rules_for_program(cs)
