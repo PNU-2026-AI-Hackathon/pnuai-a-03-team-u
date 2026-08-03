@@ -4,18 +4,24 @@
    영역과 --blue를 쓴 영역이 서로 다른 파랑으로 렌더링되고 있었다. */
 :root {
   --ink: #111827; /* Figma black */
-  --muted: #7b8494;
-  --line: #e5e9f0;
+  --muted: #8f8f8f; /* Figma gray */
+  --line: #ededed; /* Figma lightlight_gray */
   --panel: #ffffff; /* Figma white */
   --canvas: #f5f7fb; /* Figma background */
   --nav: #141a25;
   --nav-soft: #202938;
   --blue: #2570ff; /* Figma main */
-  --sky: #55c7e9;
+  --blue-deep: #1347a7; /* Figma sub2 */
+  --blue-soft: #e4eeff; /* Figma sub1 */
+  --sky: #63d5f1; /* Figma main_gra 종점 */
   --mint: #74dc9a;
-  --green: #66d69a;
+  --green: #00bc77; /* Figma blue(성공 그린) */
+  --green-soft: #ddf7dd; /* Figma sub4_gg */
   --yellow: #f5cf39;
+  --red: #ff4e4e; /* Figma red */
   --rose: #ffebeb; /* Figma sub5_red */
+  --gray-soft: #f3f5f9; /* Figma sub3_bg */
+  --gray-line: #d9d9d9; /* Figma light_gray */
   --shadow: 0 18px 45px rgba(25, 35, 55, 0.08);
 }
 
@@ -26,9 +32,9 @@
 body {
   margin: 0;
   min-width: 1160px;
-  background: #eef3f8;
+  background: var(--canvas);
   color: var(--ink);
-  font-family: "Inter", "Noto Sans KR", system-ui, sans-serif;
+  font-family: "Pretendard Variable", Pretendard, "Inter", "Noto Sans KR", system-ui, sans-serif;
 }
 
 button,
@@ -241,11 +247,69 @@ input {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 20px;
   min-height: 92px;
   border-bottom: 1px solid var(--line);
+}
+
+/* Figma 175:1505 — 상단 검색바 (radius 20, 좌측 lucide/search) */
+.topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(440px, 34vw);
+  padding: 0 20px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+}
+
+.topbar-search .search-icon {
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.topbar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  outline: none;
+}
+
+.topbar-search input::placeholder {
+  color: var(--muted);
+}
+
+/* Figma 175:1498 — 내 정보 칩 (아바타 + 라벨) */
+.me-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.me-chip-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--blue), var(--sky));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+body.theme-dark .topbar-search {
+  border-color: #0e1116;
+  background: #243346;
 }
 
 .eyebrow {
@@ -380,7 +444,7 @@ h1 {
   padding: 10px 13px;
   border-radius: 999px;
   background: #dfe5ee;
-  color: #fff;
+  color: var(--ink);
   font-weight: 800;
   text-decoration: none;
 }
@@ -422,19 +486,23 @@ h1 {
 }
 
 body.theme-dark {
-  --ink: #eef4ff;
-  --muted: #96a4b8;
-  --line: #2a374a;
-  --canvas: #0b111d;
-  background: #050914;
+  --ink: #ffffff;
+  --muted: #b5b5b5;
+  --line: #0e1116;
+  --canvas: #0e1116;
+  --blue-soft: #0c3363;
+  --green-soft: #0c3326;
+  --rose: #3a1c22;
+  --gray-soft: #243346;
+  --gray-line: #0e1116;
+  background: #0e1116;
   color: var(--ink);
 }
 
 body.theme-dark .workspace,
 body.theme-dark .info-workspace {
   background:
-    radial-gradient(circle at 78% 8%, rgba(85, 199, 233, 0.12), transparent 28%),
-    linear-gradient(180deg, #0d1524 0, #080d19 100%);
+    #0e1116;
 }
 
 body.theme-dark .topbar {
@@ -446,8 +514,8 @@ body.theme-dark .activity-filter-row button,
 body.theme-dark .activity-filter-row label,
 body.theme-dark .auto-edit-form input,
 body.theme-dark .chat-input {
-  border-color: #2c394d;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
@@ -459,7 +527,7 @@ body.theme-dark .chat-input input {
 }
 
 body.theme-dark input::placeholder {
-  color: #6f7f95;
+  color: #b5b5b5;
 }
 
 body.theme-dark .hero-panel,
@@ -476,14 +544,14 @@ body.theme-dark .activity-category-strip article,
 body.theme-dark .info-profile,
 body.theme-dark .info-card,
 body.theme-dark .info-auto-panel {
-  border-color: rgba(132, 151, 176, 0.22);
-  background: #182334;
+  border-color: #0e1116;
+  background: #121d2c;
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
 }
 
 body.theme-dark .info-card.priority,
 body.theme-dark .advisor-card {
-  background: linear-gradient(180deg, #1c293b, #182334);
+  background: #121d2c;
 }
 
 body.theme-dark .profile-facts article,
@@ -496,8 +564,8 @@ body.theme-dark .info-detail,
 body.theme-dark .info-detail-body,
 body.theme-dark .info-table,
 body.theme-dark .auto-edit-result {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .semester-item,
@@ -505,80 +573,80 @@ body.theme-dark .requirement-course,
 body.theme-dark .track-item,
 body.theme-dark .choice-row,
 body.theme-dark .chat-message.ai p {
-  border-color: #2c394d;
-  background: #101827;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .semester-item.extracurricular,
 body.theme-dark .requirement-course.extracurricular {
-  background: #10201c;
+  background: #243346;
 }
 
 body.theme-dark .info-detail[open] summary,
 body.theme-dark .info-table div {
-  border-bottom-color: #2c394d;
+  border-bottom-color: #0e1116;
 }
 
 body.theme-dark .top-actions button,
 body.theme-dark .advisor-card button,
 body.theme-dark .more-button {
-  border-color: #35445a;
-  background: #141e2d;
-  color: #dce6f5;
+  border-color: #0e1116;
+  background: #243346;
+  color: #ffffff;
 }
 
 body.theme-dark .top-actions .theme-mode-button {
-  border-color: rgba(116, 220, 154, 0.35);
-  background: #10251f;
-  color: #74dc9a;
+  border-color: #0c3363;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .theme-menu {
-  border-color: #35445a;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
 }
 
 body.theme-dark .theme-menu button {
-  color: #dce6f5;
+  color: #ffffff;
 }
 
 body.theme-dark .theme-menu button:hover,
 body.theme-dark .theme-menu button.selected {
-  background: #10251f;
-  color: #74dc9a;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .top-actions .info-edit-button {
-  border-color: rgba(85, 199, 233, 0.32);
-  background: #132b3f;
-  color: #63b7ff;
+  border-color: #0c3363;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .top-actions .info-auto-button {
-  border-color: rgba(116, 220, 154, 0.32);
-  background: #10251f;
-  color: #74dc9a;
+  border-color: #0c3363;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .top-actions .info-save-button:disabled {
-  background: #182334;
-  color: #6f7f95;
+  background: #121d2c;
+  color: #b5b5b5;
 }
 
 body.theme-dark .user-chip {
-  background: #273346;
+  background: #243346;
 }
 
 body.theme-dark .profile-link {
-  border-color: rgba(85, 199, 233, 0.28);
-  background: #132b3f;
-  color: #8dc7ff;
+  border-color: #0c3363;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .logout-chip {
-  background: #273346;
-  color: #dce6f5;
+  background: #243346;
+  color: #ffffff;
 }
 
 body.theme-dark h1,
@@ -611,19 +679,19 @@ body.theme-dark .stellic-bar,
 body.theme-dark .graduation-total,
 body.theme-dark .graduation-rows div::after,
 body.theme-dark .mini-bar {
-  background: #344155;
+  background: #0e1116;
 }
 
 body.theme-dark .tag-list li,
 body.theme-dark .card-tags span,
 body.theme-dark .semester-pill {
-  background: #132b3f;
-  color: #8dc7ff;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .dashboard-record-list li {
-  border-color: #2c394d;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .dashboard-record-list li > strong {
@@ -631,8 +699,8 @@ body.theme-dark .dashboard-record-list li > strong {
 }
 
 body.theme-dark .activity-tags span {
-  border-color: #2bbd75;
-  color: #74dc9a;
+  border-color: #4284ff;
+  color: #4284ff;
 }
 
 .hero-panel,
@@ -4336,21 +4404,21 @@ body.theme-dark .activity-tags span {
 body.theme-dark .roadmap-api-state,
 body.theme-dark .course-search-results,
 body.theme-dark .roadmap-api-state button {
-  border-color: #35445a;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .course-search-results button {
-  border-bottom-color: #2c394d;
+  border-bottom-color: #0e1116;
 }
 
 body.theme-dark .course-search-results button:hover {
-  background: #1b2a3d;
+  background: #243346;
 }
 
 body.theme-dark .semester-course-status.status-completed {
-  background: #283548;
-  color: #bec9d8;
+  background: #243346;
+  color: #b5b5b5;
 }
 
 .activity-card-tags span {
@@ -5625,8 +5693,8 @@ body.theme-dark .ai-input,
 body.theme-dark .sync-form input,
 body.theme-dark .grade-term-list section,
 body.theme-dark .evidence-list article {
-  border-color: #2c394d;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
@@ -5638,13 +5706,13 @@ body.theme-dark .sort-tabs button.selected {
 }
 
 body.theme-dark .curriculum-flow article {
-  border-color: #34435a;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .curriculum-flow article:not(:last-child)::after {
-  border-color: #34435a;
-  background: #182334;
+  border-color: #0e1116;
+  background: #121d2c;
 }
 
 body.theme-dark .curriculum-flow h3,
@@ -5653,13 +5721,13 @@ body.theme-dark .curriculum-flow li {
 }
 
 body.theme-dark .grade-table th {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--muted);
 }
 
 body.theme-dark .grade-table td {
-  border-color: #2c394d;
+  border-color: #0e1116;
   color: var(--ink);
 }
 
@@ -5667,51 +5735,51 @@ body.theme-dark .profile-basic-editor input,
 body.theme-dark .graduation-total-editor input,
 body.theme-dark .graduation-credit-editor input,
 body.theme-dark .grade-table select {
-  border-color: #34435a;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
 body.theme-dark .grade-score-overview > div {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .profile-editor,
 body.theme-dark .profile-record-row {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .profile-editor input,
 body.theme-dark .profile-editor textarea {
-  border-color: #34435a;
-  background: #141e2d;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
 body.theme-dark .profile-cancel-button,
 body.theme-dark .profile-record-actions button {
-  background: #253247;
+  background: #243346;
   color: var(--muted);
 }
 
 body.theme-dark .profile-add-button {
-  background: #253247;
-  color: #8fc5ff;
+  background: #243346;
+  color: #4284ff;
 }
 
 body.theme-dark .profile-add-button:hover {
-  background: #2d3d55;
+  background: #243346;
 }
 
 body.theme-dark .profile-record-actions button.danger {
-  background: #3a232d;
-  color: #ff9caa;
+  background: #3a1c22;
+  color: #ff8a8a;
 }
 
 body.theme-dark .profile-record-heading > div:first-child > span {
-  background: #1c3555;
+  background: #0c3363;
 }
 
 body.theme-dark .profile-record-row strong {
@@ -5719,40 +5787,40 @@ body.theme-dark .profile-record-row strong {
 }
 
 body.theme-dark .profile-feedback {
-  border-color: #713745;
-  background: #321e27;
-  color: #ff9caa;
+  border-color: #ff4e4e;
+  background: #3a1c22;
+  color: #ff8a8a;
 }
 
 body.theme-dark .profile-delete-confirm {
-  border-color: #713745;
-  background: #321e27;
+  border-color: #ff4e4e;
+  background: #3a1c22;
 }
 
 body.theme-dark .profile-delete-confirm p {
-  color: #ffd8de;
+  color: #ffb3b3;
 }
 
 body.theme-dark .profile-delete-confirm button:not(.confirm-delete) {
-  background: #253247;
+  background: #243346;
   color: var(--muted);
 }
 
 body.theme-dark .course-editor {
-  border-color: #2c394d;
-  background: #142031;
+  border-color: #0e1116;
+  background: #121d2c;
 }
 
 body.theme-dark .course-editor input,
 body.theme-dark .course-editor select {
-  border-color: #344258;
-  background: #101927;
+  border-color: #0e1116;
+  background: #121d2c;
   color: var(--ink);
 }
 
 body.theme-dark .grade-action-column button {
-  background: #3a2029;
-  color: #ff9cab;
+  background: #3a1c22;
+  color: #ff8a8a;
 }
 
 @media (max-width: 720px) {
@@ -5780,7 +5848,7 @@ body.theme-dark .grade-action-column button {
 }
 
 body.theme-dark .sync-form button.is-loading {
-  border-color: #2c394d;
+  border-color: #0e1116;
   background: #fff;
   color: var(--blue);
 }
@@ -5794,51 +5862,51 @@ body.theme-dark .activity-recommend-card,
 body.theme-dark .info-sync-panel,
 body.theme-dark .info-profile-card,
 body.theme-dark .info-section-card {
-  border-color: rgba(132, 151, 176, 0.22);
-  background: #182334;
+  border-color: #0e1116;
+  background: #121d2c;
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
 }
 
 body.theme-dark .requirement-progress {
-  background: #2a3749;
+  background: #243346;
 }
 
 body.theme-dark .requirement-summary-progress {
-  background: #2a3749;
+  background: #243346;
 }
 
 body.theme-dark .requirement-strip {
-  scrollbar-color: #53647b #222e40;
+  scrollbar-color: #b5b5b5 #243346;
 }
 
 body.theme-dark .requirement-strip::-webkit-scrollbar-track {
-  background: #222e40;
+  background: #243346;
 }
 
 body.theme-dark .requirement-strip::-webkit-scrollbar-thumb {
-  background: #53647b;
+  background: #b5b5b5;
 }
 
 body.theme-dark .requirement-scroll-button {
-  border-color: #44546a;
-  background: rgba(24, 35, 52, 0.96);
+  border-color: #0e1116;
+  background: rgba(18, 29, 44, 0.96);
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.34);
-  color: #8dc7ff;
+  color: #4284ff;
 }
 
 body.theme-dark .requirement-scroll-button:hover {
-  border-color: #6583a8;
-  background: #223047;
+  border-color: #b5b5b5;
+  background: #243346;
 }
 
 body.theme-dark .requirement-summary-head > strong {
-  background: #163653;
-  color: #8dc7ff;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .requirement-summary-card.completed .requirement-summary-head > strong {
-  background: #173b2d;
-  color: #7bddae;
+  background: #0c3326;
+  color: #00bc77;
 }
 
 body.theme-dark .requirement-credit-status strong {
@@ -5846,49 +5914,49 @@ body.theme-dark .requirement-credit-status strong {
 }
 
 body.theme-dark .requirement-credit-status span {
-  color: #8dc7ff;
+  color: #4284ff;
 }
 
 body.theme-dark .requirement-summary-card.completed .requirement-credit-status span {
-  color: #7bddae;
+  color: #00bc77;
 }
 
 body.theme-dark .requirement-course-list li {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 body.theme-dark .requirement-course-status {
-  background: #293548;
+  background: #243346;
   color: var(--muted);
 }
 
 body.theme-dark .requirement-course-status.status-completed {
-  background: #173b2d;
-  color: #7bddae;
+  background: #0c3326;
+  color: #00bc77;
 }
 
 body.theme-dark .requirement-course-status.status-current {
-  background: #163653;
-  color: #8dc7ff;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .activity-card-tags span {
-  background: #132b3f;
-  color: #8dc7ff;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .semester-timeline-head,
 body.theme-dark .semester-course-row,
 body.theme-dark .semester-course-edit-row,
 body.theme-dark .add-roadmap-item-form {
-  border-color: #2c394d;
+  border-color: #0e1116;
 }
 
 body.theme-dark .roadmap-edit-actions button,
 body.theme-dark .add-roadmap-item-actions button {
-  border-color: #34435a;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--muted);
 }
 
@@ -5904,31 +5972,31 @@ body.theme-dark .semester-course-edit-row input,
 body.theme-dark .semester-course-edit-row select,
 body.theme-dark .add-roadmap-item-form input,
 body.theme-dark .add-roadmap-item-form select {
-  border-color: #34435a;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
 body.theme-dark .delete-roadmap-item-button {
-  background: #3a232d;
-  color: #ff9caa;
+  background: #3a1c22;
+  color: #ff8a8a;
 }
 
 body.theme-dark .roadmap-edit-feedback {
-  border-color: #713745;
-  background: #321e27;
-  color: #ffabb7;
+  border-color: #ff4e4e;
+  background: #3a1c22;
+  color: #ff8a8a;
 }
 
 body.theme-dark .semester-timeline-head > strong,
 body.theme-dark .semester-course-status.status-current {
-  background: #163653;
-  color: #8dc7ff;
+  background: #0c3363;
+  color: #4284ff;
 }
 
 body.theme-dark .semester-course-status.status-planned {
-  background: #173b2d;
-  color: #7bddae;
+  background: #0c3326;
+  color: #00bc77;
 }
 
 body.theme-dark .semester-course-status.status-preparing {
@@ -5938,20 +6006,20 @@ body.theme-dark .semester-course-status.status-preparing {
 
 body.theme-dark .ai-message p,
 body.theme-dark .recommend-reason {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--ink);
 }
 
 body.theme-dark .ai-reset-button,
 body.theme-dark .proposal-actions button {
-  border-color: #34435a;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
   color: var(--muted);
 }
 
 body.theme-dark .ai-roadmap-proposal {
-  border-color: #2c394d;
+  border-color: #0e1116;
 }
 
 body.theme-dark .ai-roadmap-proposal h4,
@@ -5967,13 +6035,13 @@ body.theme-dark .proposal-actions .apply-proposal-button {
 }
 
 body.theme-dark .ai-chat-error {
-  border-color: #713745;
-  background: #321e27;
+  border-color: #ff4e4e;
+  background: #3a1c22;
 }
 
 body.theme-dark .ai-chat-error p,
 body.theme-dark .ai-chat-error button {
-  color: #ffabb7;
+  color: #ff8a8a;
 }
 
 body.theme-dark .activity-recommend-card > p,
@@ -6188,8 +6256,8 @@ body.theme-dark .evidence-list strong {
 }
 
 body.theme-dark .advisor-current-status {
-  border-color: #2c394d;
-  background: #111a28;
+  border-color: #0e1116;
+  background: #243346;
 }
 
 /* =========================================================================
@@ -6207,11 +6275,14 @@ body.theme-dark .advisor-current-status {
   --shell-grad: linear-gradient(90deg, #2570ff, #6366f1);
 }
 
+/* Figma 다크(207:106) 팔레트: 배경 #0e1116 / 패널 #121d2c / 타일 #243346 /
+   액센트 #4284ff / 액센트 칩 #0c3363 / 보조 텍스트 #b5b5b5 */
 body.theme-dark {
-  --shell-line: #26313f;
-  --shell-canvas: #0b111d;
-  --shell-dim: #8a97ab;
-  --shell-active: #17263f;
+  --shell-line: #0e1116;
+  --shell-canvas: #0e1116;
+  --shell-dim: #b5b5b5;
+  --shell-active: #0c3363;
+  --shell-accent: #4284ff;
 }
 
 .app-frame {
@@ -6747,7 +6818,7 @@ body.theme-dark {
 }
 
 .chat-activity-tag.inside {
-  background: #ddf7dd;
+  background: var(--green-soft);
 }
 
 .chat-activity-tag.contest {
@@ -6758,6 +6829,23 @@ body.theme-dark {
   background: #f1e4ff;
 }
 
+/* 다크에서는 soft 배경을 어두운 톤으로 뒤집고 글자를 밝힌다. */
+body.theme-dark .chat-activity-tag {
+  color: #ffffff;
+}
+
+body.theme-dark .chat-activity-tag.outside {
+  background: #3a1c22;
+}
+
+body.theme-dark .chat-activity-tag.contest {
+  background: #47341c;
+}
+
+body.theme-dark .chat-activity-tag.intern {
+  background: #32234a;
+}
+
 body.theme-dark .topnav,
 body.theme-dark .chat-rail,
 body.theme-dark .chat-profile,
@@ -6765,19 +6853,19 @@ body.theme-dark .chat-composer,
 body.theme-dark .chat-activity-card,
 body.theme-dark .chat-bubble.assistant {
   border-color: var(--shell-line);
-  background: #101827;
+  background: #243346;
 }
 
 body.theme-dark .chat-error {
-  border-color: #5b2b2f;
-  background: #2a1618;
-  color: #ff9d9d;
+  border-color: #3a1c22;
+  background: #2a1416;
+  color: #ff8a8a;
 }
 
 body.theme-dark .topnav .theme-mode-button {
-  border-color: rgba(99, 183, 255, 0.3);
-  background: #16233a;
-  color: #7fbcff;
+  border-color: #0c3363;
+  background: #121d2c;
+  color: #4284ff;
 }
 
 /* 1600px 아래에서는 상단 네비가 넘치므로 부가 요소부터 줄인다. */
@@ -7157,7 +7245,7 @@ body.theme-dark .topnav .theme-mode-button {
 .onboarding-badge {
   padding: 4px 10px;
   border-radius: 999px;
-  background: #ddf7dd;
+  background: var(--green-soft);
   color: #067647;
   font-size: 12px;
   font-weight: 700;
@@ -7517,7 +7605,7 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .timetable-course button.is-placed {
-  background: #ddf7dd;
+  background: var(--green-soft);
   color: #067647;
 }
 
@@ -7624,7 +7712,7 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .tone-elective {
-  background: #ddf7dd;
+  background: var(--green-soft);
   color: #067647;
 }
 
@@ -7777,7 +7865,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 body.theme-dark .timetable-head,
 body.theme-dark .timetable-panel {
-  background: #101827;
+  background: #243346;
 }
 
 @media (max-width: 1400px) {
@@ -7810,12 +7898,12 @@ body.theme-dark .auth-highlights li,
 body.theme-dark .timetable-quick button,
 body.theme-dark .timetable-filters button,
 body.theme-dark .timetable-chat-row p {
-  background: #101827;
+  background: #243346;
 }
 
 body.theme-dark .auth-field.is-locked,
 body.theme-dark .timetable-course.is-conflict {
-  background: #0b111d;
+  background: #0e1116;
 }
 
 /* --- Home 시안 반영 (Figma 175:1801) ----------------------------------- */
@@ -8040,12 +8128,12 @@ body.theme-dark .timetable-course.is-conflict {
 }
 
 body.theme-dark .roadmap-head-stats div {
-  border-color: #5b2b2f;
-  background: #2a1618;
+  border-color: #3a1c22;
+  background: #2a1416;
 }
 
 body.theme-dark .roadmap-head-stats span {
-  color: #ff9d9d;
+  color: #ff8a8a;
 }
 
 /* 요건 카드에서 문구 한 줄이 빠져 기존 최소 높이가 남는다. */
