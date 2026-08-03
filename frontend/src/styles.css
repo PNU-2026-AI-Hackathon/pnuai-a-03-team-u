@@ -3902,14 +3902,9 @@ body.theme-dark .activity-tags span {
 
 .requirement-strip {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   max-width: 100%;
-  overflow-x: auto;
-  padding: 2px 2px 10px;
-  overscroll-behavior-inline: contain;
-  scroll-snap-type: x proximity;
-  scrollbar-color: #b9c5d5 #edf1f6;
-  scrollbar-width: thin;
+  padding: 2px;
 }
 
 .requirement-strip::-webkit-scrollbar {
@@ -3977,10 +3972,10 @@ body.theme-dark .activity-tags span {
 }
 
 .requirement-strip article {
-  flex: 1 0 176px;
-  min-height: 158px;
-  padding: 16px;
-  scroll-snap-align: start;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 108px;
+  padding: 20px;
 }
 
 .requirement-summary-head {
@@ -8266,4 +8261,10 @@ body.theme-dark .roadmap-head-stats span {
 
 .semester-group-dot.is-activity {
   background: #16a34a;
+}
+
+
+/* 시안(Frame 249)에는 스트립 가로 스크롤·화살표가 없다 — 카드가 한 줄에 균등 분할 */
+.requirement-scroll-button {
+  display: none;
 }
