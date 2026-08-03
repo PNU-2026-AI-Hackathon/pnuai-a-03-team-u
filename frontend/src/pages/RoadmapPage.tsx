@@ -1059,7 +1059,6 @@ function MockRoadmapPage() {
                   <p className="eyebrow">Department Curriculum</p>
                   <h2>데이터사이언스전공 이수 흐름</h2>
                 </div>
-                <span>2026 교육과정 기준</span>
               </div>
               <div className="cmap-grid">
                 {curriculumFlow.map((group) => (
@@ -1932,7 +1931,7 @@ function ConnectedRoadmapPage() {
             </section>
           ) : (
             <section id="curriculum-panel" className="curriculum-map course-system" role="tabpanel" aria-labelledby="curriculum-tab">
-              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div><span>{curriculum?.curriculum_year ? `${curriculum.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
+              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div></div>
               {curriculum?.groups.length ? (
                 <>
                   <div className="cmap-grid">
