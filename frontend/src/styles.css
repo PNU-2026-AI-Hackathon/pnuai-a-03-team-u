@@ -3730,6 +3730,13 @@ body.theme-dark .activity-tags span {
   gap: 14px;
 }
 
+/* 요건 요약 스트립은 시안(Frame 249)처럼 상단 전체 폭을 차지한다 */
+.requirements-overview .requirement-strip-shell,
+.requirements-overview .requirement-strip-wrap {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .requirement-group {
   min-width: 0;
   padding: 18px;
@@ -3793,10 +3800,11 @@ body.theme-dark .activity-tags span {
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
-  padding: 11px 12px;
-  border: 1px solid #e2e7ef;
-  border-radius: 6px;
-  background: #f8fafc;
+  padding: 8px 12px;
+  min-height: 36px;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
+  background: var(--panel);
 }
 
 .requirement-course-list li > div {
