@@ -262,7 +262,7 @@ input {
   width: min(440px, 34vw);
   padding: 0 20px;
   height: 44px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--gray-line);
   border-radius: 20px;
   background: var(--panel);
 }
@@ -287,11 +287,14 @@ input {
   color: var(--muted);
 }
 
-/* Figma 175:1498 — 내 정보 칩 (아바타 + 라벨) */
+/* Figma Frame 116 — 내 정보 칩 (아바타 + 라벨, #F3F5F9) */
 .me-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 8px 12px;
+  border-radius: 20px;
+  background: var(--gray-soft);
 }
 
 .me-chip-avatar {
@@ -355,13 +358,14 @@ h1 {
 }
 
 .top-actions .theme-mode-button {
-  width: 46px;
-  height: 38px;
-  border-radius: 999px;
-  border-color: rgba(37, 120, 255, 0.25);
-  background: #f4f8ff;
-  color: var(--blue);
-  font-size: 11px;
+  min-width: 52px;
+  height: 36px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--gray-soft);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .theme-picker {
@@ -439,16 +443,17 @@ h1 {
 }
 
 .user-chip {
-  padding: 10px 13px;
-  border-radius: 999px;
-  background: #dfe5ee;
+  padding: 8px 12px;
+  border-radius: 20px;
+  background: var(--gray-soft);
   color: var(--ink);
   font-weight: 800;
   text-decoration: none;
 }
 
 .user-chip.active {
-  background: linear-gradient(135deg, var(--blue), var(--sky));
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 
 .profile-link {
@@ -479,8 +484,8 @@ h1 {
 }
 
 .logout-chip {
-  background: #eef2f7;
-  color: #5f6c7d;
+  background: var(--gray-soft);
+  color: var(--ink);
 }
 
 body.theme-dark {
@@ -1055,21 +1060,21 @@ body.theme-dark .activity-tags span {
   display: grid;
   gap: 3px;
   padding: 10px 12px;
-  border: 1px solid #e4e9f1;
-  border-radius: 8px;
-  background: #f7f9fc;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
+  background: var(--panel);
 }
 
 .dashboard-record-list li > span {
   color: var(--blue);
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .dashboard-record-list li > strong {
   overflow-wrap: anywhere;
-  color: #303846;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: 16px;
   line-height: 1.4;
 }
 
@@ -1138,8 +1143,8 @@ body.theme-dark .activity-tags span {
 
 .credit-chart {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 13px;
 }
 
 .semester-list div {
@@ -1153,12 +1158,19 @@ body.theme-dark .activity-tags span {
 
 .credit-chart div {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: space-between;
-  min-height: 58px;
-  padding: 14px 20px;
+  gap: 10px;
+  min-height: 120px;
+  padding: 20px;
   border-radius: 12px;
   background: var(--gray-soft);
+}
+
+.credit-chart .credit-chart-bar {
+  width: 100%;
+  margin-top: 0;
 }
 
 .semester-list span,
@@ -1258,9 +1270,9 @@ body.theme-dark .activity-tags span {
 
 .roadmap-head,
 .track-group {
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -1996,9 +2008,9 @@ body.theme-dark .activity-tags span {
 
 .requirement-group {
   padding: 18px;
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -2583,9 +2595,9 @@ body.theme-dark .activity-tags span {
 .activity-filter-panel,
 .recommend-card,
 .activity-category-strip article {
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3016,9 +3028,9 @@ body.theme-dark .activity-tags span {
 
 .info-profile,
 .info-card {
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3709,9 +3721,9 @@ body.theme-dark .activity-tags span {
 .requirement-group {
   min-width: 0;
   padding: 18px;
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3938,9 +3950,9 @@ body.theme-dark .activity-tags span {
 .info-sync-panel,
 .info-profile-card,
 .info-section-card {
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -4504,17 +4516,18 @@ body.theme-dark .semester-course-status.status-completed {
 .ai-message p,
 .user-message p {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 8px 14px;
+  border-radius: 12px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.5;
 }
 
 .ai-message p {
-  border: 1px solid #e0e6ef;
-  background: #f8fbff;
-  color: #303846;
+  border-radius: 0 12px 12px 12px;
+  background: var(--panel);
+  border: 1px solid var(--gray-line);
+  color: var(--ink);
 }
 
 .user-message {
@@ -4526,8 +4539,9 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .user-message p {
-  background: #e6f1ff;
-  color: #1f5fbd;
+  border-radius: 12px 0 12px 12px;
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 
 .ai-message-loading p {
@@ -4706,29 +4720,30 @@ body.theme-dark .semester-course-status.status-completed {
 
 .quick-prompts button {
   min-height: 30px;
-  padding-inline: 10px;
-  border: 1px solid #dce3ec;
-  border-radius: 6px;
-  background: #fff;
-  color: #5f6c7d;
+  padding-inline: 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
+  color: var(--ink);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .quick-prompts button:hover {
-  border-color: #bdd4f2;
+  border-color: var(--blue);
   color: var(--blue);
 }
 
 .ai-input {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   gap: 8px;
-  padding: 8px;
-  border: 1px solid #d9e0ea;
-  border-radius: 8px;
-  background: #fff;
+  align-items: center;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
 }
 
 .ai-input textarea {
@@ -4749,11 +4764,11 @@ body.theme-dark .semester-course-status.status-completed {
 .ai-input button {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--blue), var(--sky));
+  background: var(--blue);
   color: #fff;
   font-weight: 900;
   cursor: pointer;
@@ -4908,23 +4923,23 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .sync-form input {
-  height: 42px;
+  height: 40px;
   min-width: 0;
-  padding: 0 12px;
-  border: 1px solid #d9e0ea;
-  border-radius: 8px;
+  padding: 0 20px;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
   outline: 0;
 }
 
 .sync-form button,
 .info-profile-card button {
-  height: 42px;
+  height: 40px;
   padding: 0 14px;
   border: 0;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--blue), var(--sky));
+  border-radius: 20px;
+  background: var(--blue);
   color: #fff;
-  font-weight: 900;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -4933,8 +4948,8 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .sync-form button.is-loading {
-  border: 1px solid #d9e0ea;
-  background: #fff;
+  border: 1px solid var(--gray-line);
+  background: var(--panel);
   color: var(--blue);
 }
 
@@ -5281,18 +5296,18 @@ body.theme-dark .semester-course-status.status-completed {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: baseline;
   gap: 5px;
-  padding: 11px 12px;
-  border: 1px solid #dfe5ee;
-  border-radius: 7px;
-  background: #f7f9fc;
+  padding: 8px 20px;
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
 }
 
 .grade-score-overview span,
 .grade-score-overview small,
 .grade-term-scores span {
-  color: #687588;
-  font-size: 11px;
-  font-weight: 800;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .grade-score-overview strong {
@@ -5440,15 +5455,15 @@ body.theme-dark .semester-course-status.status-completed {
   justify-content: center;
   gap: 6px;
   border: 0;
-  border-radius: 6px;
-  font-weight: 900;
+  border-radius: 20px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .profile-add-button {
   min-height: 34px;
-  padding: 0 11px;
-  background: #e8f2ff;
+  padding: 0 12px;
+  background: var(--blue-soft);
   color: var(--blue);
   font-size: 12px;
   white-space: nowrap;
@@ -5604,11 +5619,11 @@ body.theme-dark .semester-course-status.status-completed {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
-  padding: 10px 12px;
-  border: 1px solid #dfe5ee;
-  border-radius: 8px;
-  background: #fff;
+  min-height: 59px;
+  padding: 10px 20px;
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
 }
 
 .profile-record-row > div:first-child {
@@ -5618,12 +5633,12 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .profile-record-row strong {
-  color: #303846;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: 16px;
 }
 
 .profile-record-row span {
-  color: #687588;
+  color: var(--blue);
   font-size: 12px;
   font-weight: 700;
 }
@@ -7944,14 +7959,14 @@ body.theme-dark .timetable-course.is-conflict {
 
 .record-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  border-radius: 4px;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 5px;
 }
 
 .record-dot.is-green {
-  background: #16a34a;
+  background: var(--green);
 }
 
 .record-dot.is-red {
@@ -8106,21 +8121,22 @@ body.theme-dark .timetable-course.is-conflict {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-width: 78px;
+  min-width: 80px;
   padding: 12px;
-  border: 1px solid #f4c7c9;
+  border: 2px solid var(--red);
   border-radius: 12px;
-  background: #fff5f5;
+  background: var(--rose);
 }
 
 .roadmap-head-stats strong {
-  color: #e5484d;
-  font-size: 22px;
+  color: var(--red);
+  font-size: 24px;
 }
 
 .roadmap-head-stats span {
-  color: #b42318;
+  color: var(--red);
   font-size: 12px;
+  font-weight: 500;
 }
 
 .requirement-credit-ratio {
@@ -8132,8 +8148,8 @@ body.theme-dark .timetable-course.is-conflict {
 }
 
 body.theme-dark .roadmap-head-stats div {
-  border-color: #3a1c22;
-  background: #2a1416;
+  border-color: var(--red);
+  background: var(--rose);
 }
 
 body.theme-dark .roadmap-head-stats span {
