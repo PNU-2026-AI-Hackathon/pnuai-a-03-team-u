@@ -315,10 +315,8 @@ body.theme-dark .topbar-search {
 .eyebrow {
   margin: 0 0 6px;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 h1,
@@ -705,8 +703,8 @@ body.theme-dark .activity-tags span {
 
 .hero-panel,
 .card {
-  border: 1px solid rgba(216, 224, 235, 0.86);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow);
 }
@@ -741,7 +739,7 @@ body.theme-dark .activity-tags span {
   margin-bottom: 12px;
   padding: 7px 11px;
   border-radius: 999px;
-  background: #e6f1ff;
+  background: var(--blue-soft);
   color: var(--blue);
   font-size: 12px;
   font-weight: 800;
@@ -797,10 +795,10 @@ body.theme-dark .activity-tags span {
 
 .stellic-bar {
   position: relative;
-  height: 10px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: #d6dde8;
+  background: var(--line);
 }
 
 .stellic-bar span {
@@ -812,7 +810,7 @@ body.theme-dark .activity-tags span {
 .stellic-bar .earned {
   left: 0;
   border-radius: inherit;
-  background: var(--green);
+  background: var(--blue);
 }
 
 .credit-stats {
@@ -822,10 +820,10 @@ body.theme-dark .activity-tags span {
 }
 
 .credit-stats div {
-  min-height: 72px;
+  min-height: 64px;
   padding: 14px 16px;
-  border-radius: 8px;
-  background: #f5f8fc;
+  border-radius: 12px;
+  background: var(--gray-soft);
 }
 
 .credit-stats strong,
@@ -857,10 +855,10 @@ body.theme-dark .activity-tags span {
   display: grid;
   min-width: 0;
   align-content: center;
-  min-height: 82px;
-  padding: 18px;
-  border-radius: 8px;
-  background: #f2f5f9;
+  min-height: 64px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: var(--gray-soft);
   text-align: center;
 }
 
@@ -907,7 +905,7 @@ body.theme-dark .activity-tags span {
 .card h3 {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 18px;
+  font-size: 24px;
 }
 
 .status,
@@ -1021,13 +1019,13 @@ body.theme-dark .activity-tags span {
 
 .tag-list li {
   max-width: 100%;
-  padding: 9px 12px;
+  padding: 8px 12px;
   overflow-wrap: anywhere;
-  border-radius: 999px;
-  background: #eef4ff;
-  color: #285caa;
-  font-size: 13px;
-  font-weight: 800;
+  border-radius: 20px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .dashboard-summary-card {
@@ -1206,12 +1204,12 @@ body.theme-dark .activity-tags span {
 }
 
 .term-options span {
-  padding: 9px 11px;
-  border-radius: 999px;
-  background: #f2f5f9;
-  color: #687386;
-  font-size: 13px;
-  font-weight: 800;
+  padding: 8px 12px;
+  border-radius: 20px;
+  background: var(--gray-soft);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .term-options .selected {
