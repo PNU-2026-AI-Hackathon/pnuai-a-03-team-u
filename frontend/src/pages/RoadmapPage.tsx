@@ -16,7 +16,7 @@ import {
   searchCourses,
   updateRoadmapItem,
 } from "../api/roadmaps";
-import type { CourseSearchResult, Curriculum, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
+import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
 import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { GraduationProgram } from "../api/studentInfo";
 import { isMockAuthEnabled } from "../api/auth";
