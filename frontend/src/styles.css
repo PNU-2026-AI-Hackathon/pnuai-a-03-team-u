@@ -327,9 +327,9 @@ body.theme-dark .topbar-search {
 }
 
 .eyebrow {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -731,7 +731,7 @@ body.theme-dark .activity-tags span {
 .card {
   border: 1px solid var(--gray-line);
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -913,7 +913,7 @@ body.theme-dark .activity-tags span {
 
 .card {
   min-width: 0;
-  padding: 24px;
+  padding: 20px 28px;
 }
 
 .wide {
@@ -4933,7 +4933,7 @@ body.theme-dark .semester-course-status.status-completed {
   grid-template-columns: minmax(280px, 0.75fr) minmax(420px, 1fr);
   gap: 18px;
   align-items: end;
-  padding: 22px;
+  padding: 20px 28px;
 }
 
 .info-sync-panel h2 {
@@ -5023,8 +5023,8 @@ body.theme-dark .semester-course-status.status-completed {
   position: sticky;
   top: 24px;
   display: grid;
-  gap: 10px;
-  padding: 24px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .info-profile-card .student-photo {
@@ -5136,7 +5136,7 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .info-section-card {
-  padding: 22px;
+  padding: 20px 28px;
 }
 
 .graduation-list,
@@ -8421,4 +8421,25 @@ body.theme-dark .roadmap-head-stats span {
 .cmap-swatch.is-required {
   border-color: var(--blue-deep);
   background: var(--blue-deep);
+}
+
+
+/* 졸업요건 카드 — Figma 169:561 Frame 170/135/146
+   제목만 20px(다른 카드는 24px), 총 학점은 24px 파랑 */
+#graduation .card-title h3,
+.info-section-card:has(.graduation-list) .card-title h3 {
+  font-size: 20px;
+}
+
+#graduation .card-title > strong,
+.info-section-card:has(.graduation-list) .card-title > strong {
+  color: var(--blue);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+/* 헤더 블록과 카테고리 행 사이 24px (Frame 147 gap) */
+.graduation-total-bar {
+  width: 100%;
+  margin-bottom: 18px;
 }

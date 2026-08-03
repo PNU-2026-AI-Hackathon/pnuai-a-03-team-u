@@ -745,11 +745,11 @@ export function InfoPage() {
         </aside>
 
         <div className="info-content-stack">
-          <article className="card info-section-card">
+          <article className="card info-section-card" id="graduation">
             <div className="card-title">
               <div>
                 <p className="eyebrow">Graduation</p>
-                <h3>졸업요건</h3>
+                <h3>졸업 요건</h3>
               </div>
               {!isProfileEditing ? <strong>
                 {displayedGraduation && totalCredits !== null && totalCredits !== undefined
