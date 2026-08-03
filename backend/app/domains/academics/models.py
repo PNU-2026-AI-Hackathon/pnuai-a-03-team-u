@@ -1,4 +1,5 @@
-from sqlalchemy import ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -120,6 +121,10 @@ class GraduationRequirement(TimestampMixin, Base):
     required_general_required: Mapped[int | None] = mapped_column(Integer)
     required_general_elective: Mapped[int | None] = mapped_column(Integer)
     required_free_elective: Mapped[int | None] = mapped_column(Integer)
+    # 프로그램별 특수 규칙(택N/M, exclude_categories 등). flat 학점 컬럼으로 담을 수 없는
+    # 규칙만 여기 담는다. 상세 구조는 마이그레이션 d2913a8e3330 참고.
+    # SQLite(골든테스트)에서는 JSON, Postgres에서는 JSONB로 자동 dispatch.
+    special_rules: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
 
 
 class ProgramCourse(TimestampMixin, Base):

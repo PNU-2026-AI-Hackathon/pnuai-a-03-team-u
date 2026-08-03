@@ -1,179 +1,183 @@
-"""
-Golden Data Set for Graduation Requirements Engine.
-이 데이터는 여러 종류의 학생 케이스를 가상으로 정의한 골든 데이터셋입니다.
-나중에 졸업 요건 엔진이 업그레이드될 때마다 이 데이터셋을 통과(pass)하는지 테스트(Regression Test)하는 용도로 사용됩니다.
+"""Golden Data Set for the graduation requirements engine.
+
+이 데이터는 `app/domains/academics/graduation_progress.compute_graduation_progress`
+(flat `graduation_requirements` 테이블 기준)의 회귀 테스트용 시나리오다.
+
+주의: 이 파일은 한때 `RequirementSet`/`RequirementCategory`/`RequirementCourse`
+(팀원의 PR #59, 2026-07-10에 전체 철회됨) 기준으로 작성됐던 적이 있다. 그 스키마는
+택N/M 필수과목, 타학과 과목 재분류, 최소전공 총학점 합산 같은 세부 규칙을 지원했지만
+전부 삭제됐고, 지금 유일하게 남은 판정 로직은 이수구분(category)별 합계 학점만
+단순 대조하는 flat 엔진이다 (`graduation_progress.py` 모듈 docstring 참고). 이 파일은
+그 flat 엔진을 기준으로 다시 작성됐다 — 예전 시나리오(택1 필수과목, 최소전공 합산 등)는
+지금 엔진이 아예 지원하지 않으므로 재현하지 않는다.
+
+각 시나리오의 "programs"/"courses"는 run_golden_tests.py가 다음처럼 해석한다:
+- programs[].department / major: run_golden_tests.py가 미리 만들어둔 마스터 데이터의
+  학과명/전공명 키. 대응하는 department_id/major_id로 해석된다.
+- courses[].category: StudentCourseRecord.category. 그대로 저장되고
+  이수구분별 합계로만 집계된다 — course_id/학과 매칭은 현재 엔진에 없다.
+
+"expected"는 program_type을 키로 하는 dict:
+- requirement_found: 해당 학과/전공×이수유형에 대응하는 GraduationRequirement 행을
+  찾았는지.
+- satisfied: 총 이수학점이 required_total_credits 이상인지 (필드가 없으면 None).
+- categories: {category_name: satisfied bool} — 명시된 카테고리만 검증한다.
+- category_required_credits: {category_name: 기대하는 required_credits 값} — 특정
+  기준학점 행이 선택됐는지(예: major_id 우선순위) 직접 검증할 때만 사용.
+- warning_contains: warnings 리스트 중 하나가 이 문자열을 포함해야 함.
 """
 
 GOLDEN_SCENARIOS = [
     {
         "scenario_id": "TC01_STANDARD_PASS",
-        "description": "일반 주전공 졸업 (모든 요건 정확히 충족)",
+        "description": "표준 주전공(컴퓨터공학과) 졸업 — 6개 카테고리 전부 정확히 충족",
         "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"}
+            {"type": "primary", "department": "컴퓨터공학과", "major": None, "curriculum_year": "2026"},
         ],
         "courses": [
-            {"name": "CS전필1", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
-            {"name": "CS전필2", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
-            {"name": "CS전선1", "department": "컴퓨터공학과", "category": "전공선택", "credits": 30.0},
-            {"name": "교양1", "department": "교양교육원", "category": "교양", "credits": 35.0},
+            {"category": "전공기초", "credits": 9.0},
+            {"category": "전공필수", "credits": 40.0},
+            {"category": "전공선택", "credits": 30.0},
+            {"category": "교양필수", "credits": 15.0},
+            {"category": "교양선택", "credits": 20.0},
+            {"category": "일반선택", "credits": 16.0},
         ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []}
-        }
-    },
-    {
-        "scenario_id": "TC02_GEN_ED_FAIL",
-        "description": "교양 학점 미달 학생 (전공은 모두 채웠으나 교양이 부족)",
-        "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"}
-        ],
-        "courses": [
-            {"name": "CS전필1", "department": "컴퓨터공학과", "category": "전공필수", "credits": 40.0},
-            {"name": "CS전선1", "department": "컴퓨터공학과", "category": "전공선택", "credits": 35.0},
-            {"name": "교양1", "department": "교양교육원", "category": "교양", "credits": 20.0}, # 필요: 35, 이수: 20
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": False, "failed_categories": ["교양"]}
-        }
-    },
-    {
-        "scenario_id": "TC03_TRANSFER_STUDENT",
-        "description": "타과(수학과)에서 컴공으로 전과한 학생 (이전 전공 과목은 일반선택으로 빠지고 전필 부족)",
-        "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"}
-        ],
-        "courses": [
-            {"name": "이산수학", "department": "수학과", "category": "일반선택", "credits": 40.0}, # 타과 전공은 보통 일반선택이나 일선 처리
-            {"name": "CS전필1", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0}, # 필요: 40, 이수: 20 (미달)
-            {"name": "CS전선1", "department": "컴퓨터공학과", "category": "전공선택", "credits": 30.0},
-            {"name": "교양1", "department": "교양교육원", "category": "교양", "credits": 40.0},
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": False, "failed_categories": ["전공필수"]}
-        }
-    },
-    {
-        "scenario_id": "TC04_WRONG_CATEGORY",
-        "description": "총 전공 학점은 넘치지만 전공필수를 안 듣고 전공선택만 들은 학생",
-        "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"}
-        ],
-        "courses": [
-            {"name": "CS전선1", "department": "컴퓨터공학과", "category": "전공선택", "credits": 90.0}, # 전선은 과다
-            {"name": "교양1", "department": "교양교육원", "category": "교양", "credits": 35.0},
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": False, "failed_categories": ["전공필수"]}
-        }
-    },
-    {
-        "scenario_id": "TC05_DUAL_MAJOR_PASS",
-        "description": "컴공(주전공) + 수학(복수전공) - 양쪽 모두 완벽히 충족",
-        "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"},
-            {"code": "MATH01", "type": "dual", "major": "수학과"}
-        ],
-        "courses": [
-            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 40.0},
-            {"name": "CS전선", "department": "컴퓨터공학과", "category": "전공선택", "credits": 30.0},
-            {"name": "수학전필", "department": "수학과", "category": "전공필수", "credits": 35.0},
-            {"name": "수학전선", "department": "수학과", "category": "전공선택", "credits": 20.0},
-            {"name": "교양", "department": "교양교육원", "category": "교양", "credits": 35.0},
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []},
-            "dual": {"status": "evaluated", "all_passed": True, "failed_categories": []}
-        }
-    },
-    {
-        "scenario_id": "TC06_MINOR_FAIL",
-        "description": "컴공(주전공) + 수학(부전공) - 주전공은 통과했으나 부전공 필수 과목 부족",
-        "programs": [
-            {"code": "CS01", "type": "primary", "major": "컴퓨터공학과"},
-            {"code": "MATH01", "type": "minor", "major": "수학과"}
-        ],
-        "courses": [
-            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 40.0},
-            {"name": "CS전선", "department": "컴퓨터공학과", "category": "전공선택", "credits": 30.0},
-            {"name": "교양", "department": "교양교육원", "category": "교양", "credits": 35.0},
-            {"name": "수학전필", "department": "수학과", "category": "전공필수", "credits": 10.0}, # 필요: 21, 이수: 10 (미달)
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []},
-            "minor": {"status": "evaluated", "all_passed": False, "failed_categories": ["수학전공필수(부)"]}
-        }
-    },
-    {
-        "scenario_id": "TC07_CROSS_DEPT_TO_FREE_ELECTIVE",
-        "description": "타학과 전공선택 과목을 들으면 그 학과 전공 학점이 아니라 일반선택 학점으로 잡혀야 함",
-        "programs": [
-            {"code": "CS02", "type": "primary", "major": "컴퓨터공학과"}
-        ],
-        "courses": [
-            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
-            # 수학과 소속 과목을 전공선택으로 들었지만, 컴공 프로그램 입장에서는
-            # 전공 학점이 아니라 일반선택으로 인정돼야 한다 (필요: 6, 이수: 6).
-            {"name": "수학전선", "department": "수학과", "category": "전공선택", "credits": 6.0},
-        ],
-        "expected_results": {
-            "primary": {"status": "evaluated", "all_passed": True, "failed_categories": []}
-        }
-    },
-    {
-        "scenario_id": "TC08_REQUIRED_COURSE_CHOICE_GROUP",
-        "description": "선택형(택1) 필수과목 - 대체 과목 중 하나만 이수해도 충족으로 인정돼야 함",
-        "programs": [
-            {"code": "CS03", "type": "primary", "major": "컴퓨터공학과"}
-        ],
-        "courses": [
-            {"name": "CS전필", "department": "컴퓨터공학과", "category": "전공필수", "credits": 20.0},
-            # 필수과목 요건은 "캡스톤디자인|종합설계" 중 하나를 요구한다. 학생은
-            # 두 번째 대체 과목("종합설계")만 들었으므로, 문자열 그대로 비교하면
-            # 절대 못 찾지만 실제로는 충족된 것으로 인정돼야 한다.
-            {"name": "종합설계", "department": "컴퓨터공학과", "category": "전공선택", "credits": 3.0},
-        ],
-        "expected_results": {
+        "expected": {
             "primary": {
-                "status": "evaluated",
-                "all_passed": True,
-                "failed_categories": [],
-                "required_courses_completed": ["캡스톤디자인 / 종합설계"],
-                "required_courses_missing": [],
-            }
-        }
+                "requirement_found": True,
+                "satisfied": True,
+                "categories": {
+                    "전공기초": True,
+                    "전공필수": True,
+                    "전공선택": True,
+                    "교양필수": True,
+                    "교양선택": True,
+                    "일반선택": True,
+                },
+            },
+        },
     },
     {
-        "scenario_id": "TC09_MAJOR_TOTAL_AGGREGATE",
-        "description": "최소전공 총학점(minimum_major_total) - 전공기초/필수/선택 합산으로 충족 판정",
+        "scenario_id": "TC02_CATEGORY_SHORTFALL",
+        "description": "전공선택 학점만 미달 — 해당 카테고리와 총계가 함께 미충족으로 잡혀야 함",
         "programs": [
-            {"code": "MATH02", "type": "dual", "major": "수학과"}
+            {"type": "primary", "department": "컴퓨터공학과", "major": None, "curriculum_year": "2026"},
         ],
         "courses": [
-            {"name": "수학전기", "department": "수학과", "category": "전공기초", "credits": 6.0},
-            {"name": "수학전필A", "department": "수학과", "category": "전공필수", "credits": 9.0},
-            {"name": "수학전선A", "department": "수학과", "category": "전공선택", "credits": 6.0},
+            {"category": "전공기초", "credits": 9.0},
+            {"category": "전공필수", "credits": 40.0},
+            {"category": "전공선택", "credits": 20.0},  # 필요: 30, 이수: 20 (미달)
+            {"category": "교양필수", "credits": 15.0},
+            {"category": "교양선택", "credits": 20.0},
+            {"category": "일반선택", "credits": 16.0},
         ],
-        "expected_results": {
-            "dual": {"status": "evaluated", "all_passed": True, "failed_categories": []}
-        }
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "satisfied": False,
+                "categories": {
+                    "전공기초": True,
+                    "전공필수": True,
+                    "전공선택": False,
+                    "교양필수": True,
+                    "교양선택": True,
+                    "일반선택": True,
+                },
+            },
+        },
     },
     {
-        "scenario_id": "TC10_MAJOR_TOTAL_EXCLUDES_GENERAL",
-        "description": "최소전공 총학점 합산에 교양 학점이 섞이면 안 됨 (전공 15 + 교양 12 = 21 아님)",
+        "scenario_id": "TC03_MISSING_REQUIREMENT_ROW",
+        "description": "요건 데이터 자체가 없는 학과×이수유형(컴퓨터공학과×복수전공) — 판정 불가 상태로 명확히 남아야 함",
         "programs": [
-            {"code": "MATH02", "type": "dual", "major": "수학과"}
+            {"type": "dual", "department": "컴퓨터공학과", "major": None, "curriculum_year": "2026"},
+        ],
+        "courses": [],
+        "expected": {
+            "dual": {
+                "requirement_found": False,
+                "satisfied": None,
+            },
+        },
+    },
+    {
+        "scenario_id": "TC04_CURRICULUM_YEAR_FALLBACK",
+        "description": "학생 교육과정연도(2026)와 정확히 일치하는 산업공학과 기준학점이 없어 2024년도 행으로 대체돼야 함",
+        "programs": [
+            {"type": "primary", "department": "산업공학과", "major": None, "curriculum_year": "2026"},
         ],
         "courses": [
-            {"name": "수학전기", "department": "수학과", "category": "전공기초", "credits": 6.0},
-            {"name": "수학전필A", "department": "수학과", "category": "전공필수", "credits": 9.0},
-            {"name": "교양과목", "department": "교양교육원", "category": "교양", "credits": 12.0},
+            {"category": "전공필수", "credits": 20.0},
         ],
-        "expected_results": {
-            "dual": {"status": "evaluated", "all_passed": False, "failed_categories": ["최소전공(복수)"]}
-        }
-    }
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "satisfied": None,  # 이 행은 required_total_credits가 비어 있음
+                "categories": {"전공필수": True},
+                "warning_contains": "2024년 기준으로 대체함",
+            },
+        },
+    },
+    {
+        "scenario_id": "TC05_MAJOR_SPECIFIC_OVERRIDE",
+        "description": "major_id가 있으면 학과 레벨(컴퓨터공학과 40학점)이 아니라 전공 레벨(데이터사이언스전공 25학점) 기준학점을 써야 함",
+        "programs": [
+            {
+                "type": "primary",
+                "department": "컴퓨터공학과",
+                "major": "데이터사이언스전공",
+                "curriculum_year": "2026",
+            },
+        ],
+        "courses": [
+            {"category": "전공필수", "credits": 25.0},
+        ],
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "categories": {"전공필수": True},
+                "category_required_credits": {"전공필수": 25},
+            },
+        },
+    },
+    {
+        "scenario_id": "TC06_DUAL_PROGRAM_SHARES_EARNED_POOL",
+        "description": (
+            "복수전공(컴퓨터공학과 주전공 + 수학과 복수전공) 병행 시, 이수학점 집계가 "
+            "프로그램별로 분리되지 않고 사용자 전체 이수내역을 그대로 공유한다는 현재 "
+            "엔진의 알려진 단순화를 고정한다 (course_id 기반 학과 필터링 없음, "
+            "CLAUDE.md 테스트/검증 절 '알려진 한계' 참고)"
+        ),
+        "programs": [
+            {"type": "primary", "department": "컴퓨터공학과", "major": None, "curriculum_year": "2026"},
+            {"type": "dual", "department": "수학과", "major": None, "curriculum_year": "2026"},
+        ],
+        "courses": [
+            {"category": "전공기초", "credits": 9.0},
+            {"category": "전공필수", "credits": 48.0},
+            {"category": "전공선택", "credits": 42.0},
+            {"category": "교양필수", "credits": 15.0},
+            {"category": "교양선택", "credits": 20.0},
+            {"category": "일반선택", "credits": 16.0},
+        ],
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "satisfied": True,
+                "categories": {"전공필수": True, "전공선택": True},
+            },
+            "dual": {
+                "requirement_found": True,
+                "satisfied": True,
+                "categories": {"전공필수": True, "전공선택": True},
+            },
+            # primary/dual의 earned_total_credits가 정확히 같아야 함(공유 풀 검증).
+            "shared_earned_total_credits": True,
+        },
+    },
 ]
 
 if __name__ == "__main__":
     import json
+
     print(json.dumps(GOLDEN_SCENARIOS, indent=2, ensure_ascii=False))
