@@ -737,69 +737,7 @@ function MockRoadmapPage() {
         <div className="roadmap-main">
           {activeTab === "semester" ? (
             <div id="semester-panel" role="tabpanel" aria-labelledby="semester-tab">
-              <div className="requirement-strip-wrap">
-                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공/교양 이수 요건">
-                  {requirementGroups.map((group) => {
-                    const remaining = Math.max(group.required - group.earned, 0);
-                    const progress = Math.min(100, Math.round((group.earned / group.required) * 100));
-
-                    return (
-                      <article
-                        className={remaining === 0 ? "requirement-summary-card completed" : "requirement-summary-card"}
-                        key={group.category}
-                        aria-label={`${group.category}: ${group.required}학점 중 ${remaining}학점 남음`}
-                      >
-                        <div className="requirement-summary-head">
-                          <h3>{group.category}</h3>
-                          <strong className="requirement-credit-ratio">
-                            {group.earned}/{group.required}
-                            {remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}
-                          </strong>
-                        </div>
-                        <div
-                          className="requirement-summary-progress"
-                          role="progressbar"
-                          aria-label={`${group.category} 이수율`}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={progress}
-                        >
-                          <span style={{ width: `${progress}%` }} />
-                        </div>
-                        <small>
-                          {remaining === 0
-                            ? "요건 충족 완료"
-                            : group.courses[0]
-                            ? `${group.courses[0].name} ${group.courses[0].credits}학점 ${group.courses[0].status}`
-                            : `${remaining}학점 추가 이수 필요`}
-                        </small>
-                      </article>
-                    );
-                  })}
-                </section>
-                {requirementScrollState.canScrollLeft ? (
-                  <button
-                    className="requirement-scroll-button scroll-left"
-                    type="button"
-                    aria-label="이전 학점 현황 보기"
-                    title="이전 학점 현황 보기"
-                    onClick={() => scrollRequirementCards("left")}
-                  >
-                    <ChevronLeft size={18} aria-hidden="true" />
-                  </button>
-                ) : null}
-                {requirementScrollState.canScrollRight ? (
-                  <button
-                    className="requirement-scroll-button scroll-right"
-                    type="button"
-                    aria-label="다음 학점 현황 보기"
-                    title="다음 학점 현황 보기"
-                    onClick={() => scrollRequirementCards("right")}
-                  >
-                    <ChevronRight size={18} aria-hidden="true" />
-                  </button>
-                ) : null}
-              </div>
+              
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
 
@@ -943,6 +881,69 @@ function MockRoadmapPage() {
               role="tabpanel"
               aria-labelledby="requirements-tab"
             >
+<div className="requirement-strip-wrap">
+                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공/교양 이수 요건">
+                  {requirementGroups.map((group) => {
+                    const remaining = Math.max(group.required - group.earned, 0);
+                    const progress = Math.min(100, Math.round((group.earned / group.required) * 100));
+
+                    return (
+                      <article
+                        className={remaining === 0 ? "requirement-summary-card completed" : "requirement-summary-card"}
+                        key={group.category}
+                        aria-label={`${group.category}: ${group.required}학점 중 ${remaining}학점 남음`}
+                      >
+                        <div className="requirement-summary-head">
+                          <h3>{group.category}</h3>
+                          <strong className="requirement-credit-ratio">
+                            {group.earned}/{group.required}
+                            {remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}
+                          </strong>
+                        </div>
+                        <div
+                          className="requirement-summary-progress"
+                          role="progressbar"
+                          aria-label={`${group.category} 이수율`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={progress}
+                        >
+                          <span style={{ width: `${progress}%` }} />
+                        </div>
+                        <small>
+                          {remaining === 0
+                            ? "요건 충족 완료"
+                            : group.courses[0]
+                            ? `${group.courses[0].name} ${group.courses[0].credits}학점 ${group.courses[0].status}`
+                            : `${remaining}학점 추가 이수 필요`}
+                        </small>
+                      </article>
+                    );
+                  })}
+                </section>
+                {requirementScrollState.canScrollLeft ? (
+                  <button
+                    className="requirement-scroll-button scroll-left"
+                    type="button"
+                    aria-label="이전 학점 현황 보기"
+                    title="이전 학점 현황 보기"
+                    onClick={() => scrollRequirementCards("left")}
+                  >
+                    <ChevronLeft size={18} aria-hidden="true" />
+                  </button>
+                ) : null}
+                {requirementScrollState.canScrollRight ? (
+                  <button
+                    className="requirement-scroll-button scroll-right"
+                    type="button"
+                    aria-label="다음 학점 현황 보기"
+                    title="다음 학점 현황 보기"
+                    onClick={() => scrollRequirementCards("right")}
+                  >
+                    <ChevronRight size={18} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
               {requirementGroups.map((group) => {
                 const remaining = Math.max(group.required - group.earned, 0);
                 const progress = Math.min(100, Math.round((group.earned / group.required) * 100));
@@ -1744,23 +1745,7 @@ function ConnectedRoadmapPage() {
         <div className="roadmap-main">
           {activeTab === "semester" ? (
             <div id="semester-panel" role="tabpanel" aria-labelledby="semester-tab">
-              <div className="requirement-strip-shell">
-                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공 및 교양 이수 요건">
-                  {requirementGroups.length > 0 ? requirementGroups.map((group) => {
-                    const remaining = Math.max(group.required - group.earned, 0);
-                    const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
-                    return (
-                      <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
-                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
-                        <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
-                        <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
-                      </article>
-                    );
-                  }) : <p className="roadmap-inline-empty">학생지원시스템 동기화 후 이수 현황이 표시됩니다.</p>}
-                </section>
-                {requirementScrollState.canScrollLeft ? <button className="requirement-scroll-button scroll-left" type="button" aria-label="이전 학점 현황 보기" onClick={() => scrollRequirementCards("left")}><ChevronLeft size={18} aria-hidden="true" /></button> : null}
-                {requirementScrollState.canScrollRight ? <button className="requirement-scroll-button scroll-right" type="button" aria-label="다음 학점 현황 보기" onClick={() => scrollRequirementCards("right")}><ChevronRight size={18} aria-hidden="true" /></button> : null}
-              </div>
+              
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
               <section className="semester-timeline">
@@ -1833,6 +1818,23 @@ function ConnectedRoadmapPage() {
             </div>
           ) : activeTab === "requirements" ? (
             <section id="requirements-panel" className="requirements-overview" role="tabpanel" aria-labelledby="requirements-tab">
+<div className="requirement-strip-shell">
+                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공 및 교양 이수 요건">
+                  {requirementGroups.length > 0 ? requirementGroups.map((group) => {
+                    const remaining = Math.max(group.required - group.earned, 0);
+                    const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
+                    return (
+                      <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
+                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
+                        <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
+                        <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
+                      </article>
+                    );
+                  }) : <p className="roadmap-inline-empty">학생지원시스템 동기화 후 이수 현황이 표시됩니다.</p>}
+                </section>
+                {requirementScrollState.canScrollLeft ? <button className="requirement-scroll-button scroll-left" type="button" aria-label="이전 학점 현황 보기" onClick={() => scrollRequirementCards("left")}><ChevronLeft size={18} aria-hidden="true" /></button> : null}
+                {requirementScrollState.canScrollRight ? <button className="requirement-scroll-button scroll-right" type="button" aria-label="다음 학점 현황 보기" onClick={() => scrollRequirementCards("right")}><ChevronRight size={18} aria-hidden="true" /></button> : null}
+              </div>
               {requirementGroups.length > 0 ? requirementGroups.map((group) => {
                 const remaining = Math.max(group.required - group.earned, 0);
                 const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;

@@ -268,6 +268,23 @@ export function DashboardPage() {
           </Link>
         </article>
 
+        <article className="card certificate-card dashboard-summary-card">
+          <div className="card-title">
+            <div>
+              <p className="eyebrow">자격증</p>
+              <h3>현재 딴 자격증</h3>
+            </div>
+            <strong>{credentials.length}개</strong>
+          </div>
+          <ul className="tag-list">
+            {visibleCredentials.map((credential) => <li key={credential}>{credential}</li>)}
+            {credentials.length === 0 ? <li>등록된 항목 없음</li> : null}
+          </ul>
+          {credentials.length > CREDENTIAL_PREVIEW_LIMIT ? (
+            <Link className="dashboard-more-link" to="/info#credentials">더보기 <ChevronRight size={14} aria-hidden="true" /></Link>
+          ) : null}
+        </article>
+
         <article className="card activity-card dashboard-summary-card">
           <div className="card-title">
             <div>
@@ -290,23 +307,6 @@ export function DashboardPage() {
           </ul>
           {dashboardActivities.length > ACTIVITY_PREVIEW_LIMIT ? (
             <Link className="dashboard-more-link" to="/info#activities">더보기 <ChevronRight size={14} aria-hidden="true" /></Link>
-          ) : null}
-        </article>
-
-        <article className="card certificate-card dashboard-summary-card">
-          <div className="card-title">
-            <div>
-              <p className="eyebrow">자격증</p>
-              <h3>현재 딴 자격증</h3>
-            </div>
-            <strong>{credentials.length}개</strong>
-          </div>
-          <ul className="tag-list">
-            {visibleCredentials.map((credential) => <li key={credential}>{credential}</li>)}
-            {credentials.length === 0 ? <li>등록된 항목 없음</li> : null}
-          </ul>
-          {credentials.length > CREDENTIAL_PREVIEW_LIMIT ? (
-            <Link className="dashboard-more-link" to="/info#credentials">더보기 <ChevronRight size={14} aria-hidden="true" /></Link>
           ) : null}
         </article>
 
