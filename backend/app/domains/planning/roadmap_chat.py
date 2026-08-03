@@ -34,8 +34,9 @@ from sqlalchemy.orm import Session
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.graduation_progress import compute_graduation_progress
+from app.domains.academics.program_evaluator import evaluate_program
+from app.domains.academics.models import GraduationRequirement, ProgramCourse, StudentCourseRecord, UserAcademicProgram
 from app.domains.courses.models import Course
-from app.domains.academics.models import GraduationRequirement, StudentCourseRecord, UserAcademicProgram
 from app.domains.planning.models import (
     CourseRoadmap,
     CourseRoadmapChatMessage,
@@ -183,6 +184,19 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   구하는 문장을 넣고, 사용자가 승인해야만 실제로 반영된다는 걸 분명히 말해라.
 - 학생이 이미 만족한 이수구분에는 무리하게 과목을 더 넣지 말고, 부족한 이수구분 위주로
   추천해라.
+- **부전공·복수전공·SW융합트랙(program_type != 'primary') 챙기기**: 학생이 그런 프로그램에
+  등록돼 있으면(get_graduation_progress 응답의 programs 리스트에 primary 이외 항목이 있으면)
+  주전공만 챙기지 마라. 다음을 순서대로 처리해라:
+  1. `get_program_evaluations`를 호출해 각 프로그램의 그룹별 완료·부족 정보를 확인한다
+     (특히 부전공 필수과목 몇 개 남았는지, SW융합트랙 학점 그룹별 진행률).
+  2. 부족한 그룹의 인정 과목을 검색할 때는 `search_courses`에 `program_type` 파라미터를
+     넘겨라(예: `program_type="minor"`). 그러면 그 프로그램의 개설학과 + program_courses에
+     명시된 인정 과목이 후보에 뜬다. 주전공 학과 필터로만 검색하면 부전공 필수과목이
+     아예 결과에 안 나온다.
+  3. propose_change의 `program_type` 필드에 해당 프로그램 값(minor/dual/interdisciplinary)을
+     넘겨 어느 프로그램용 항목인지 명확히 태깅해라. 지정 안 하면 주전공용으로 취급된다.
+  4. 부전공 필수과목이 남아 있으면 사용자에게 그걸 우선 언급해라 — 필수과목을 안 채우면
+     선택과목 학점만 21학점 채워도 부전공 완료로 인정 안 된다.
 - get_roadmap_items 결과의 earliest_recorded_grade를 반드시 확인해라. 값이 있으면
   그 학년 미만(예: earliest_recorded_grade가 3이면 1,2학년)으로는 propose_change를
   호출하지 마라 — 편입생 등 그 학년 미만 이수 기록이 아예 없는 학생이라는 뜻이고,
@@ -240,7 +254,25 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "get_graduation_progress",
-            "description": "학생의 주전공 졸업요건 대비 이수구분별 남은 학점을 조회한다.",
+            "description": (
+                "학생의 활성 프로그램(주전공/부전공/복수전공/융합) 전부의 이수구분별 남은 학점을 조회한다. "
+                "programs 리스트에 program_type='primary' 외에 minor/dual/interdisciplinary가 함께 나올 수 있다. "
+                "부전공·SW융합 등의 세부 그룹 규칙(택N/M·필수과목·exclude)까지 판정하려면 "
+                "get_program_evaluations를 추가로 호출해라."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_program_evaluations",
+            "description": (
+                "부전공·복수전공·SW융합트랙(program_type != 'primary') 프로그램의 그룹별 규칙 판정 결과를 조회한다. "
+                "각 프로그램의 special_rules(그룹별 all/min_courses/min_credits) 기준으로 이수 여부와 부족분을 "
+                "돌려준다. 학생이 부전공 이수 중이면 필수과목 몇 개 남았는지, 총학점 얼마 남았는지 "
+                "여기서 확인해라. get_graduation_progress가 학점 총계만 준다면 이 도구는 세부 그룹 규칙까지 준다."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -306,6 +338,18 @@ _TOOLS = [
                             "필터하고, 그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게 잡아라."
                         ),
                     },
+                    "program_type": {
+                        "type": "string",
+                        "enum": ["primary", "minor", "dual", "interdisciplinary"],
+                        "description": (
+                            "검색 스코프를 어느 프로그램의 학과로 잡을지. 지정하지 않거나 'primary'면 "
+                            "주전공 학과에서 검색. 'minor'/'dual'/'interdisciplinary'를 넘기면 학생 학적에서 "
+                            "해당 program_type의 학과·전공을 조회해 그 학과 개설과목 + 그 프로그램의 "
+                            "인정과목(program_courses)까지 후보로 뜬다. 부전공 필수과목 추천할 때는 "
+                            "반드시 program_type='minor'로 호출해라 — 안 그러면 주전공 학과만 검색해서 "
+                            "부전공 학과 과목이 결과에 안 나온다."
+                        ),
+                    },
                 },
                 "required": [],
             },
@@ -338,6 +382,15 @@ _TOOLS = [
                         "description": "커리큘럼 기준 학년(1~4). planned_year와 학생 curriculum_year로부터 일관되게 계산돼야 한다.",
                     },
                     "reason": {"type": "string", "description": "이 변경을 제안하는 이유"},
+                    "program_type": {
+                        "type": "string",
+                        "enum": ["primary", "minor", "dual", "interdisciplinary"],
+                        "description": (
+                            "이 항목이 어느 프로그램용인지 태깅. 기본 NULL=주전공/미지정. "
+                            "부전공 필수과목을 create할 때는 반드시 'minor'로 넘겨야 판정 로직이 "
+                            "그 항목을 부전공 이수 항목으로 취급한다."
+                        ),
+                    },
                 },
                 "required": ["action", "reason"],
             },
@@ -396,11 +449,16 @@ class _ToolContext:
         self.pending_changes: list[PendingRoadmapChange] = []
 
     def get_graduation_progress(self) -> dict:
-        progresses = compute_graduation_progress(self.db, self.user.id, program_types={"primary"})
+        # 부전공/복수전공/융합전공까지 모두 진도 계산해 LLM에 노출
+        progresses = compute_graduation_progress(
+            self.db, self.user.id, program_types={"primary", "minor", "dual", "interdisciplinary"}
+        )
         return {
             "programs": [
                 {
                     "program_type": p.program_type,
+                    "department_id": p.department_id,
+                    "major_id": p.major_id,
                     "requirement_found": p.requirement_found,
                     "required_total_credits": p.required_total_credits,
                     "earned_total_credits": float(p.earned_total_credits),
@@ -420,6 +478,70 @@ class _ToolContext:
                 for p in progresses
             ]
         }
+
+    def get_program_evaluations(self) -> dict:
+        """부전공·SW융합트랙 등 program_type != 'primary' 프로그램의 규칙 기반 판정.
+
+        graduation_requirements.special_rules(JSONB)에 담긴 그룹별 규칙
+        (all/min_courses/min_credits/min_distinct_departments)을 학생 이수내역과
+        대조해 각 그룹 완료 여부·부족분을 반환한다. 부전공 필수과목 남은 개수,
+        SW융합트랙 학점 그룹별 진행률 등에 사용.
+        """
+        # 학생의 non-primary 프로그램 순회
+        programs = self.db.scalars(
+            select(UserAcademicProgram)
+            .where(UserAcademicProgram.user_id == self.user.id, UserAcademicProgram.status == "active")
+            .where(UserAcademicProgram.program_type != "primary")
+        ).all()
+
+        results = []
+        for prog in programs:
+            if prog.department_id is None:
+                continue
+            r = evaluate_program(
+                self.db,
+                user_id=self.user.id,
+                department_id=prog.department_id,
+                major_id=prog.major_id,
+                program_type=prog.program_type,
+                curriculum_year=prog.curriculum_year,
+            )
+            if r is None:
+                results.append({
+                    "program_type": prog.program_type,
+                    "department_id": prog.department_id,
+                    "major_id": prog.major_id,
+                    "curriculum_year": prog.curriculum_year,
+                    "requirement_found": False,
+                    "note": "special_rules 요건 데이터가 없습니다 (학과사무실 문의 or 후속 시드 대상).",
+                })
+                continue
+            results.append({
+                "program_type": r.program_type,
+                "department_id": r.department_id,
+                "major_id": r.major_id,
+                "curriculum_year": r.curriculum_year,
+                "requirement_found": True,
+                "completed": r.completed,
+                "total_credits_required": r.total_credits_required,
+                "total_credits_earned": float(r.total_credits_earned),
+                "total_credits_ok": r.total_credits_ok,
+                "exclude_categories": r.excluded_categories,
+                "notes": r.notes,
+                "groups": [
+                    {
+                        "label": g.label,
+                        "rule_type": g.rule_type,
+                        "required_n": g.required_n,
+                        "required_credits": g.required_credits,
+                        "matched_courses": g.matched_courses or [],
+                        "completed": g.completed,
+                        "shortage": g.shortage,
+                    }
+                    for g in r.groups
+                ],
+            })
+        return {"evaluations": results}
 
     def _min_completed_grade(self) -> int | None:
         """편입생에게 1·2학년 과목을 새로 추천하지 않도록 하기 위한 "학생이 실제로
@@ -558,19 +680,40 @@ class _ToolContext:
         semester: str | None = None,
         grade: str | int | None = None,
         category: str | None = None,
+        program_type: str | None = None,
     ) -> dict:
-        # 학과가 없으면 학과 스코프를 잡을 수 없어 애초에 검색이 무의미하다.
-        if self.user.department_id is None:
-            return {"results": []}
-        # query가 비어 있어도 이제는 통과 — semester/grade/category 필터만으로
-        # "그 학기 개설된 과목 훑어보기"를 허용한다(다음 학기 추천처럼 특정 키워드
-        # 없이 후보를 뽑아야 하는 케이스).
+        """과목 후보 검색.
+
+        program_type: None(기본, 주전공 학과) | "minor" | "dual" | "interdisciplinary"
+        지정 시 UserAcademicProgram에서 해당 program_type의 department/major 조회 후
+        그 학과 개설과목 + program_courses 인정과목을 검색 대상으로 사용한다.
+        """
         query = (query or "").strip()
 
-        program = self.db.scalars(
-            select(UserAcademicProgram).filter_by(user_id=self.user.id, program_type="primary")
-        ).first()
-        curriculum_year = program.curriculum_year if program and program.curriculum_year else _DEFAULT_CURRICULUM_YEAR
+        # 검색 스코프 결정: program_type 지정되면 해당 프로그램의 dept/major, 아니면 주전공
+        if program_type and program_type != "primary":
+            target_prog = self.db.scalars(
+                select(UserAcademicProgram).filter_by(
+                    user_id=self.user.id, program_type=program_type, status="active"
+                )
+            ).first()
+            if target_prog is None or target_prog.department_id is None:
+                return {"results": [], "note": f"{program_type} 프로그램이 학적에 없거나 학과 정보 부족."}
+            search_dept_id = target_prog.department_id
+            search_major_id = target_prog.major_id
+            curriculum_year = target_prog.curriculum_year or _DEFAULT_CURRICULUM_YEAR
+        else:
+            if self.user.department_id is None:
+                return {"results": []}
+            search_dept_id = self.user.department_id
+            search_major_id = self.user.major_id
+            primary_prog = self.db.scalars(
+                select(UserAcademicProgram).filter_by(user_id=self.user.id, program_type="primary")
+            ).first()
+            curriculum_year = (
+                primary_prog.curriculum_year if primary_prog and primary_prog.curriculum_year
+                else _DEFAULT_CURRICULUM_YEAR
+            )
 
         retriever = CurriculumRetriever(self.db)
         filters: dict = {"limit": 15}
@@ -582,11 +725,39 @@ class _ToolContext:
             filters["category"] = category
         results = retriever.search(
             query=query,
-            department_id=self.user.department_id,
-            major_id=self.user.major_id,
+            department_id=search_dept_id,
+            major_id=search_major_id,
             curriculum_year=curriculum_year,
             filters=filters,
         )
+
+        # program_type이 minor/interdisciplinary면 program_courses 인정과목도 병행 후보로 추가.
+        # 부전공은 개설학과 과목 뿐 아니라 program_courses에 명시된 필수과목을 우선 노출해야
+        # LLM이 부전공 필수과목을 놓치지 않는다.
+        if program_type and program_type != "primary":
+            extra_ids = {r["course_id"] for r in results if r.get("course_id")}
+            pc_rows = self.db.scalars(
+                select(ProgramCourse).where(
+                    ProgramCourse.department_id == search_dept_id,
+                    ProgramCourse.major_id == search_major_id,
+                )
+            ).all()
+            for pc in pc_rows:
+                if pc.course_id in extra_ids:
+                    continue
+                c = self.db.get(Course, pc.course_id)
+                if not c:
+                    continue
+                results.append({
+                    "course_id": c.id,
+                    "course_name": c.course_name,
+                    "category": c.category,
+                    "credits": float(c.credits) if c.credits is not None else None,
+                    "grade": c.year,
+                    "semester": c.semester,
+                    "evidence": f"program_courses.requirement_group='{pc.requirement_group}'",
+                    "description": c.description,
+                })
         return {
             "results": [
                 {
@@ -613,9 +784,12 @@ class _ToolContext:
         planned_year: str | None = None,
         planned_semester: str | None = None,
         planned_grade: int | None = None,
+        program_type: str | None = None,
     ) -> dict:
         if action not in ("create", "update", "delete"):
             return {"error": f"알 수 없는 action: {action}"}
+        if program_type is not None and program_type not in ("primary", "minor", "dual", "interdisciplinary"):
+            return {"error": f"program_type은 primary/minor/dual/interdisciplinary 중 하나여야 합니다: {program_type}"}
 
         before_snapshot = None
         if action in ("update", "delete"):
@@ -835,6 +1009,7 @@ class _ToolContext:
             before_snapshot=before_snapshot,
             reason=reason,
             status="pending",
+            program_type=program_type,
         )
         self.db.add(change)
         self.db.flush()
@@ -1141,6 +1316,7 @@ def apply_pending_changes(
                 reason=change.reason,
                 source="ai",
                 is_confirmed=True,
+                program_type=change.program_type,
             )
             db.add(item)
         elif change.action == "update":
@@ -1159,6 +1335,8 @@ def apply_pending_changes(
                     item.planned_semester = change.planned_semester
                 if change.planned_grade is not None:
                     item.planned_grade = change.planned_grade
+                if change.program_type is not None:
+                    item.program_type = change.program_type
                 item.reason = change.reason
                 item.source = "ai"
                 item.is_confirmed = True
