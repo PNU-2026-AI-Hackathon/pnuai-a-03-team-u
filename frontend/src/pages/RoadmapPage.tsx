@@ -1061,16 +1061,19 @@ function MockRoadmapPage() {
                 </div>
                 <span>2026 교육과정 기준</span>
               </div>
-              <div className="curriculum-flow">
+              <div className="cmap-grid">
                 {curriculumFlow.map((group) => (
-                  <article key={group.title}>
-                    <span className="flow-step">{group.step}</span>
-                    <h3>{group.title}</h3>
-                    <ul>
-                      {group.courses.map(([course, status]) => (
-                        <li className={status} key={course}>{course}</li>
-                      ))}
-                    </ul>
+                  <article className="cmap-col" key={group.title}>
+                    <h3 className="cmap-head">{group.title}</h3>
+                    <div className="cmap-body">
+                      <div className="cmap-sem">
+                        <ul>
+                          {group.courses.map(([course, status]) => (
+                            <li className={status === "done" ? "cmap-chip is-major" : status === "doing" ? "cmap-chip is-core" : "cmap-chip"} key={course}>{course}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -1931,9 +1934,53 @@ function ConnectedRoadmapPage() {
             <section id="curriculum-panel" className="curriculum-map course-system" role="tabpanel" aria-labelledby="curriculum-tab">
               <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div><span>{curriculum?.curriculum_year ? `${curriculum.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
               {curriculum?.groups.length ? (
-                <div className="curriculum-flow api-curriculum-flow">{curriculum.groups.map((group, index) => <article key={group.grade}><span className="flow-step">{group.grade === "공통" ? "공통" : `${index + 1}단계`}</span><h3>{group.title}</h3><ul>{group.courses.map((course) => <li className={course.status} key={course.id}><strong>{course.course_name}</strong><small>{[course.semester ? `${course.semester}학기` : null, course.category, course.credits !== null ? `${course.credits}학점` : null].filter(Boolean).join(" · ")}</small></li>)}</ul></article>)}</div>
+                <>
+                  <div className="cmap-grid">
+                    {curriculum.groups.map((group) => {
+                      const bySemester = (want: "1" | "2") => group.courses.filter((course) => {
+                        const sem = String(course.semester ?? "");
+                        if (want === "1") return sem !== "2"; // 학기 미상은 1학기 컬럼에 흡수
+                        return sem === "2";
+                      });
+                      const chipClass = (course: CurriculumCourse) => {
+                        const category = course.category ?? "";
+                        if (category.includes("필수")) return "cmap-chip is-required";
+                        if (category.includes("전공")) return "cmap-chip is-major";
+                        return "cmap-chip";
+                      };
+                      return (
+                        <article className="cmap-col" key={group.grade}>
+                          <h3 className="cmap-head">{group.title}</h3>
+                          <div className="cmap-body">
+                            {(["1", "2"] as const).map((sem) => (
+                              <div className="cmap-sem" key={sem}>
+                                <span className="cmap-sem-head">{sem}학기</span>
+                                <ul>
+                                  {bySemester(sem).map((course) => (
+                                    <li
+                                      className={chipClass(course)}
+                                      key={course.id}
+                                      title={[course.category, course.credits !== null ? `${course.credits}학점` : null].filter(Boolean).join(" · ")}
+                                    >
+                                      {course.course_name}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <ul className="cmap-legend" aria-label="과목 유형 범례">
+                    <li><span className="cmap-swatch is-major" aria-hidden="true" />전공 과목</li>
+                    <li><span className="cmap-swatch is-core" aria-hidden="true" />핵심 과목</li>
+                    <li><span className="cmap-swatch is-required" aria-hidden="true" />필수 과목</li>
+                    <li><span className="cmap-swatch" aria-hidden="true" />기타 과목</li>
+                  </ul>
+                </>
               ) : <p className="roadmap-inline-empty">등록된 학과 이수체계도 데이터가 없습니다.</p>}
-              <div className="curriculum-legend" aria-label="과목 이수 상태 범례"><span className="done">이수 완료</span><span className="planned">로드맵 반영</span><span className="available">이수 가능</span></div>
             </section>
           )}
         </div>

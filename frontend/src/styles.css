@@ -8268,3 +8268,134 @@ body.theme-dark .roadmap-head-stats span {
 .requirement-scroll-button {
   display: none;
 }
+
+
+/* =========================================================================
+   학과 이수체계도 (Figma 212:3038 · Frame 164)
+   학년 컬럼(남색 헤더) > 1/2학기 세부 컬럼 > 유형별 색 과목 칩 + 범례
+   ========================================================================= */
+
+.cmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.cmap-col {
+  min-width: 0;
+}
+
+.cmap-head {
+  margin: 0;
+  padding: 11px 0;
+  border-radius: 20px 20px 0 0;
+  background: var(--blue-deep);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.cmap-body {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 12px;
+  border-radius: 0 0 20px 20px;
+  background: var(--gray-soft);
+}
+
+.cmap-sem {
+  flex: 1;
+  min-width: 0;
+}
+
+.cmap-sem-head {
+  display: block;
+  padding: 12px 0;
+  color: var(--blue-deep);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.cmap-sem ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cmap-chip {
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  padding: 6px 4px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.cmap-chip.is-major {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.cmap-chip.is-core {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.cmap-chip.is-required {
+  border-color: var(--blue-deep);
+  background: var(--blue-deep);
+  color: #fff;
+}
+
+.cmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.cmap-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmap-swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--gray-line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.cmap-swatch.is-major {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.cmap-swatch.is-core {
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.cmap-swatch.is-required {
+  border-color: var(--blue-deep);
+  background: var(--blue-deep);
+}
