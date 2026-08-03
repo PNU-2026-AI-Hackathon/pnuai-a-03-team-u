@@ -296,6 +296,7 @@ export function InfoPage() {
   const currentSemesterLabel = `${new Date().getMonth() + 1 <= 8 ? 1 : 2}학기 재학 중`;
   const totalCredits = displayedGraduation?.required_total_credits;
   const overallGpa = calculateGpa(displayedCourses);
+  const overallMajorGpa = calculateGpa(displayedCourses, true);
   const graduationCategoryTotals = displayedGraduation ? getGraduationCategoryTotals(displayedGraduation) : null;
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
@@ -829,9 +830,7 @@ export function InfoPage() {
                   {isAddingCourse ? <X size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
                   {isAddingCourse ? "추가 취소" : "수강 과목 추가"}
                 </button>
-              ) : (
-                <strong className="grade-average">평균 GPA {formatGpa(overallGpa)}</strong>
-              )}
+              ) : null}
             </div>
             {isProfileEditing && isAddingCourse ? (
               <form className="course-editor" onSubmit={addCourse}>
@@ -878,18 +877,24 @@ export function InfoPage() {
               </form>
             ) : null}
             {courseEditError ? <p className="profile-edit-error course-edit-error" role="alert">{courseEditError}</p> : null}
+            <div className="grade-score-overview" aria-label="전체 평점 요약">
+              <div><span>전체 총평점</span><strong>{formatGpa(overallGpa)}</strong><small>/ 4.50</small></div>
+              <div><span>전체 전공평점</span><strong>{formatGpa(overallMajorGpa)}</strong><small>/ 4.50</small></div>
+            </div>
             {gradeTerms.length === 0 ? <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p> : null}
             <div className="grade-term-list">
               {gradeTerms.map(([term, termCourses]) => {
                 const termGpa = calculateGpa(termCourses);
-                const termCredits = termCourses.reduce((sum, course) => sum + (course.credits ?? 0), 0);
-                const termChipLabel = term.replace(/(\d{4})년\s*/, "$1 - ").replace("학기", "");
+                const termMajorGpa = calculateGpa(termCourses, true);
                 return (
-                <details className="grade-term" key={term} open={isProfileEditing || undefined}>
-                  <summary className="grade-term-chip">
-                    <span>{termChipLabel}</span>
-                    <strong>GPA {formatGpa(termGpa)} · {formatCredit(termCredits)}학점</strong>
-                  </summary>
+                <section key={term}>
+                  <div className="grade-term-head">
+                    <h4>{term}</h4>
+                    <div className="grade-term-scores">
+                      <span>총평점 <strong>{formatGpa(termGpa)}</strong></span>
+                      <span>전공평점 <strong>{formatGpa(termMajorGpa)}</strong></span>
+                    </div>
+                  </div>
                   <div className="grade-table-wrap">
                     <table className="grade-table">
                       <thead>
@@ -927,7 +932,7 @@ export function InfoPage() {
                       </tbody>
                     </table>
                   </div>
-                </details>
+                </section>
                 );
               })}
             </div>
