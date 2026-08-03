@@ -5146,17 +5146,38 @@ body.theme-dark .semester-course-status.status-completed {
   gap: 12px;
 }
 
+.graduation-list {
+  gap: 12px;
+}
+
 .graduation-list > div {
   display: grid;
-  grid-template-columns: 90px minmax(72px, 180px) minmax(0, 1fr);
+  grid-template-columns: 52px 44px minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  column-gap: 8px;
+}
+
+/* 라벨 블록(52+8+44=104px)과 진행바 사이 간격 — Frame 144 gap 12px */
+.graduation-list > div > .stellic-bar {
+  margin-left: 4px;
 }
 
 .graduation-list span,
 .graduation-list strong {
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 12px;
+}
+
+.graduation-list span {
+  font-weight: 500;
+}
+
+.graduation-list strong {
+  font-weight: 700;
+}
+
+/* 카테고리 진행바는 4px (Frame 143 Rectangle 47/48) */
+.graduation-list .stellic-bar {
+  height: 4px;
 }
 
 .graduation-total-editor {
@@ -5237,12 +5258,13 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .graduation-list span {
-  color: #485466;
+  color: var(--ink);
 }
 
 .graduation-list strong {
   color: var(--blue);
   text-align: right;
+  white-space: nowrap;
 }
 
 .info-state,
@@ -8155,16 +8177,17 @@ body.theme-dark .timetable-course.is-conflict {
 }
 
 .graduation-total-bar {
-  height: 8px;
-  border-radius: 4px;
-  background: var(--shell-line);
+  height: 6px;
+  margin-bottom: 4px;
+  border-radius: 20px;
+  background: var(--gray-line);
 }
 
 .graduation-total-bar span {
   display: block;
   height: 100%;
-  border-radius: 4px;
-  background: #16a34a;
+  border-radius: 20px;
+  background: var(--green);
 }
 
 .profile-term-pill {
