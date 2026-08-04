@@ -8465,3 +8465,18 @@ body.theme-dark .roadmap-head-stats span {
   width: 100%;
   margin-bottom: 18px;
 }
+
+
+/* 재설정 링크 발송 안내의 보조 문구 */
+.reset-hint {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 안내 문구가 여러 줄이면 고정 높이 때문에 버튼과 겹쳐서, 이 화면만 높이를 풀어준다 */
+.auth-panel .onboarding-done {
+  height: auto;
+  gap: 10px;
+}

@@ -10,6 +10,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
+import { ResetPasswordPage } from "../pages/ResetPasswordPage";
 import { RoadmapPage } from "../pages/RoadmapPage";
 import { TimetablePage } from "../pages/TimetablePage";
 
@@ -39,6 +40,8 @@ export function AppRouter() {
         <Routes>
           <Route path="/auth" element={<GuestOnly><AuthPage /></GuestOnly>} />
           <Route path="/forgot-password" element={<GuestOnly><ForgotPasswordPage /></GuestOnly>} />
+          {/* 메일 링크로 들어오는 재설정 화면. 로그인 상태면 홈으로 보낸다. */}
+          <Route path="/reset-password" element={<GuestOnly><ResetPasswordPage /></GuestOnly>} />
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />

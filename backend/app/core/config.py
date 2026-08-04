@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7일
 
+    # --- 비밀번호 재설정 메일 ---
+    #
+    # SMTP_HOST가 비어 있으면 메일을 실제로 보내지 않고 재설정 링크를 로그에 남긴다.
+    # 로컬 개발에서 메일 서버 없이 흐름 전체를 확인하기 위한 것이고, 운영에서는
+    # 반드시 SMTP_* 값을 채워야 한다.
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_USE_TLS: bool = True
+    SMTP_FROM: str = "Plan U <no-reply@pusan.ac.kr>"
+
+    # 메일에 담을 재설정 화면 주소. 프론트 배포 주소로 덮어쓴다.
+    PASSWORD_RESET_URL_BASE: str = "http://localhost:5173/reset-password"
+    PASSWORD_RESET_TOKEN_TTL_MINUTES: int = 30
+
     # 쉼표로 구분한 프론트엔드 origin 목록. 로컬과 배포 주소를 환경별로 덮어쓴다.
     CORS_ORIGINS: str = (
         "http://127.0.0.1:5173,http://localhost:5173,"

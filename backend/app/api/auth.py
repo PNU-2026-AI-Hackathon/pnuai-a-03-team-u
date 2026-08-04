@@ -9,17 +9,23 @@ docs/backend/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 �
 
 from __future__ import annotations
 
+import datetime
+import hashlib
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import get_db
+from app.core.mailer import send_password_reset_email
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.domains.academics.hierarchy import resolve_hierarchy
 from app.domains.academics.models import Department, Major, UserAcademicProgram
-from app.domains.users.models import User
+from app.domains.users.models import PasswordResetToken, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -94,6 +100,43 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class PasswordResetRequest(BaseModel):
+    """재설정 링크를 받을 부산대 웹메일 + 본인 이름."""
+
+    email: EmailStr
+    name: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("이름을 입력해야 합니다")
+        return value
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+    @field_validator("token")
+    @classmethod
+    def _check_token(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("토큰이 필요합니다")
+        return value
+
+
+class MessageResponse(BaseModel):
+    message: str
 
 
 class AcademicProgramResponse(BaseModel):
@@ -219,6 +262,87 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
 
     return TokenResponse(access_token=create_access_token(user.id))
+
+
+def _hash_reset_token(token: str) -> str:
+    """토큰 원문 대신 저장/조회에 쓸 sha256 해시.
+
+    bcrypt가 아니라 sha256인 이유: 토큰은 사람이 만든 비밀번호와 달리 128비트
+    난수라 사전 공격 대상이 아니고, 조회 때마다 해시를 다시 계산해 인덱스로 찾아야 한다.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post("/password-reset/request", response_model=MessageResponse)
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    """웹메일과 이름이 모두 일치할 때만 재설정 링크를 메일로 보낸다.
+
+    메일·이름이 맞지 않아도, 가입되지 않은 주소여도 응답은 항상 같다. 응답이
+    갈리면 "이 메일이 가입돼 있는가"를 확인하는 수단이 되기 때문이다(사용자 열거).
+    실제 본인확인은 어차피 메일 수신으로 이뤄지고, 이름은 그 앞단의 추가 확인이다.
+    """
+    user = db.scalar(select(User).where(func.lower(User.email) == payload.email))
+    if user is not None and user.name.strip() != payload.name:
+        user = None
+
+    if user is not None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # 이전에 발급했고 아직 안 쓴 토큰은 무효화한다. 링크는 항상 최신 것 하나만 살아 있다.
+        for stale in db.scalars(
+            select(PasswordResetToken).where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+        ).all():
+            stale.used_at = now
+
+        raw_token = secrets.token_urlsafe(32)
+        db.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=_hash_reset_token(raw_token),
+                expires_at=now + datetime.timedelta(minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES),
+            )
+        )
+        db.commit()
+
+        send_password_reset_email(
+            to=user.email,
+            reset_url=f"{settings.PASSWORD_RESET_URL_BASE}?token={raw_token}",
+            ttl_minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES,
+        )
+
+    return MessageResponse(
+        message="가입된 메일이라면 비밀번호 재설정 링크를 보냈습니다. 메일함을 확인해 주세요."
+    )
+
+
+@router.post("/password-reset/confirm", response_model=MessageResponse)
+def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
+
+    record = db.scalar(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == _hash_reset_token(payload.token)
+        )
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expired = record is not None and record.expires_at.replace(tzinfo=datetime.timezone.utc) <= now
+    if record is None or record.used_at is not None or expired:
+        raise HTTPException(
+            status_code=400, detail="링크가 만료되었거나 이미 사용되었습니다. 다시 요청해 주세요."
+        )
+
+    user = db.get(User, record.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="링크가 유효하지 않습니다. 다시 요청해 주세요.")
+
+    user.password_hash = hash_password(payload.new_password)
+    record.used_at = now
+    db.commit()
+
+    return MessageResponse(message="비밀번호가 변경되었습니다. 새 비밀번호로 로그인해 주세요.")
 
 
 def get_current_user(

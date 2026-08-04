@@ -136,6 +136,29 @@ export async function login(email: string, password: string, rememberLogin = fal
   return data;
 }
 
+/**
+ * 재설정 링크 발송 요청. 웹메일과 이름이 모두 맞아야 발송되지만, 응답 문구는
+ * 가입 여부·일치 여부와 무관하게 항상 같다(가입 여부 노출 방지).
+ */
+export async function requestPasswordReset(email: string, name: string) {
+  const { data } = await apiClient.post<{ message: string }>(
+    "/auth/password-reset/request",
+    { email, name },
+    { timeout: AUTH_REQUEST_TIMEOUT_MS },
+  );
+  return data;
+}
+
+/** 메일 링크의 토큰으로 새 비밀번호를 설정한다. */
+export async function confirmPasswordReset(token: string, newPassword: string) {
+  const { data } = await apiClient.post<{ message: string }>(
+    "/auth/password-reset/confirm",
+    { token, new_password: newPassword },
+    { timeout: AUTH_REQUEST_TIMEOUT_MS },
+  );
+  return data;
+}
+
 export async function getMe() {
   if (isMockAuthEnabled) {
     const savedUser =
