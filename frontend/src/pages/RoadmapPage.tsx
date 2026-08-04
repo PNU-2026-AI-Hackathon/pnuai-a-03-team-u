@@ -16,7 +16,7 @@ import {
   searchCourses,
   updateRoadmapItem,
 } from "../api/roadmaps";
-import type { CourseSearchResult, Curriculum, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
+import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
 import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { GraduationProgram } from "../api/studentInfo";
 import { isMockAuthEnabled } from "../api/auth";
@@ -737,7 +737,7 @@ function MockRoadmapPage() {
         <div className="roadmap-main">
           {activeTab === "semester" ? (
             <div id="semester-panel" role="tabpanel" aria-labelledby="semester-tab">
-              <div className="requirement-strip-wrap">
+<div className="requirement-strip-wrap">
                 <section ref={requirementStripRef} className="requirement-strip" aria-label="전공/교양 이수 요건">
                   {requirementGroups.map((group) => {
                     const remaining = Math.max(group.required - group.earned, 0);
@@ -800,6 +800,7 @@ function MockRoadmapPage() {
                   </button>
                 ) : null}
               </div>
+              
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
 
@@ -943,6 +944,69 @@ function MockRoadmapPage() {
               role="tabpanel"
               aria-labelledby="requirements-tab"
             >
+<div className="requirement-strip-wrap">
+                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공/교양 이수 요건">
+                  {requirementGroups.map((group) => {
+                    const remaining = Math.max(group.required - group.earned, 0);
+                    const progress = Math.min(100, Math.round((group.earned / group.required) * 100));
+
+                    return (
+                      <article
+                        className={remaining === 0 ? "requirement-summary-card completed" : "requirement-summary-card"}
+                        key={group.category}
+                        aria-label={`${group.category}: ${group.required}학점 중 ${remaining}학점 남음`}
+                      >
+                        <div className="requirement-summary-head">
+                          <h3>{group.category}</h3>
+                          <strong className="requirement-credit-ratio">
+                            {group.earned}/{group.required}
+                            {remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}
+                          </strong>
+                        </div>
+                        <div
+                          className="requirement-summary-progress"
+                          role="progressbar"
+                          aria-label={`${group.category} 이수율`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={progress}
+                        >
+                          <span style={{ width: `${progress}%` }} />
+                        </div>
+                        <small>
+                          {remaining === 0
+                            ? "요건 충족 완료"
+                            : group.courses[0]
+                            ? `${group.courses[0].name} ${group.courses[0].credits}학점 ${group.courses[0].status}`
+                            : `${remaining}학점 추가 이수 필요`}
+                        </small>
+                      </article>
+                    );
+                  })}
+                </section>
+                {requirementScrollState.canScrollLeft ? (
+                  <button
+                    className="requirement-scroll-button scroll-left"
+                    type="button"
+                    aria-label="이전 학점 현황 보기"
+                    title="이전 학점 현황 보기"
+                    onClick={() => scrollRequirementCards("left")}
+                  >
+                    <ChevronLeft size={18} aria-hidden="true" />
+                  </button>
+                ) : null}
+                {requirementScrollState.canScrollRight ? (
+                  <button
+                    className="requirement-scroll-button scroll-right"
+                    type="button"
+                    aria-label="다음 학점 현황 보기"
+                    title="다음 학점 현황 보기"
+                    onClick={() => scrollRequirementCards("right")}
+                  >
+                    <ChevronRight size={18} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
               {requirementGroups.map((group) => {
                 const remaining = Math.max(group.required - group.earned, 0);
                 const progress = Math.min(100, Math.round((group.earned / group.required) * 100));
@@ -995,18 +1059,20 @@ function MockRoadmapPage() {
                   <p className="eyebrow">Department Curriculum</p>
                   <h2>데이터사이언스전공 이수 흐름</h2>
                 </div>
-                <span>2026 교육과정 기준</span>
               </div>
-              <div className="curriculum-flow">
+              <div className="cmap-grid">
                 {curriculumFlow.map((group) => (
-                  <article key={group.title}>
-                    <span className="flow-step">{group.step}</span>
-                    <h3>{group.title}</h3>
-                    <ul>
-                      {group.courses.map(([course, status]) => (
-                        <li className={status} key={course}>{course}</li>
-                      ))}
-                    </ul>
+                  <article className="cmap-col" key={group.title}>
+                    <h3 className="cmap-head">{group.title}</h3>
+                    <div className="cmap-body">
+                      <div className="cmap-sem">
+                        <ul>
+                          {group.courses.map(([course, status]) => (
+                            <li className={status === "done" ? "cmap-chip is-major" : status === "doing" ? "cmap-chip is-core" : "cmap-chip"} key={course}>{course}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -1744,7 +1810,7 @@ function ConnectedRoadmapPage() {
         <div className="roadmap-main">
           {activeTab === "semester" ? (
             <div id="semester-panel" role="tabpanel" aria-labelledby="semester-tab">
-              <div className="requirement-strip-shell">
+<div className="requirement-strip-shell">
                 <section ref={requirementStripRef} className="requirement-strip" aria-label="전공 및 교양 이수 요건">
                   {requirementGroups.length > 0 ? requirementGroups.map((group) => {
                     const remaining = Math.max(group.required - group.earned, 0);
@@ -1761,6 +1827,7 @@ function ConnectedRoadmapPage() {
                 {requirementScrollState.canScrollLeft ? <button className="requirement-scroll-button scroll-left" type="button" aria-label="이전 학점 현황 보기" onClick={() => scrollRequirementCards("left")}><ChevronLeft size={18} aria-hidden="true" /></button> : null}
                 {requirementScrollState.canScrollRight ? <button className="requirement-scroll-button scroll-right" type="button" aria-label="다음 학점 현황 보기" onClick={() => scrollRequirementCards("right")}><ChevronRight size={18} aria-hidden="true" /></button> : null}
               </div>
+              
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
               <section className="semester-timeline">
@@ -1833,6 +1900,23 @@ function ConnectedRoadmapPage() {
             </div>
           ) : activeTab === "requirements" ? (
             <section id="requirements-panel" className="requirements-overview" role="tabpanel" aria-labelledby="requirements-tab">
+<div className="requirement-strip-shell">
+                <section ref={requirementStripRef} className="requirement-strip" aria-label="전공 및 교양 이수 요건">
+                  {requirementGroups.length > 0 ? requirementGroups.map((group) => {
+                    const remaining = Math.max(group.required - group.earned, 0);
+                    const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
+                    return (
+                      <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
+                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
+                        <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
+                        <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
+                      </article>
+                    );
+                  }) : <p className="roadmap-inline-empty">학생지원시스템 동기화 후 이수 현황이 표시됩니다.</p>}
+                </section>
+                {requirementScrollState.canScrollLeft ? <button className="requirement-scroll-button scroll-left" type="button" aria-label="이전 학점 현황 보기" onClick={() => scrollRequirementCards("left")}><ChevronLeft size={18} aria-hidden="true" /></button> : null}
+                {requirementScrollState.canScrollRight ? <button className="requirement-scroll-button scroll-right" type="button" aria-label="다음 학점 현황 보기" onClick={() => scrollRequirementCards("right")}><ChevronRight size={18} aria-hidden="true" /></button> : null}
+              </div>
               {requirementGroups.length > 0 ? requirementGroups.map((group) => {
                 const remaining = Math.max(group.required - group.earned, 0);
                 const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
@@ -1847,11 +1931,55 @@ function ConnectedRoadmapPage() {
             </section>
           ) : (
             <section id="curriculum-panel" className="curriculum-map course-system" role="tabpanel" aria-labelledby="curriculum-tab">
-              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div><span>{curriculum?.curriculum_year ? `${curriculum.curriculum_year} 교육과정 기준` : "교육과정 기준 확인 필요"}</span></div>
+              <div className="curriculum-title"><div><p className="eyebrow">Department Curriculum</p><h2>{curriculum?.major ?? curriculum?.department ?? user?.major ?? user?.department ?? "학과"} 이수 흐름</h2></div></div>
               {curriculum?.groups.length ? (
-                <div className="curriculum-flow api-curriculum-flow">{curriculum.groups.map((group, index) => <article key={group.grade}><span className="flow-step">{group.grade === "공통" ? "공통" : `${index + 1}단계`}</span><h3>{group.title}</h3><ul>{group.courses.map((course) => <li className={course.status} key={course.id}><strong>{course.course_name}</strong><small>{[course.semester ? `${course.semester}학기` : null, course.category, course.credits !== null ? `${course.credits}학점` : null].filter(Boolean).join(" · ")}</small></li>)}</ul></article>)}</div>
+                <>
+                  <div className="cmap-grid">
+                    {curriculum.groups.map((group) => {
+                      const bySemester = (want: "1" | "2") => group.courses.filter((course) => {
+                        const sem = String(course.semester ?? "");
+                        if (want === "1") return sem !== "2"; // 학기 미상은 1학기 컬럼에 흡수
+                        return sem === "2";
+                      });
+                      const chipClass = (course: CurriculumCourse) => {
+                        const category = course.category ?? "";
+                        if (category.includes("필수")) return "cmap-chip is-required";
+                        if (category.includes("전공")) return "cmap-chip is-major";
+                        return "cmap-chip";
+                      };
+                      return (
+                        <article className="cmap-col" key={group.grade}>
+                          <h3 className="cmap-head">{group.title}</h3>
+                          <div className="cmap-body">
+                            {(["1", "2"] as const).map((sem) => (
+                              <div className="cmap-sem" key={sem}>
+                                <span className="cmap-sem-head">{sem}학기</span>
+                                <ul>
+                                  {bySemester(sem).map((course) => (
+                                    <li
+                                      className={chipClass(course)}
+                                      key={course.id}
+                                      title={[course.category, course.credits !== null ? `${course.credits}학점` : null].filter(Boolean).join(" · ")}
+                                    >
+                                      {course.course_name}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <ul className="cmap-legend" aria-label="과목 유형 범례">
+                    <li><span className="cmap-swatch is-major" aria-hidden="true" />전공 과목</li>
+                    <li><span className="cmap-swatch is-core" aria-hidden="true" />핵심 과목</li>
+                    <li><span className="cmap-swatch is-required" aria-hidden="true" />필수 과목</li>
+                    <li><span className="cmap-swatch" aria-hidden="true" />기타 과목</li>
+                  </ul>
+                </>
               ) : <p className="roadmap-inline-empty">등록된 학과 이수체계도 데이터가 없습니다.</p>}
-              <div className="curriculum-legend" aria-label="과목 이수 상태 범례"><span className="done">이수 완료</span><span className="planned">로드맵 반영</span><span className="available">이수 가능</span></div>
             </section>
           )}
         </div>

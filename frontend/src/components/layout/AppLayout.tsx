@@ -161,6 +161,11 @@ export function AppLayout() {
             <p className="eyebrow">{meta.eyebrow}</p>
             <h1>{meta.title}</h1>
           </div>
+          {/* Figma 시안(175:1505)의 상단 검색바. 검색 백엔드가 아직 없어 화면 이동만 안내한다. */}
+          <div className="topbar-search" role="search">
+            <span className="search-icon" aria-hidden="true">⌕</span>
+            <input type="search" placeholder="로드맵, 자격증, 활동 검색" aria-label="로드맵, 자격증, 활동 검색" />
+          </div>
           <div className="top-actions">
             <div className={`theme-picker${themeOpen ? " open" : ""}`}>
               <button
@@ -189,6 +194,11 @@ export function AppLayout() {
                 ))}
               </div>
             </div>
+            {/* Figma 시안(175:1498)의 내 정보 칩: 아바타 + 라벨 */}
+            <NavLink className="user-chip me-chip" to="/info">
+              <span className="me-chip-avatar" aria-hidden="true">{displayName.slice(0, 1)}</span>
+              내 정보
+            </NavLink>
             <NavLink className="user-chip logout-chip" to="/auth" onClick={logoutUser}>
               로그아웃
             </NavLink>

@@ -9,6 +9,7 @@ import {
 import { chatWithRoadmapAgent, getCurrentRoadmap } from "../api/roadmaps";
 import { getApiErrorMessage } from "../api/client";
 import { BrandMark } from "../components/layout/BrandMark";
+import { useAuth } from "../auth/AuthContext";
 
 /** 시간표를 만들 대상 학기. 로드맵의 다음 학기를 본다. */
 const TARGET_YEAR = "2026";
@@ -65,6 +66,7 @@ function sectionSummary(section: TimetableSection) {
 }
 
 export function TimetablePage() {
+  const { user } = useAuth();
   const [roadmapId, setRoadmapId] = useState<number | null>(null);
   const [data, setData] = useState<TimetableRecommendation | null>(null);
   const [scheduleIndex, setScheduleIndex] = useState(0);
@@ -251,6 +253,20 @@ export function TimetablePage() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
+
+          {/* Figma 과목 선택 드롭다운(학과/전공) — 현재는 내 학적 기준 단일 선택 */}
+          <div className="timetable-scope">
+            <label>
+              <select aria-label="학과 선택" defaultValue="dept">
+                <option value="dept">{user?.department ?? "학과 선택"}</option>
+              </select>
+            </label>
+            <label>
+              <select aria-label="전공 선택" defaultValue="major">
+                <option value="major">{user?.major ?? "학부 공통"}</option>
+              </select>
+            </label>
+          </div>
 
           <div className="timetable-filters">
             {CATEGORY_FILTERS.map((filter) => (
