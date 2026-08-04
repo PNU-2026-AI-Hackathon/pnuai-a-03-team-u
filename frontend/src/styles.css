@@ -7412,9 +7412,21 @@ body.theme-dark .topnav .theme-mode-button {
   line-height: 1.6;
 }
 
+/* align-items를 쓰려면 flex여야 한다. 블록으로 두면 안쪽 <Link class="auth-submit">가
+   인라인으로 흘러 안내 문구와 겹친다(비밀번호 찾기 완료 화면에서 실제로 깨졌음). */
 .onboarding-done {
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  gap: 12px;
   text-align: center;
+}
+
+.onboarding-done .auth-submit {
+  display: block;
+  width: 100%;
+  text-align: center;
+  text-decoration: none;
 }
 
 .onboarding-done h1 {
@@ -8464,4 +8476,13 @@ body.theme-dark .roadmap-head-stats span {
 .graduation-total-bar {
   width: 100%;
   margin-bottom: 18px;
+}
+
+
+/* 재설정 링크 발송 안내의 보조 문구 */
+.reset-hint {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
