@@ -31,7 +31,7 @@ import argparse
 import re
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 
 from app.core.db import SessionLocal
 from app.domains.academics.models import Department, Major
@@ -114,6 +114,11 @@ def import_descriptions(
 
     db = SessionLocal()
     try:
+        # source_document 컬럼이 아직 없는 환경(마이그레이션 419d94f88803 미적용)에서도
+        # description만이라도 갱신되도록 컬럼 존재 여부 사전 확인.
+        courses_columns = {c["name"] for c in sa_inspect(db.get_bind()).get_columns("courses")}
+        has_source_document = "source_document" in courses_columns
+
         department = db.scalars(select(Department).where(Department.name == department_name)).first()
         if department is None:
             raise SystemExit(f"학과를 찾을 수 없음: {department_name!r} (courses/departments 시드가 먼저 되어 있어야 함)")
@@ -167,10 +172,14 @@ def import_descriptions(
             matched_entries += 1
             matched_courses += len(matching_courses)
             for course in matching_courses:
-                changed = course.description != description or course.source_document != source_document
+                if has_source_document:
+                    changed = course.description != description or course.source_document != source_document
+                else:
+                    changed = course.description != description
                 if changed:
                     course.description = description
-                    course.source_document = source_document
+                    if has_source_document:
+                        course.source_document = source_document
                     updated_courses += 1
 
         if dry_run:

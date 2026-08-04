@@ -39,6 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
+from app.domains.academics.models import Department
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.ingestion.parsers.onestop_course_catalog import parse_timetable_raw
 
@@ -51,6 +52,18 @@ def _to_int(value: str | None) -> int | None:
         return None
     try:
         return int(value)
+    except ValueError:
+        return None
+
+
+def _to_float(value: str | None) -> float | None:
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return float(value)
     except ValueError:
         return None
 
@@ -70,11 +83,16 @@ def _semester_display(raw: str) -> str:
 
 def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
     stats = Counter()
-    unmatched_codes: list[str] = []
+    auto_created_samples: list[str] = []
 
     # course_code → id 매핑을 한 번에 로드해 CSV 순회 중 개별 SELECT를 피한다.
     code_to_id: dict[str, int] = dict(
         db.execute(select(Course.course_code, Course.id).where(Course.course_code.is_not(None))).all()
+    )
+
+    # 학과명 → id 매핑 (auto-create Course 시 department_id 채우기용).
+    dept_name_to_id: dict[str, int] = dict(
+        db.execute(select(Department.name, Department.id)).all()
     )
 
     # 재삽입할 offering들의 CourseTime을 이번 실행 내에서 한 번씩만 비운다.
@@ -90,10 +108,29 @@ def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
 
         course_id = code_to_id.get(course_code)
         if course_id is None:
-            stats["skipped_unmatched_course"] += 1
-            if len(unmatched_codes) < 20:
-                unmatched_codes.append(course_code)
-            continue
+            # 수강편람이 courses 카탈로그보다 넓다(교양 등 학과 밖 개설 포함). 이때 offering을
+            # 버리지 말고 CSV 정보로 Course 행을 자동 생성한 뒤 그 id로 offering을 만든다.
+            # 자동 생성된 Course는 교양/일반 개설 판정 등 후속 작업에서 재분류 대상.
+            course_name = (row.get("course_name") or "").strip()
+            if not course_name:
+                stats["skipped_no_course_name"] += 1
+                continue
+            new_course = Course(
+                course_code=course_code,
+                course_name=course_name,
+                category=(row.get("category") or None),
+                credits=_to_float(row.get("credits")),
+                department_id=dept_name_to_id.get((row.get("offering_department") or "").strip()),
+                year=(row.get("target_grade") or None),
+                semester=(row.get("semester") or None),
+            )
+            db.add(new_course)
+            db.flush()
+            course_id = new_course.id
+            code_to_id[course_code] = course_id
+            stats["courses_auto_created"] += 1
+            if len(auto_created_samples) < 20:
+                auto_created_samples.append(f"{course_code}:{course_name}")
 
         year = row["year"].strip()
         semester_display = _semester_display(row["semester"].strip())
@@ -155,7 +192,7 @@ def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
 
     return {
         "stats": dict(stats),
-        "unmatched_course_code_samples": unmatched_codes,
+        "auto_created_course_samples": auto_created_samples,
         "committed": commit,
     }
 
