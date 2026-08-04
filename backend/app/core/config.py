@@ -33,17 +33,26 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7일
 
-    # --- 비밀번호 재설정 메일 ---
+    # --- 비밀번호 재설정 메일 (Resend SMTP) ---
     #
     # SMTP_HOST가 비어 있으면 메일을 실제로 보내지 않고 재설정 링크를 로그에 남긴다.
-    # 로컬 개발에서 메일 서버 없이 흐름 전체를 확인하기 위한 것이고, 운영에서는
-    # 반드시 SMTP_* 값을 채워야 한다.
+    # 로컬 개발에서 메일 서버 없이 흐름 전체를 확인하기 위한 것이고, 실제 발송이
+    # 필요하면 .env에 값을 채운다.
+    #
+    # Resend를 쓰는 이유: 메일 계정(사서함)이 아니라 API 키 하나로 보낼 수 있어
+    # 개인 웹메일 비밀번호를 배포 환경에 두지 않아도 된다.
+    #   SMTP_HOST=smtp.resend.com / SMTP_PORT=587 / SMTP_USER=resend
+    #   SMTP_PASSWORD=<Resend API 키(re_로 시작)>
+    #
+    # SMTP_FROM은 반드시 Resend에서 인증한 도메인이어야 한다. 도메인 인증 전에는
+    # 샌드박스 주소(onboarding@resend.dev)만 쓸 수 있고, 이때는 Resend 계정을
+    # 만든 본인 메일 주소로만 발송된다.
     SMTP_HOST: str | None = None
     SMTP_PORT: int = 587
     SMTP_USER: str | None = None
     SMTP_PASSWORD: str | None = None
     SMTP_USE_TLS: bool = True
-    SMTP_FROM: str = "Plan U <no-reply@pusan.ac.kr>"
+    SMTP_FROM: str = "Plan U <onboarding@resend.dev>"
 
     # 메일에 담을 재설정 화면 주소. 프론트 배포 주소로 덮어쓴다.
     PASSWORD_RESET_URL_BASE: str = "http://localhost:5173/reset-password"

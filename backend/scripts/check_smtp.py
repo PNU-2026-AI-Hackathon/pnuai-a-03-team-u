@@ -49,8 +49,9 @@ def check_connection() -> bool:
             if settings.SMTP_USER and settings.SMTP_PASSWORD:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
     except smtplib.SMTPAuthenticationError:
-        print("\n[실패] 인증 거부. 아이디/비밀번호를 확인하세요.")
-        print("       Gmail 계열이면 계정 비밀번호가 아니라 '앱 비밀번호'가 필요합니다.")
+        print("\n[실패] 인증 거부.")
+        print("       Resend면 SMTP_USER 가 'resend'(고정)인지, SMTP_PASSWORD 가")
+        print("       API 키(re_ 로 시작)인지 확인하세요. 계정 비밀번호가 아닙니다.")
         return False
     except Exception as error:  # noqa: BLE001 - 원인을 그대로 보여주는 게 목적
         print(f"\n[실패] 접속 실패: {type(error).__name__}: {error}")
@@ -58,6 +59,14 @@ def check_connection() -> bool:
 
     print("\n[성공] 접속·로그인 확인")
     return True
+
+
+def _explain_send_failure() -> None:
+    """발송 단계에서 자주 걸리는 Resend 제약을 안내한다."""
+    print("       자주 걸리는 원인:")
+    print("       · 도메인 인증 전에는 SMTP_FROM 이 onboarding@resend.dev 여야 합니다.")
+    print("       · 샌드박스 상태에서는 Resend 가입에 쓴 본인 주소로만 보낼 수 있습니다.")
+    print("         (다른 주소로 보내려면 Resend 에서 도메인 인증이 필요합니다)")
 
 
 def main() -> None:
@@ -91,6 +100,7 @@ def main() -> None:
         print("       메일 안의 링크는 테스트용 가짜 토큰이라 실제로는 동작하지 않습니다.")
     else:
         print("[실패] 발송하지 못했습니다. 위 로그를 확인하세요.")
+        _explain_send_failure()
         raise SystemExit(1)
 
 
