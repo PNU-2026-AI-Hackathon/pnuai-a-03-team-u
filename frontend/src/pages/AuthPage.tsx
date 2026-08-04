@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { ChevronDown } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
@@ -10,13 +11,6 @@ import { getApiErrorMessage } from "../api/client";
 
 type AuthMode = "login" | "signup";
 type MessageKind = "error" | "success";
-
-/** 로그인 화면 하단 통계. 시안에 있는 값이라 그대로 둔다. */
-const loginHighlights = [
-  { value: "112 / 130", label: "졸업 요건 학점" },
-  { value: "6건 관리", label: "비교과 활동" },
-  { value: "3학년 1학기", label: "현재 학기" },
-];
 
 export function AuthPage() {
   const navigate = useNavigate();
@@ -35,9 +29,13 @@ export function AuthPage() {
   const [signupName, setSignupName] = useState("");
   const [studentId, setStudentId] = useState("");
   const [department, setDepartment] = useState("");
+  const [primaryMajor, setPrimaryMajor] = useState("");
   const [careerGoal, setCareerGoal] = useState("");
+  const [minorDepartment, setMinorDepartment] = useState("");
   const [minorMajor, setMinorMajor] = useState("");
+  const [dualDepartment, setDualDepartment] = useState("");
   const [dualMajor, setDualMajor] = useState("");
+  const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(false);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,10 +52,6 @@ export function AuthPage() {
     }
   }
 
-  /**
-   * STEP 1. 계정을 만들고 바로 로그인시킨 뒤 STEP 2로 넘긴다. 학사정보 불러오기가
-   * 인증이 필요한 엔드포인트라 STEP 2·3은 /onboarding에서 이어진다.
-   */
   async function handleSignup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
@@ -70,22 +64,44 @@ export function AuthPage() {
       setMessage("이름을 입력해주세요.");
       return;
     }
+    if (minorMajor.trim() && !minorDepartment.trim()) {
+      setMessage("부전공 세부전공을 입력하려면 학과 또는 학부를 먼저 입력해주세요.");
+      return;
+    }
+    if (dualMajor.trim() && !dualDepartment.trim()) {
+      setMessage("복수전공 세부전공을 입력하려면 학과 또는 학부를 먼저 입력해주세요.");
+      return;
+    }
 
     const academicPrograms: AcademicProgramInput[] = [];
     if (department.trim()) {
-      academicPrograms.push({ department: department.trim(), program_type: "primary" });
+      academicPrograms.push({
+        department: department.trim(),
+        major: primaryMajor.trim() || undefined,
+        program_type: "primary",
+      });
     }
-    if (minorMajor.trim()) {
-      academicPrograms.push({ department: minorMajor.trim(), program_type: "minor" });
+    if (minorDepartment.trim()) {
+      academicPrograms.push({
+        department: minorDepartment.trim(),
+        major: minorMajor.trim() || undefined,
+        program_type: "minor",
+      });
     }
-    if (dualMajor.trim()) {
-      academicPrograms.push({ department: dualMajor.trim(), program_type: "dual" });
+    if (dualDepartment.trim()) {
+      academicPrograms.push({
+        department: dualDepartment.trim(),
+        major: dualMajor.trim() || undefined,
+        program_type: "dual",
+      });
     }
 
     setIsSignupSubmitting(true);
+    let isAccountCreated = false;
     try {
+      const email = toPnuEmail(signupEmail);
       await signupWithEmail({
-        email: toPnuEmail(signupEmail),
+        email,
         password: signupPassword,
         name: signupName,
         student_id: studentId,
@@ -94,10 +110,19 @@ export function AuthPage() {
         career_goal: careerGoal || undefined,
         academic_programs: academicPrograms,
       });
-      await loginWithEmail(toPnuEmail(signupEmail), signupPassword, false);
-      navigate("/onboarding", { replace: true });
+      isAccountCreated = true;
+      await loginWithEmail(email, signupPassword, false);
+      window.location.replace("/onboarding");
     } catch (error) {
-      setMessage(getApiErrorMessage(error, "회원가입에 실패했습니다. 입력한 정보를 확인해 주세요."));
+      if (isAccountCreated) {
+        setLoginEmailId("");
+        setLoginPassword("");
+        setLoginMessageKind("error");
+        setLoginMessage("회원가입은 완료되었지만 자동 로그인에 실패했습니다. 직접 로그인해 주세요.");
+        setMode("login");
+      } else {
+        setMessage(getApiErrorMessage(error, "회원가입에 실패했습니다. 입력한 정보를 확인해 주세요."));
+      }
     } finally {
       setIsSignupSubmitting(false);
     }
@@ -204,7 +229,7 @@ export function AuthPage() {
           ) : (
             <form className="auth-form" onSubmit={handleSignup}>
               <div className="auth-title">
-                <p className="eyebrow">STEP 1. Create account</p>
+                <p className="eyebrow">Create account</p>
                 <h1>회원가입</h1>
                 <p>필수 계정 정보와 선택 전공 정보를 바탕으로 개인 로드맵을 만듭니다.</p>
               </div>
@@ -262,12 +287,22 @@ export function AuthPage() {
                 />
               </label>
               <label className="auth-field">
-                <span>학과 입력</span>
+                <span>학과 또는 학부 입력</span>
                 <input
                   type="text"
-                  placeholder="예 : 디자인학과"
+                  placeholder="예 : 의생명융합공학부"
                   value={department}
                   onChange={(event) => setDepartment(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="auth-field">
+                <span>세부전공 입력 (선택)</span>
+                <input
+                  type="text"
+                  placeholder="예 : 데이터사이언스전공"
+                  value={primaryMajor}
+                  onChange={(event) => setPrimaryMajor(event.target.value)}
                 />
               </label>
               <label className="auth-field">
@@ -280,26 +315,60 @@ export function AuthPage() {
                 />
               </label>
 
-              <div className="auth-field-row">
-                <label className="auth-field">
-                  <span>부전공 입력</span>
-                  <input
-                    type="text"
-                    placeholder="예 : 의류학과"
-                    value={minorMajor}
-                    onChange={(event) => setMinorMajor(event.target.value)}
-                  />
-                </label>
-                <label className="auth-field">
-                  <span>복수전공 입력</span>
-                  <input
-                    type="text"
-                    placeholder="예 : 컴퓨터공학과"
-                    value={dualMajor}
-                    onChange={(event) => setDualMajor(event.target.value)}
-                  />
-                </label>
-              </div>
+              <section className={`auth-program-options${isAdditionalProgramsOpen ? " is-open" : ""}`}>
+                <button
+                  className="auth-program-toggle"
+                  type="button"
+                  aria-expanded={isAdditionalProgramsOpen}
+                  aria-controls="additional-program-fields"
+                  onClick={() => setIsAdditionalProgramsOpen((isOpen) => !isOpen)}
+                >
+                  <span>부전공·복수전공 입력</span>
+                  <small>선택</small>
+                  <ChevronDown size={18} aria-hidden="true" />
+                </button>
+
+                {isAdditionalProgramsOpen ? (
+                  <div className="auth-program-grid" id="additional-program-fields">
+                    <label className="auth-field">
+                      <span>부전공 학과 또는 학부 입력</span>
+                      <input
+                        type="text"
+                        placeholder="예 : 의류학과"
+                        value={minorDepartment}
+                        onChange={(event) => setMinorDepartment(event.target.value)}
+                      />
+                    </label>
+                    <label className="auth-field">
+                      <span>부전공 세부전공 입력 (선택)</span>
+                      <input
+                        type="text"
+                        placeholder="예 : 패션디자인전공"
+                        value={minorMajor}
+                        onChange={(event) => setMinorMajor(event.target.value)}
+                      />
+                    </label>
+                    <label className="auth-field">
+                      <span>복수전공 학과 또는 학부 입력</span>
+                      <input
+                        type="text"
+                        placeholder="예 : 정보컴퓨터공학부"
+                        value={dualDepartment}
+                        onChange={(event) => setDualDepartment(event.target.value)}
+                      />
+                    </label>
+                    <label className="auth-field">
+                      <span>복수전공 세부전공 입력 (선택)</span>
+                      <input
+                        type="text"
+                        placeholder="예 : 컴퓨터공학전공"
+                        value={dualMajor}
+                        onChange={(event) => setDualMajor(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </section>
 
               <button className="auth-submit" type="submit" disabled={isSignupSubmitting}>
                 {isSignupSubmitting ? "가입 중..." : "다음"}
@@ -316,16 +385,6 @@ export function AuthPage() {
         </div>
       </section>
 
-      {mode === "login" ? (
-        <ul className="auth-highlights">
-          {loginHighlights.map((item) => (
-            <li key={item.label}>
-              <strong>{item.value}</strong>
-              <span>{item.label}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </main>
   );
 }
