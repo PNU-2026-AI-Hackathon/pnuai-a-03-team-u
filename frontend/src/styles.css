@@ -899,7 +899,10 @@ body.theme-dark .activity-tags span {
 
 .profile-facts strong {
   min-width: 0;
-  overflow-wrap: anywhere;
+  /* anywhere는 아무 글자에서나 끊어 "데이터사이언티스 / 트"처럼 한 글자만 남긴다.
+     break-word는 넘칠 때만 끊고, balance가 줄 길이를 고르게 나눈다. */
+  overflow-wrap: break-word;
+  text-wrap: balance;
   font-size: 15px;
   line-height: 1.35;
 }
@@ -8113,6 +8116,16 @@ body.theme-dark .timetable-course.is-conflict {
 /* 시안은 학부·전공·부전공 / 학년·진로·복수전공 3열 배치다. */
 .profile-facts {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 3열에서 "데이터사이언티스트"(9글자)까지 한 줄에 들어가도록 가로 여백과
+   글자 크기를 줄인다. 라벨(12px)과의 위계는 유지된다. */
+.profile-facts article {
+  padding: 12px;
+}
+
+.profile-facts strong {
+  font-size: 14px;
 }
 
 .advisor-record-link {
