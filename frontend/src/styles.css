@@ -44,7 +44,8 @@ input {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  /* Figma Rectangle 39 = 1920px 기준 360px(18.75%). 좁은 창에서는 비례 축소 */
+  grid-template-columns: clamp(240px, 18.75vw, 360px) minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -58,7 +59,7 @@ input {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 25px 20px 22px;
+  padding: 25px clamp(12px, 1.05vw, 20px) 22px;
   color: var(--ink);
   border-right: 1px solid var(--gray-line);
   background: var(--panel);
@@ -159,11 +160,11 @@ input {
   min-width: 0;
   align-items: center;
   gap: 12px;
-  min-height: 60px;
-  padding: 0 20px;
+  min-height: clamp(46px, 3.13vw, 60px);
+  padding: 0 clamp(12px, 1.05vw, 20px);
   border-radius: 20px;
   color: var(--ink);
-  font-size: 16px;
+  font-size: clamp(14px, 0.84vw, 16px);
   font-weight: 500;
   text-decoration: none;
 }
@@ -204,11 +205,11 @@ input {
 .sidebar-section a {
   display: flex;
   align-items: center;
-  min-height: 44px;
-  padding: 0 20px;
+  min-height: clamp(36px, 2.3vw, 44px);
+  padding: 0 clamp(12px, 1.05vw, 20px);
   border-radius: 20px;
   color: var(--ink);
-  font-size: 16px;
+  font-size: clamp(14px, 0.84vw, 16px);
   font-weight: 500;
   text-decoration: none;
 }
@@ -6508,7 +6509,7 @@ body.theme-dark {
 
 .chat-screen {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: clamp(240px, 18.75vw, 360px) minmax(0, 1fr);
   min-height: calc(100vh - 80px);
 }
 
