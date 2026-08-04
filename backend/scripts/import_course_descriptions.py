@@ -1,9 +1,13 @@
 """"교과목개요" 원문(과목명+설명) 텍스트를 course_descriptions에 적재한다.
 
-입력 형식(마크다운/텍스트, `--source` 인자): `* 국문과목명(영문과목명)` 줄 다음에
-설명 문단이 이어지는 블록의 반복. `raw_data/manual_staging/02_course_descriptions/
-by_department/{단과대}/{학과코드}__{학과명}/course_descriptions_source.md` 컨벤션을
-따르는 파일을 그대로 넣으면 된다.
+입력 형식(마크다운/텍스트, `--source` 인자): 표제 마커 뒤에 `국문과목명(영문과목명)` 형식의
+표제가 오고, 다음 줄부터 설명 문단이 이어지는 블록의 반복. 표제 마커는 다음 셋 중 하나:
+- `* ` (기존 불릿) — 표제 어떤 내용이든 허용
+- `1. ` 또는 `12. ` (숫자 + 점) — 표제에 `(...)` 있어야 인정(설명 안의 번호 목록과 구분)
+- `1-1. ` 또는 `3-2. ` (하이픈 숫자) — 동일 조건
+
+`raw_data/manual_staging/02_course_descriptions/by_department/{단과대}/{학과코드}__{학과명}/course_descriptions_source.md`
+컨벤션 파일을 그대로 넣으면 된다.
 
 department_id/major_id는 이미 courses에 적재된 학과/전공 이름으로 조회한다
 (get-or-create 아님 — 오타로 엉뚱한 학과가 새로 생기는 걸 막기 위해, 없으면 에러).
@@ -34,13 +38,30 @@ from app.domains.academics.models import Department, Major
 from app.domains.courses.course_description_matching import normalize_course_name, strip_korean_name
 from app.domains.courses.models import CourseDescription
 
-_ENTRY_MARKER = re.compile(r"^\*\s*(.*)$")
+_STAR_MARKER = re.compile(r"^\*\s*(.*)$")
+_NUM_MARKER = re.compile(r"^\d+(?:-\d+)?\.\s*(.*)$")
+
+
+def _match_marker(line: str) -> tuple[bool, str | None]:
+    """(is_marker, title_on_marker). title_on_marker=None은 다음 줄에서 표제 대기."""
+    star = _STAR_MARKER.match(line)
+    if star:
+        content = star.group(1).strip()
+        return True, content or None
+    num = _NUM_MARKER.match(line)
+    if num:
+        content = num.group(1).strip()
+        # 설명 안의 번호 목록("1. 개념, 2. 응용")과 진짜 표제("1. 교육철학(Educational Philosophy)")를
+        # 구분: 진짜 표제는 국문(영문) 병기 규약이므로 반드시 괄호 쌍을 포함한다.
+        if "(" in content and ")" in content:
+            return True, content
+    return False, None
 
 
 def parse_entries(text: str) -> list[tuple[str, str]]:
-    """(원문 표제, 설명) 쌍의 리스트. 표제 다음 줄부터 다음 '* ' 전까지를 설명으로 취급.
+    """(원문 표제, 설명) 쌍의 리스트. 표제 다음 줄부터 다음 마커 전까지를 설명으로 취급.
 
-    표제가 마커 줄 자체에 없고(빈 "* ") 바로 다음 줄에 오는 경우도 처리한다.
+    표제가 마커 줄 자체에 없고(빈 "* ") 바로 다음 줄에 오는 경우도 처리한다(별표 마커에만 적용).
     설명이 비어 있는 항목(원문에 개요가 없는 과목)은 제외한다.
     """
     blocks: list[tuple[str, list[str]]] = []
@@ -54,13 +75,12 @@ def parse_entries(text: str) -> list[tuple[str, str]]:
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        marker = _ENTRY_MARKER.match(line)
-        if marker is not None:
+        is_marker, title_on_marker = _match_marker(line)
+        if is_marker:
             flush()
-            title_on_marker = marker.group(1).strip()
-            current_title = title_on_marker or None
+            current_title = title_on_marker
             current_body = []
-            awaiting_title = not title_on_marker
+            awaiting_title = title_on_marker is None
             continue
         if not line:
             continue
