@@ -1,5 +1,5 @@
-"""과목명 정규화 — course_descriptions <-> courses 매칭용 (scripts/import_course_descriptions.py,
-scripts/sync_course_descriptions_to_courses.py에서 사용).
+"""과목명 정규화 — 학과별 교과목개요 원문 표제와 courses.course_name 매칭용
+(scripts/import_course_descriptions.py에서 사용).
 
 이름이 완전히 같을 때만 매칭시킨다는 전제이므로, 여기서 하는 정규화는
 "공백/표기 차이" 수준만 흡수하고 의미 추론은 하지 않는다 (예: "일반물리학Ⅰ"과
