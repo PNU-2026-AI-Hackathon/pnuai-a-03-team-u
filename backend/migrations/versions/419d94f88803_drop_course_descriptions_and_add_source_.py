@@ -24,7 +24,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
+    """Upgrade schema.
+
+    이 마이그레이션 이전 시점에 어떤 이유로든 course_descriptions 테이블이 없는 환경도
+    안전하게 지원하기 위해 drop_table을 raw SQL의 IF EXISTS로 실행한다.
+    """
     op.add_column(
         "courses",
         sa.Column("source_document", sa.String(length=255), nullable=True),
@@ -32,7 +36,7 @@ def upgrade() -> None:
     op.drop_index("ix_course_descriptions_department_id", table_name="course_descriptions", if_exists=True)
     op.drop_index("ix_course_descriptions_major_id", table_name="course_descriptions", if_exists=True)
     op.drop_index("ix_course_descriptions_normalized_name", table_name="course_descriptions", if_exists=True)
-    op.drop_table("course_descriptions")
+    op.execute("DROP TABLE IF EXISTS course_descriptions")
 
 
 def downgrade() -> None:
