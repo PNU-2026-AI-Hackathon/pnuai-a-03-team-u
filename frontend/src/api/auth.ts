@@ -99,9 +99,19 @@ export async function signup(payload: SignupPayload) {
   return data;
 }
 
-export async function login(studentId: string, password: string, rememberLogin = false) {
+/** 로그인 아이디는 부산대 웹메일. email 은 도메인까지 포함한 전체 주소를 받는다. */
+/** 부산대 웹메일 도메인. 로그인·회원가입 아이디 입력에 고정 접미사로 붙는다. */
+export const PNU_EMAIL_DOMAIN = "@pusan.ac.kr";
+
+/** 아이디만 입력받아 전체 웹메일 주소로 만든다. 이미 도메인이 붙어 있으면 그대로 둔다. */
+export function toPnuEmail(localPart: string) {
+  const trimmed = localPart.trim().toLowerCase();
+  return trimmed.includes("@") ? trimmed : `${trimmed}${PNU_EMAIL_DOMAIN}`;
+}
+
+export async function login(email: string, password: string, rememberLogin = false) {
   if (isMockAuthEnabled) {
-    const mockUser = createMockUser(studentId);
+    const mockUser = createMockUser(email.split("@")[0]);
     const storage = rememberLogin ? window.localStorage : window.sessionStorage;
     const temporaryStorage = rememberLogin ? window.sessionStorage : window.localStorage;
     temporaryStorage.removeItem(MOCK_ACCESS_TOKEN_KEY);
@@ -114,7 +124,7 @@ export async function login(studentId: string, password: string, rememberLogin =
   const { data } = await apiClient.post<{ access_token: string; token_type: string }>(
     "/auth/login",
     {
-      student_id: studentId,
+      email,
       password,
     },
     { timeout: AUTH_REQUEST_TIMEOUT_MS },

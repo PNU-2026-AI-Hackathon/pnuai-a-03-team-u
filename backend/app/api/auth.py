@@ -1,4 +1,8 @@
-"""이메일 기반 회원가입과 학번/비밀번호 로그인.
+"""부산대 웹메일 기반 회원가입과 로그인.
+
+로그인 아이디는 학번이 아니라 부산대 웹메일(@pusan.ac.kr)이다. 부산대 구성원
+여부를 도메인으로 1차 확인하기 위한 것으로, 7/3 회의 "주제 4. 아이디 변경"
+결정 사항이다. 학번은 로그인 수단이 아니라 학사 크롤링용 식별자로만 남는다.
 
 docs/backend/features/core-auth.md 참고. 소셜 로그인(auth_accounts)은 아직 없음.
 """
@@ -8,7 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -23,6 +27,10 @@ _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 # 주전공/복수전공/부전공/연계전공 — UserAcademicProgram.program_type과 값 일치시킴
 _VALID_PROGRAM_TYPES = {"primary", "dual", "minor", "interdisciplinary"}
+
+# 부산대 웹메일 도메인. 신규 가입에만 적용하고, 이미 다른 도메인으로 가입한
+# 계정의 로그인까지 막지는 않는다.
+PNU_EMAIL_DOMAIN = "@pusan.ac.kr"
 
 
 class AcademicProgramInput(BaseModel):
@@ -63,18 +71,24 @@ class SignupRequest(BaseModel):
             raise ValueError("학번을 입력해야 합니다")
         return value
 
+    @field_validator("email")
+    @classmethod
+    def _check_pnu_email(cls, value: str) -> str:
+        if not value.lower().endswith(PNU_EMAIL_DOMAIN):
+            raise ValueError(f"부산대 웹메일({PNU_EMAIL_DOMAIN})로만 가입할 수 있습니다")
+        return value.lower()
+
 
 class LoginRequest(BaseModel):
-    student_id: str
+    """로그인 아이디는 부산대 웹메일. 프론트는 아이디 + 고정 도메인으로 조합해 보낸다."""
+
+    email: EmailStr
     password: str
 
-    @field_validator("student_id")
+    @field_validator("email")
     @classmethod
-    def _check_student_id(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("학번을 입력해야 합니다")
-        return value
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class TokenResponse(BaseModel):
@@ -149,7 +163,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
 
-    existing = db.scalar(select(User).where(User.email == payload.email))
+    existing = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
     if existing is not None:
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다")
 
@@ -199,9 +213,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.student_id == payload.student_id))
+    # 기존 계정 중 대소문자가 섞인 이메일이 있어 소문자로 맞춰 비교한다.
+    user = db.scalar(select(User).where(func.lower(User.email) == payload.email))
     if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="학번 또는 비밀번호가 올바르지 않습니다")
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
 
     return TokenResponse(access_token=create_access_token(user.id))
 

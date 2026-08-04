@@ -7170,6 +7170,27 @@ body.theme-dark .topnav .theme-mode-button {
   outline: none;
 }
 
+/* 아이디 + 고정 @pusan.ac.kr — 부산대 마일스톤과 같은 입력 형태 */
+.auth-email-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.auth-email-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-email-domain {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .auth-field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

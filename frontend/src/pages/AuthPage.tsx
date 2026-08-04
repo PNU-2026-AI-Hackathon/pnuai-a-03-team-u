@@ -5,6 +5,7 @@ import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { useAuth } from "../auth/AuthContext";
 import type { AcademicProgramInput } from "../api/auth";
+import { PNU_EMAIL_DOMAIN, toPnuEmail } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
 
 type AuthMode = "login" | "signup";
@@ -19,14 +20,14 @@ const loginHighlights = [
 
 export function AuthPage() {
   const navigate = useNavigate();
-  const { loginWithStudentId, signupWithEmail } = useAuth();
+  const { loginWithEmail, signupWithEmail } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [message, setMessage] = useState("");
   const [loginMessage, setLoginMessage] = useState("");
   const [loginMessageKind, setLoginMessageKind] = useState<MessageKind>("error");
   const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
   const [isSignupSubmitting, setIsSignupSubmitting] = useState(false);
-  const [loginStudentId, setLoginStudentId] = useState("");
+  const [loginEmailId, setLoginEmailId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberLogin, setRememberLogin] = useState(false);
   const [signupPassword, setSignupPassword] = useState("");
@@ -44,7 +45,7 @@ export function AuthPage() {
     setLoginMessageKind("error");
     setIsLoginSubmitting(true);
     try {
-      await loginWithStudentId(loginStudentId, loginPassword, rememberLogin);
+      await loginWithEmail(toPnuEmail(loginEmailId), loginPassword, rememberLogin);
       navigate("/", { replace: true });
     } catch (error) {
       setLoginMessage(getApiErrorMessage(error, "로그인에 실패했습니다. 입력한 정보를 확인해 주세요."));
@@ -84,7 +85,7 @@ export function AuthPage() {
     setIsSignupSubmitting(true);
     try {
       await signupWithEmail({
-        email: signupEmail,
+        email: toPnuEmail(signupEmail),
         password: signupPassword,
         name: signupName,
         student_id: studentId,
@@ -93,7 +94,7 @@ export function AuthPage() {
         career_goal: careerGoal || undefined,
         academic_programs: academicPrograms,
       });
-      await loginWithStudentId(studentId, signupPassword, false);
+      await loginWithEmail(toPnuEmail(signupEmail), signupPassword, false);
       navigate("/onboarding", { replace: true });
     } catch (error) {
       setMessage(getApiErrorMessage(error, "회원가입에 실패했습니다. 입력한 정보를 확인해 주세요."));
@@ -145,16 +146,18 @@ export function AuthPage() {
               </div>
 
               <label className="auth-field">
-                <span>학번 입력</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="username"
-                  placeholder="학번을 입력하세요"
-                  value={loginStudentId}
-                  onChange={(event) => setLoginStudentId(event.target.value)}
-                  required
-                />
+                <span>부산대 웹메일 입력</span>
+                <div className="auth-email-field">
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    placeholder="아이디를 입력하세요"
+                    value={loginEmailId}
+                    onChange={(event) => setLoginEmailId(event.target.value)}
+                    required
+                  />
+                  <span className="auth-email-domain">{PNU_EMAIL_DOMAIN}</span>
+                </div>
               </label>
               <label className="auth-field">
                 <span>비밀번호 입력</span>
@@ -235,14 +238,18 @@ export function AuthPage() {
               </div>
 
               <label className="auth-field">
-                <span>이메일 입력</span>
-                <input
-                  type="email"
-                  placeholder="예 : dowon@pusan.ac.kr"
-                  value={signupEmail}
-                  onChange={(event) => setSignupEmail(event.target.value)}
-                  required
-                />
+                <span>부산대 웹메일 입력</span>
+                <div className="auth-email-field">
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    placeholder="아이디를 입력하세요"
+                    value={signupEmail}
+                    onChange={(event) => setSignupEmail(event.target.value)}
+                    required
+                  />
+                  <span className="auth-email-domain">{PNU_EMAIL_DOMAIN}</span>
+                </div>
               </label>
               <label className="auth-field">
                 <span>비밀번호 입력</span>

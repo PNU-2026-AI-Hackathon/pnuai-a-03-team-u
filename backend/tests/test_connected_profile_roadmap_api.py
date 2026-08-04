@@ -88,7 +88,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
         self.db.add(self.major)
         self.db.flush()
         self.user = User(
-            email="student@example.com",
+            email="student@pusan.ac.kr",
             password_hash="not-used",
             name="테스트 학생",
             student_id="202312345",
@@ -116,7 +116,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
     def test_signup_saves_academic_year(self):
         response = signup(
             SignupRequest(
-                email="new-student@example.com",
+                email="new-student@pusan.ac.kr",
                 password="password123",
                 name="신규 학생",
                 student_id="202699999",
