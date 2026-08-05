@@ -15,7 +15,7 @@ export function OnboardingPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [step, setStep] = useState<2 | 3>(2);
-  const [portalId, setPortalId] = useState("");
+  const [portalId, setPortalId] = useState(user?.student_id ?? "");
   const [portalPassword, setPortalPassword] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -50,15 +50,23 @@ export function OnboardingPage() {
       title: summary ? `이수 내역 ${summary.courseCount}과목 · ${summary.totalCredits}학점 등록` : "계정 생성 완료",
       sub: summary ? "학생지원시스템 동기화" : "학사정보는 내 정보에서 추가할 수 있어요",
     },
-    summary && summary.graduationTableCount > 0
-      ? { title: `졸업요건 분석 완료 · 기준표 ${summary.graduationTableCount}개`, sub: summary.affiliation ?? "졸업요건 기준" }
-      : null,
-    { title: "성장 로드맵 초안 준비", sub: "성장 로드맵에서 이어서 편집할 수 있어요" },
-  ].filter((row): row is { title: string; sub: string } => row !== null);
+    summary
+      ? {
+          title: summary.graduationTableCount > 0
+            ? `졸업요건 분석 완료 · 기준표 ${summary.graduationTableCount}개`
+            : "졸업요건 분석 완료",
+          sub: summary.affiliation ?? "소속 학과 기준",
+        }
+      : { title: "졸업요건 분석 준비", sub: "학사정보 등록 후 분석할 수 있어요" },
+    {
+      title: "성장 로드맵 초안 생성",
+      sub: user?.academic_year ? `${user.academic_year}학년 1학기 ~ 4학년 2학기` : "학기별 이수 계획",
+    },
+  ];
 
   return (
     <main className="auth-screen">
-      <section className="auth-shell is-signup is-wide">
+      <section className={`auth-shell is-signup ${step === 2 ? "is-wide" : "is-complete"}`}>
         <span className="auth-logo" aria-hidden="true">
           <BrandMark id="plan-u-face-onboarding" />
           <span>
@@ -158,8 +166,10 @@ export function OnboardingPage() {
             <span className="onboarding-done-mark" aria-hidden="true">
               <Check size={20} />
             </span>
-            <h1>가입이 완료되었습니다!</h1>
-            <p>{displayName} 님의 학사 데이터를 기반으로 개인 로드맵을 준비했어요.</p>
+            <div className="onboarding-done-title">
+              <h1>가입이 완료되었습니다!</h1>
+              <p>{displayName} 님의 학사 데이터를 기반으로 개인 로드맵을 준비했어요.</p>
+            </div>
 
             <ul>
               {doneRows.map((row) => (
@@ -175,20 +185,22 @@ export function OnboardingPage() {
               ))}
             </ul>
 
-            <div className="onboarding-actions">
-              <button className="auth-submit" type="button" onClick={() => navigate("/", { replace: true })}>
-                홈으로 시작하기
-              </button>
-              <button
-                className="auth-submit ghost"
-                type="button"
-                onClick={() => navigate("/roadmap", { replace: true })}
-              >
-                성장 로드맵 보기
-              </button>
-            </div>
+            <div className="onboarding-done-footer">
+              <div className="onboarding-actions">
+                <button className="auth-submit" type="button" onClick={() => navigate("/", { replace: true })}>
+                  홈으로 시작하기
+                </button>
+                <button
+                  className="auth-submit ghost"
+                  type="button"
+                  onClick={() => navigate("/roadmap", { replace: true })}
+                >
+                  성장 로드맵 보기
+                </button>
+              </div>
 
-            <p className="onboarding-note">비교과 · 자격증 · 어학 정보는 내 정보에서 직접 추가할 수 있어요</p>
+              <p className="onboarding-note">비교과 · 자격증 · 어학 정보는 내 정보에서 직접 추가할 수 있어요</p>
+            </div>
           </div>
         )}
       </section>
