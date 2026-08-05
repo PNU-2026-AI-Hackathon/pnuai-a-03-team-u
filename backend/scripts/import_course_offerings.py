@@ -90,6 +90,9 @@ def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
 
         course_id = code_to_id.get(course_code)
         if course_id is None:
+            # 수강편람이 courses 카탈로그보다 넓지만(교양 등 학과 밖 개설 포함) 이 스크립트는
+            # courses 테이블을 손대지 않는다. 매칭 실패 offering은 스킵하고 카운트만 리포트.
+            # 교양 등 학과 밖 개설분은 별도 트랙(학지시 크롤러 → 유저 이수 데이터)에서 처리.
             stats["skipped_unmatched_course"] += 1
             if len(unmatched_codes) < 20:
                 unmatched_codes.append(course_code)

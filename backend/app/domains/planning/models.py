@@ -73,6 +73,9 @@ class CourseRoadmapItem(TimestampMixin, Base):
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     reason: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(20), default="manual")
+    # 어느 프로그램(주전공/부전공/복수전공/융합)용 항목인지. NULL=주전공/미지정.
+    # 판정 로직이 program별로 필터할 때 사용.
+    program_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class CourseRoadmapChatSession(TimestampMixin, Base):
@@ -133,3 +136,6 @@ class PendingRoadmapChange(TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(Text)
     # pending: 답변 대기 / approved·rejected: 사용자가 confirm에서 선택한 결과
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # 어느 프로그램(주전공/부전공/복수전공/융합)용 제안인지. NULL=주전공/미지정.
+    # confirm 시 CourseRoadmapItem.program_type으로 그대로 복사된다.
+    program_type: Mapped[str | None] = mapped_column(String(20), nullable=True)

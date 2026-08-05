@@ -1,5 +1,5 @@
-"""과목명 정규화 — course_descriptions <-> courses 매칭용 (scripts/import_course_descriptions.py,
-scripts/sync_course_descriptions_to_courses.py에서 사용).
+"""과목명 정규화 — 학과별 교과목개요 원문 표제와 courses.course_name 매칭용
+(scripts/import_course_descriptions.py에서 사용).
 
 이름이 완전히 같을 때만 매칭시킨다는 전제이므로, 여기서 하는 정규화는
 "공백/표기 차이" 수준만 흡수하고 의미 추론은 하지 않는다 (예: "일반물리학Ⅰ"과
@@ -46,6 +46,7 @@ def _top_level_paren_groups(text: str) -> tuple[str, list[str]]:
 
 
 _SEQUENCE_MARKER = re.compile(r"^\(([IVXⅠ-Ⅵ]{1,4}|\d{1,2})\)$")
+_LEADING_NUMBER_PREFIX = re.compile(r"^\d+(?:-\d+)?\.\s*")
 
 
 def strip_korean_name(raw_title: str) -> str:
@@ -55,8 +56,13 @@ def strip_korean_name(raw_title: str) -> str:
     과목 식별의 일부라(예: "일반물리학(I)"과 "일반물리학(II)"는 DB에도 별개 과목으로
     존재) 버리면 안 된다 — 순번 괄호는 이름에 남기고, 그 뒤에 오는 영문명 괄호부터만
     버린다.
+
+    원문 표제 앞의 순번 접두어(예: "1. ", "3-2. ")는 학과·전공 자료에서 목차 표기용으로
+    쓰이는 것이라 courses.course_name엔 없다. 매칭 전에 제거한다 — 실제 과목명이 숫자로
+    시작하는 경우는 매우 드물고, "숫자+점+공백" 패턴은 목차 접두어로만 쓰인다.
     """
     raw_title = unicodedata.normalize("NFC", raw_title or "").strip()
+    raw_title = _LEADING_NUMBER_PREFIX.sub("", raw_title)
     head, groups = _top_level_paren_groups(raw_title)
     name = head.strip()
     for group in groups:
