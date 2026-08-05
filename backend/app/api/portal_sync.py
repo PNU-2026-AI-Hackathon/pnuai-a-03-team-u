@@ -25,6 +25,7 @@ from app.domains.users.models import User
 from app.ingestion.crawlers.advisor_consultation import fetch_current_term_consultation_status
 from app.ingestion.crawlers.graduation import fetch_graduation_requirement
 from app.ingestion.crawlers.graduation_expected_info import extract_graduation_expected_info
+from app.ingestion.parsers.onestop_graduation_expected_info import normalize_graduation_expected_info
 from app.ingestion.crawlers.grades import fetch_all_grades
 from app.ingestion.crawlers.my_pusan_extracurricular import fetch_extracurricular_certificate
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
@@ -153,11 +154,20 @@ def sync_portal_data(
         ) from exc
 
     registration_rows = _table_rows_as_text(expected_info["tables"][0]) if expected_info["tables"] else []
+    expected_normalized = normalize_graduation_expected_info(expected_info)
 
     save_portal_credential(db, current_user.id, payload.login_id, payload.password)
     map_student_record(db, current_user.id, student_record)
     saved_records = map_grades(db, current_user.id, grades_tables)
     saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)
+    liberal_area_updates = _refine_liberal_area_categories(
+        db, current_user.id, expected_normalized.get("requirement_items", [])
+    )
+    if liberal_area_updates:
+        logging.getLogger(__name__).info(
+            "균형교양 세부영역 category 반영 (user_id=%s): %s개 record 업데이트",
+            current_user.id, liberal_area_updates,
+        )
     advisor_name = student_record.get("지도교수", "").strip()
     if advisor_name:  # 아직 배정 전이면 빈 문자열 — 기존 값을 지우지 않고 그대로 둔다
         current_user.advisor_name = advisor_name
@@ -244,6 +254,57 @@ def _table_rows_as_text(table: dict) -> list[list[str]]:
     grades/graduation 크롤러와 같은 평범한 문자열 2차원 배열로 변환한다.
     """
     return [[cell["text"] for cell in row["cells"]] for row in table["rows"]]
+
+
+def _refine_liberal_area_categories(
+    db: Session,
+    user_id: int,
+    requirement_items: list[dict],
+) -> int:
+    """One-Stop 졸업예정정보 general_education_area_completion 표에서 학생이 실제로 어느
+    세부영역(예: '사회와문화', '사상과역사')에 이수했는지 뽑아 student_course_records.category를
+    상위값('교양선택')에서 세부값으로 override 한다.
+
+    로드맵 챗이 균형교양 6개 세부영역별로 "너 사상과역사 3학점 이수했네" 같은 조언을
+    하려면 이 세부값이 이수기록에 있어야 한다. 학교 공식 판정 결과를 근거로 채우므로
+    학과 규칙 판별 로직 없이도 안전.
+
+    - 매칭: 학생이수정보_교과목명을 student_course_records.raw_course_name과 정규화(공백 제거) 후 비교
+    - 이수여부='이수'인 rows만 반영. '미이수'는 원 category 유지.
+    - '1영역 : 사상과역사' 형식에서 접두 '숫자영역 :' 제거해 순수 영역명만 저장.
+    """
+    area_rows = [
+        r for r in requirement_items
+        if r.get("requirement_area") == "general_education_area_completion"
+    ]
+    if not area_rows:
+        return 0
+
+    records = _list_course_records(db, user_id)
+    def _norm(name: str | None) -> str:
+        return (name or "").replace(" ", "").strip()
+    records_by_name: dict[str, list[StudentCourseRecord]] = {}
+    for r in records:
+        key = _norm(r.raw_course_name)
+        if key:
+            records_by_name.setdefault(key, []).append(r)
+
+    updated = 0
+    for row in area_rows:
+        raw = row.get("raw_record", {})
+        student_course = raw.get("학생이수정보_교과목명", "").strip()
+        if not student_course or raw.get("학생이수정보_이수여부", "").strip() != "이수":
+            continue
+        area_raw = row.get("required_category", "")
+        # "1영역 : 사상과역사" → "사상과역사"
+        area_name = area_raw.split(":", 1)[-1].strip() if ":" in area_raw else area_raw.strip()
+        if not area_name:
+            continue
+        for rec in records_by_name.get(_norm(student_course), []):
+            if rec.category != area_name:
+                rec.category = area_name
+                updated += 1
+    return updated
 
 
 def _list_course_records(db: Session, user_id: int) -> list[StudentCourseRecord]:
