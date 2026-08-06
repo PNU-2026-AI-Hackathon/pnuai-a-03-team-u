@@ -51,17 +51,34 @@ _SYSTEM_PROMPT = """너는 부산대 학생의 이번 학기 시간표를 함께
 **너는 시간표를 직접 만들지 않는다.** 시간이 겹치는 시간표를 내놓으면 수강신청이
 막힌다. 대신:
 1. `get_student_context`로 학생 수강기록·진로·학과·학점상한을 먼저 본다.
-2. `list_offered_courses`나 `search_by_career`로 이번 학기 실제 개설 과목을 찾는다.
+2. `list_offered_courses`로 이번 학기 실제 개설 과목을 찾는다 (아래 "진로 반영 검색"
+   참고). `search_by_career`는 사전 기반 fallback이라 진로 문구에 사전 키워드가 명확히
+   없으면 유의미한 결과가 안 나온다.
 3. 후보 과목 조합을 골라 `validate_timetable`에 넘긴다 — 규칙 코드가 시간 충돌·학점
    상한을 검증해 유효한 조합만 되돌려준다.
-4. 유효 조합을 얻으면 `finish_response`에 후보 시간표(section_ids 배열들)와 사용자에게
+4. 유효 조합을 얻으면 `finish_response`에 후보 시간표(offering_ids 배열들)와 사용자에게
    보여줄 설명 메시지를 담아 넘긴다.
 
+**진로 반영 검색 (중요)**:
+`get_student_context.career_goal` 원문(예: "시스템 프로그래머", "게임 백엔드 개발자",
+"의료 데이터 분석가")을 그대로 사전 매칭하려 하지 마라 — 그러면 대부분 실패한다.
+대신 학생의 진로를 **네 세계 지식으로 해석해 관련 학부 과목 서브토픽 3~5개를 스스로
+뽑아** 각각 `list_offered_courses(query=...)`로 검색해라.
+
+예:
+- career_goal="시스템 프로그래머" → query "운영체제" / "시스템프로그래밍" /
+  "컴파일러" / "임베디드" / "컴퓨터네트워크" 로 5번 호출
+- career_goal="게임 백엔드" → "네트워크" / "데이터베이스" / "서버" / "분산시스템"
+- career_goal="의료 데이터" → "통계" / "머신러닝" / "생명정보" / "바이오"
+
+각 검색 결과에서 학생 학과·이수기록·학점 상한을 고려해 3~5과목을 최종 조합으로 고른다.
+학생 학과와 무관하거나 이수 완료된 과목은 제외.
+
 **우선순위**:
-- 학생이 이미 이수한 과목은 다시 추천하지 않는다 (`get_student_context.completed_courses`).
+- 학생이 이미 이수한 과목은 다시 추천하지 않는다 (`get_student_context.completed_course_names`).
 - 학생이 "이번 학기는 가볍게 듣고 싶어" 같은 학점/과목수 선호를 말하면 그 방향으로
   조합을 좁힌다.
-- 진로 관련 과목을 우선 후보로 올린다 (`search_by_career` 사용).
+- 진로 관련 전공 과목을 우선 후보로. 부족한 학점은 관련 있는 교양으로 채운다.
 - 사용자가 로드맵을 언급하거나 "내 계획대로" 같은 표현을 쓰면 그때만 `get_roadmap_hint`를
   호출한다. 그 외엔 로드맵을 조회하지 않는다.
 
@@ -238,15 +255,13 @@ class _TimeTableToolContext:
         retriever = CurriculumRetriever(self.db)
         results = retriever.search(
             query=query or "",
-            filters={
-                "department_id": self.user.department_id,
-                "major_id": self.user.major_id,
-                "semester": self.semester,
-                "category": category,
-            },
-            top_k=max(1, min(limit or 10, 30)),
+            department_id=self.user.department_id,
+            major_id=self.user.major_id,
+            curriculum_year=2026,
+            filters={"semester": self.semester, "category": category},
         )
-        return {"results": [self._attach_offerings(r) for r in results]}
+        cap = max(1, min(limit or 10, 30))
+        return {"results": [self._attach_offerings(r) for r in results[:cap]]}
 
     def search_by_career(self, career_hint: str | None = None, limit: int | None = None) -> dict:
         hint = career_hint or self.user.career_goal
@@ -255,23 +270,22 @@ class _TimeTableToolContext:
         keywords = expand_career_query(hint)
         retriever = CurriculumRetriever(self.db)
         seen: dict[int, dict] = {}
+        cap = limit or 10
         for kw in keywords:
             results = retriever.search(
                 query=kw,
-                filters={
-                    "department_id": self.user.department_id,
-                    "major_id": self.user.major_id,
-                    "semester": self.semester,
-                },
-                top_k=5,
+                department_id=self.user.department_id,
+                major_id=self.user.major_id,
+                curriculum_year=2026,
+                filters={"semester": self.semester},
             )
-            for r in results:
+            for r in results[:5]:
                 cid = r.get("course_id")
                 if cid is not None and cid not in seen:
                     seen[cid] = self._attach_offerings(r)
-                    if len(seen) >= (limit or 10):
+                    if len(seen) >= cap:
                         break
-            if len(seen) >= (limit or 10):
+            if len(seen) >= cap:
                 break
         return {"results": list(seen.values()), "keywords_used": list(keywords)}
 
