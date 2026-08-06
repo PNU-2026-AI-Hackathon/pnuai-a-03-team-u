@@ -652,6 +652,59 @@ class StudentContextBlockTest(unittest.TestCase):
         self.assertIn("부전공", block)
         self.assertIn("통계학과", block)
 
+    def test_context_block_summarizes_balanced_liberal_area_completion(self):
+        """portal_sync가 override 한 세부영역 카테고리를 프롬프트 블록이 이수/미이수로 요약한다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=None, major_id=None, career_goal=None))
+        # 세부영역 이수 rows (portal_sync가 override 한 상태). 사상과역사 3학점 + 사회와문화 3학점.
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="서양철학사",
+                                     category="사상과역사", credits=3, year="2025", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="현대사회의이해",
+                                     category="사회와문화", credits=3, year="2025", semester="2"))
+        # override 안 된 교양선택 (미이수 세부영역 판정 대상)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="영화의이해",
+                                     category="교양선택", credits=2, year="2025", semester="1"))
+        db.commit()
+        block = _build_student_context_block(db, db.get(User, 1))
+        # 이수 영역이 학점과 함께 나온다
+        self.assertIn("사상과역사: 3학점 이수", block)
+        self.assertIn("사회와문화: 3학점 이수", block)
+        # 미이수 영역 목록에 나머지 5개가 다 잡힌다
+        for area in ["문학과예술", "과학과기술", "건강과레포츠", "외국어", "융복합"]:
+            self.assertIn(area, block)
+        # 이미 이수한 영역은 "미이수" 라벨 뒤에 딸린 목록에는 나오지 않는다
+        # (전체 블록에는 "이수" 섹션에서 등장하므로, 문자열 위치로 확인)
+        missing_idx = block.index("미이수 세부영역")
+        self.assertNotIn("사상과역사", block[missing_idx : missing_idx + 200])
+
+    def test_context_block_warns_llm_not_to_auto_match_similar_names(self):
+        """이수 완료 과목 안내에 유사명(예: 데이터구조↔자료구조)을 자동 매칭하지 말고
+        사용자에게 되묻도록 안내하는 문구가 포함된다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=None, major_id=None, career_goal=None))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="데이터구조",
+                                     category="전공기초", credits=3, year="2025", semester="1"))
+        db.commit()
+        block = _build_student_context_block(db, db.get(User, 1))
+        self.assertIn("자료구조", block)  # 예시로 등장
+        self.assertIn("되물어", block)  # 되묻기 지침 문구
+
+    def test_context_block_marks_no_liberal_area_data_when_not_synced(self):
+        """포털 동기화 전이라 세부영역 override가 없을 때는 그 사실을 명시한다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=None, major_id=None, career_goal=None))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="영화의이해",
+                                     category="교양선택", credits=2, year="2025", semester="1"))
+        db.commit()
+        block = _build_student_context_block(db, db.get(User, 1))
+        self.assertIn("이수한 균형교양 세부영역 없음", block)
+
 
 class CompletedCoursesGuardTest(unittest.TestCase):
     """이미 이수한 과목(student_course_records) 재추천 방지. 성적표 파싱 이수기록은

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.models import Department, Major
-from app.domains.courses.models import Course
+from app.domains.courses.models import Course, CourseOffering
 from app.domains.planning.history import sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
@@ -312,3 +312,170 @@ def delete_roadmap_item(
     item = _get_owned_item(db, current_user.id, roadmap_id, item_id)
     db.delete(item)
     db.commit()
+
+
+# --- 시간표 에이전트 결과를 로드맵에 반영 ---
+
+
+class TimetableApplyRequest(BaseModel):
+    """시간표 UI에서 사용자가 저장 버튼을 눌렀을 때 오는 페이로드.
+
+    year/semester는 UI에서 요청한 학기(예: 2026 2학기)와 일치해야 하고, offering_ids는
+    사용자가 최종 선택한 분반 목록이다. 중복 회피(이미 이수/이미 로드맵에 있음)는 시간표
+    에이전트가 upstream에서 사용자에게 미리 알려주고 걸러낸 상태를 전제로 한다 —
+    여기서는 (course_id, planned_year, planned_semester) 완전 중복만 조용히 스킵한다.
+    """
+
+    year: str
+    semester: str
+    offering_ids: list[int]
+    planned_grade: int | None = None  # 프론트가 알면 넘김. 없으면 null 저장(수동 편집 가능)
+
+
+class TimetableApplySkipped(BaseModel):
+    offering_id: int
+    course_id: int | None
+    course_name: str | None
+    reason: str
+
+
+class TimetableApplyRemovedFromFuture(BaseModel):
+    item_id: int
+    course_id: int | None
+    course_name: str | None
+    planned_year: str | None
+    planned_semester: str | None
+
+
+class TimetableApplyResult(BaseModel):
+    applied: list[RoadmapItemResponse]
+    skipped: list[TimetableApplySkipped]
+    removed_from_future: list[TimetableApplyRemovedFromFuture]
+
+
+def _semester_sort_key(year: str | None, semester: str | None) -> tuple[int, int] | None:
+    """(planned_year, planned_semester)를 비교 가능한 (년, 학기 int) 튜플로 만든다.
+    파싱 실패 시 None — 호출부는 None이면 "비교 불가"로 취급해 손대지 않는다.
+    계절수업/입학전성적 같은 비정규 학기도 여기서 None으로 걸러진다."""
+    if not year or not semester:
+        return None
+    try:
+        y = int(year)
+    except (TypeError, ValueError):
+        return None
+    s = semester.strip()
+    if s.startswith("1") and "2" not in s:
+        return (y, 1)
+    if s.startswith("2") and "1" not in s.replace("2", "", 1):
+        return (y, 2)
+    return None
+
+
+@router.post("/{roadmap_id}/timetable/apply", response_model=TimetableApplyResult)
+def apply_timetable_to_roadmap(
+    roadmap_id: int,
+    payload: TimetableApplyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TimetableApplyResult:
+    """시간표 에이전트가 추천하고 사용자가 UI에서 최종 선택한 분반들을 로드맵 항목으로 반영.
+
+    각 offering을 course로 해석해 (course_id, planned_year, planned_semester) 기준으로
+    upsert 한다. 이미 같은 학기에 같은 과목이 있으면 skipped에 넣고 넘어간다 —
+    프론트는 이 목록을 사용자에게 보여줘서 왜 일부가 반영 안 됐는지 알려줄 수 있다.
+    """
+    roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
+    target_key = _semester_sort_key(payload.year, payload.semester)
+
+    applied: list[CourseRoadmapItem] = []
+    skipped: list[TimetableApplySkipped] = []
+    removed_from_future: list[TimetableApplyRemovedFromFuture] = []
+
+    for offering_id in payload.offering_ids:
+        offering = db.get(CourseOffering, offering_id)
+        if offering is None:
+            skipped.append(TimetableApplySkipped(
+                offering_id=offering_id, course_id=None, course_name=None,
+                reason="존재하지 않는 분반입니다",
+            ))
+            continue
+
+        # 요청 학기와 실제 개설 학기 불일치 방지 (프론트 오류/이전 캐시 등)
+        if (offering.year or "") != payload.year or (offering.semester or "") != payload.semester:
+            skipped.append(TimetableApplySkipped(
+                offering_id=offering_id, course_id=offering.course_id, course_name=None,
+                reason=f"분반이 실제로 개설된 학기({offering.year} {offering.semester})가 "
+                       f"요청 학기({payload.year} {payload.semester})와 다릅니다",
+            ))
+            continue
+
+        course = db.get(Course, offering.course_id)
+        if course is None:
+            skipped.append(TimetableApplySkipped(
+                offering_id=offering_id, course_id=offering.course_id, course_name=None,
+                reason="분반에 연결된 과목이 존재하지 않습니다",
+            ))
+            continue
+
+        # 같은 학기·같은 과목 중복 → 조용히 스킵 (LLM이 upstream에서 이미 안내한 전제)
+        existing = db.scalar(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == roadmap.id,
+                CourseRoadmapItem.course_id == course.id,
+                CourseRoadmapItem.planned_year == payload.year,
+                CourseRoadmapItem.planned_semester == payload.semester,
+            )
+        )
+        if existing is not None:
+            skipped.append(TimetableApplySkipped(
+                offering_id=offering_id, course_id=course.id, course_name=course.course_name,
+                reason="이미 같은 학기에 이 과목이 로드맵에 있습니다",
+            ))
+            continue
+
+        # 이 과목이 로드맵의 이후 학기에도 계획돼 있으면 그 항목을 삭제한다 —
+        # 이번 학기에 이수하기로 확정했으니 미래 학기 계획은 중복. completed 항목은
+        # 실제 이수 기록이라 절대 손대지 않는다.
+        if target_key is not None:
+            future_dupes = db.scalars(
+                select(CourseRoadmapItem).where(
+                    CourseRoadmapItem.roadmap_id == roadmap.id,
+                    CourseRoadmapItem.course_id == course.id,
+                    CourseRoadmapItem.status != "completed",
+                )
+            ).all()
+            for dupe in future_dupes:
+                dupe_key = _semester_sort_key(dupe.planned_year, dupe.planned_semester)
+                if dupe_key is None or dupe_key <= target_key:
+                    continue
+                removed_from_future.append(TimetableApplyRemovedFromFuture(
+                    item_id=dupe.id, course_id=dupe.course_id, course_name=dupe.course_name,
+                    planned_year=dupe.planned_year, planned_semester=dupe.planned_semester,
+                ))
+                db.delete(dupe)
+
+        item = CourseRoadmapItem(
+            roadmap_id=roadmap.id,
+            course_id=course.id,
+            course_name=course.course_name,
+            category=course.category,
+            credits=course.credits,
+            planned_grade=payload.planned_grade,
+            planned_year=payload.year,
+            planned_semester=payload.semester,
+            source="ai",  # AI(시간표 에이전트)가 후보를 제시
+            is_confirmed=True,  # 사용자가 UI에서 명시적으로 저장 눌러서 확정
+            status="planned",
+        )
+        db.add(item)
+        applied.append(item)
+
+    db.commit()
+    for item in applied:
+        db.refresh(item)
+
+    return TimetableApplyResult(
+        applied=[_item_to_response(db, item) for item in applied],
+        skipped=skipped,
+        removed_from_future=removed_from_future,
+    )

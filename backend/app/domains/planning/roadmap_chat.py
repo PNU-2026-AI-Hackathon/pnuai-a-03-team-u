@@ -50,6 +50,21 @@ _DEFAULT_CURRICULUM_YEAR = 2026
 
 MAX_TOOL_ITERATIONS = 8
 
+# 균형교양 7개 세부영역. portal_sync._refine_liberal_area_categories가 One-Stop
+# 졸업예정정보 판정을 근거로 student_course_records.category를 상위값('교양선택')에서
+# 이 세부영역명으로 override 한다. 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
+# 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
+# 미이수로 오인할 수 있다.
+_BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
+    "사상과역사",
+    "사회와문화",
+    "문학과예술",
+    "과학과기술",
+    "건강과레포츠",
+    "외국어",
+    "융복합",
+)
+
 
 def _current_academic_term() -> tuple[int, int]:
     """오늘 날짜 기준 (학년도, 학기). portal_sync._current_academic_term과 같은 규칙:
@@ -170,12 +185,22 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   교양(category="교양필수" 필터로 잡힌다)은 졸업요건이라 반드시 이수해야 하니 남은
   학점이 있으면 전공과 나란히 추천해라.** 전공선택 남은 학점이 훨씬 많더라도 교양필수
   3학점을 이번 학기에 안 넣으면 다음 학기 부담이 커진다.
+- **균형교양은 총학점만이 아니라 세부영역별로 판단해라.** get_graduation_progress의
+  '교양선택'에 남은 학점이 있어도, 이미 이수한 세부영역(사상과역사·사회와문화·문학과예술·
+  과학과기술·건강과레포츠·외국어·융복합)에 또 몰아넣으면 졸업요건에서 인정 안 되는 학점이
+  쌓인다. 시스템 프롬프트 뒤에 붙는 [이 학생 프로필] 블록의 "균형교양 세부영역 이수 현황"과
+  "미이수 세부영역" 목록을 먼저 확인해서, **미이수 세부영역을 우선 채우는 방향**으로
+  search_courses 후보를 고르고 finish_response에서 그 근거("네가 아직 안 든 XX영역 보강용")를
+  밝혀라. 세부영역 판정은 학교 One-Stop 판정 결과라 신뢰하고 뒤집지 마라. 프로필 블록에
+  세부영역 정보가 하나도 없으면(포털 미동기화) 그 사실을 알리고 우선 동기화를 안내해라 —
+  세부영역 없이는 어느 영역이 부족한지 확정할 수 없다.
 - search_courses 결과에 description(교과목개요)이 있으면 과목명만 보고 판단하지 말고
   그 내용을 실제로 읽고 학생의 진로/관심사와 맞는지 확인해라. 과목명에 키워드가 없어도
   description 내용상 관련 있는 과목일 수 있다(반대의 경우도 있다 — description이 없다고
   관련 없다고 단정하지는 마라, 그냥 참고 정보가 없는 것뿐이다).
 - **이미 로드맵에 있는 과목(get_roadmap_items 결과의 course_id 목록)은 다시 create로 제안하지 마라 — 같은 과목이 두 번 만들어지는 걸 도구 단에서 거절한다.** 학기/학년만 옮기고 싶으면 그 항목의 `id`로 action='update'를 호출해라.
-- **이미 이수한 과목(get_roadmap_items 결과의 `completed_courses`)은 다시 추천하지 마라.** 성적표에서 파싱된 이수내역은 `course_id` 매핑이 대부분 안 돼 있어 로드맵 중복 가드로는 잡히지 않는다. finish_response에서 언급하는 과목명이 `completed_courses`에 있는 이름과 겹치는지 반드시 이름 기준으로 재확인해라 — 부산대 성적표 표기와 교육과정표 표기가 조금 다를 수 있다는 점(예: '데이터구조' vs '자료구조')도 감안해서, 명백한 동일 과목이면 제외해라. 이수기록과 이름이 정확히 일치하는 create는 도구 단에서도 거절한다.
+- **이미 이수한 과목(get_roadmap_items 결과의 `completed_courses`)은 다시 추천하지 마라.** 성적표에서 파싱된 이수내역은 `course_id` 매핑이 대부분 안 돼 있어 로드맵 중복 가드로는 잡히지 않는다. finish_response에서 언급하는 과목명이 `completed_courses`에 있는 이름과 겹치는지 반드시 이름 기준으로 재확인해라. 이수기록과 이름이 정확히 일치하는 create는 도구 단에서도 거절한다.
+- **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예: 이수기록에 '데이터구조'가 있고 후보에 '자료구조'가 있을 때, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 **"성적표의 '데이터구조'가 교육과정표의 '자료구조'와 같은 과목이 맞나요? 맞으면 제외할게요"**처럼 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "같다"고 답한 유사명 짝은 이후 답변에서도 계속 제외 목록에 유지해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
 - 기존 항목의 학기/학년을 바꾸고 싶으면 propose_change(action="update", item_id=...)를,
   항목을 빼고 싶으면 propose_change(action="delete", item_id=...)를 써라. 절대
   course_roadmap_items를 직접 바꿀 수 있는 방법은 없다 — 항상 이 제안 도구를 거친다.
@@ -1067,16 +1092,44 @@ def _build_student_context_block(db: Session, user: User) -> str:
     completed = db.scalars(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
     ).all()
-    completed_by_cat: dict[str | None, list[str]] = {}
+    completed_by_cat: dict[str | None, list[StudentCourseRecord]] = {}
     for r in completed:
-        completed_by_cat.setdefault(r.category, []).append(r.raw_course_name)
+        completed_by_cat.setdefault(r.category, []).append(r)
     completed_lines: list[str] = []
     for cat in ["전공기초", "전공필수", "전공선택", "교양필수", "교양선택", "일반선택"]:
-        names = completed_by_cat.get(cat)
-        if names:
-            completed_lines.append(f"  - {cat}: {', '.join(sorted(set(names)))}")
+        recs = completed_by_cat.get(cat)
+        if recs:
+            names = sorted({r.raw_course_name for r in recs})
+            completed_lines.append(f"  - {cat}: {', '.join(names)}")
     if not completed_lines:
         completed_lines.append("  - (성적표 이수기록 없음 — 신입 또는 미동기화)")
+
+    # 균형교양 세부영역별 이수/미이수 요약. portal_sync가 One-Stop 판정으로 category를
+    # 세부영역명으로 override 한 rows만 집계된다 — 미이수 rows는 여전히 '교양선택'이라
+    # 여기서는 안 잡히고, 아래 "미이수 영역" 목록에 자동으로 남는다.
+    balanced_lines: list[str] = []
+    missing_areas: list[str] = []
+    for area in _BALANCED_LIBERAL_AREAS:
+        recs = completed_by_cat.get(area)
+        if recs:
+            total_credits = sum(float(r.credits) for r in recs if r.credits is not None)
+            names = sorted({r.raw_course_name for r in recs})
+            credit_str = f"{total_credits:g}학점" if total_credits else "학점 미상"
+            balanced_lines.append(f"  - {area}: {credit_str} 이수 ({', '.join(names)})")
+        else:
+            missing_areas.append(area)
+    if balanced_lines:
+        balanced_block = "\n".join(balanced_lines)
+    else:
+        balanced_block = "  - (이수한 균형교양 세부영역 없음 — 또는 포털 동기화 전이라 세부영역이 붙지 않은 상태)"
+    if missing_areas:
+        missing_block = ", ".join(missing_areas)
+        # 예시 문구용: 실제 미이수 영역 앞 2개만 슬래시로 이어 붙인다.
+        # 상수 앞 3개를 하드코딩하던 옛 버전은 이미 이수한 영역을 예시로 드는 어색함이 있었다.
+        missing_example = "'" + "/".join(missing_areas[:2]) + "'"
+    else:
+        missing_block = "(없음 — 7개 세부영역 모두 최소 1과목 이수)"
+        missing_example = "'미이수 영역'"
 
     career = user.career_goal.strip() if user.career_goal else ""
     career_line = career if career else "(등록된 진로 목표 없음 — 프로필에서 입력하면 반영된다)"
@@ -1095,8 +1148,21 @@ def _build_student_context_block(db: Session, user: User) -> str:
 
 - **이수 완료 과목(성적표 원문 표기, 학과 커리큘럼 표기와 차이 있을 수 있음)**:
 {chr(10).join(completed_lines)}
-  → 이 목록에 있는 과목명은 다시 create로 제안하지 마라. 성적표 표기(예: "데이터구조")와
-    부산대 교육과정 표기(예: "자료구조")가 다를 수 있으니 명백히 같은 과목이면 제외해라.
+  → 이 목록에 있는 과목명과 정확히 일치하는 create는 도구 단에서 거절된다. 표기가
+    다르게 보이는 유사명(예: 성적표 "데이터구조" ↔ 교육과정 "자료구조")은 네가 임의로
+    같은 과목이라 단정하지 말고, 후보에 뜨면 사용자에게 "같은 과목인가요?"라고 되물어
+    확인 후 다음 턴에 제외해라. 우리 데이터로 동치 여부를 확인할 방법이 없다.
+
+- **균형교양 세부영역 이수 현황(One-Stop 학교 판정 결과 기반, 7개 영역 중)**:
+{balanced_block}
+  → 미이수 세부영역: {missing_block}
+  → 균형교양은 총 학점만 채우는 게 아니라 **세부영역 골고루** 이수해야 졸업요건이 인정된다.
+    총 학점(get_graduation_progress의 '교양선택')이 남아 있으면 우선 **미이수 세부영역**을
+    채우는 방향으로 추천해라. 이미 이수한 영역에 또 몰아넣지 마라. search_courses로
+    후보를 찾을 때 그 세부영역에 속하는 과목인지 description·과목명으로 판단하고,
+    finish_response에서도 "네가 아직 안 든 {missing_example} 영역 보강 차원에서 이
+    과목을 추천한다"처럼 근거를 밝혀라. 세부영역 판정 자체는 학교 판정 결과라 네가
+    뒤집지 말고 그대로 신뢰해라.
 """
 
 
