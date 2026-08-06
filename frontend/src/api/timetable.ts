@@ -60,3 +60,40 @@ export async function recommendTimetable(roadmapId: number, year: string, semest
   );
   return data;
 }
+
+export type TimetableChatTurn = { role: "user" | "assistant"; content: string };
+
+export type TimetableChatSuggestion = {
+  offering_ids: number[];
+  rationale: string | null;
+};
+
+export type TimetableChatResponse = {
+  reply: string;
+  schedules: TimetableChatSuggestion[];
+  iterations: number;
+  tool_calls: { name: string; args: unknown }[];
+};
+
+/**
+ * 시간표 전용 AI 상담. 로드맵 상담(chatWithRoadmapAgent)과 다른 엔드포인트다 —
+ * 예전에는 시간표 화면도 로드맵 챗을 불러서 두 화면의 대화가 한 세션에 섞이고,
+ * 시간표 화면에서 로드맵 변경안(pending change)까지 생기는 문제가 있었다.
+ *
+ * 서버가 대화를 저장하지 않는 스테이트리스 엔드포인트라, 히스토리는 호출부가
+ * 들고 있다가 매번 넘겨준다.
+ */
+export async function chatWithTimetableAgent(
+  year: string,
+  semester: string,
+  message: string,
+  history: TimetableChatTurn[] = [],
+) {
+  const { data } = await apiClient.post<TimetableChatResponse>("/agent/timetable/recommend", {
+    year,
+    semester,
+    message,
+    history,
+  });
+  return data;
+}

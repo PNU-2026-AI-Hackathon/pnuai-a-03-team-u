@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowUp, Check, Plus, Search } from "lucide-react";
 import {
+  chatWithTimetableAgent,
   recommendTimetable,
+  type TimetableChatTurn,
   type TimetableRecommendation,
   type TimetableSection,
 } from "../api/timetable";
-import { chatWithRoadmapAgent, getCurrentRoadmap } from "../api/roadmaps";
+import { getCurrentRoadmap } from "../api/roadmaps";
 import { getApiErrorMessage } from "../api/client";
 import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
@@ -67,7 +69,6 @@ function sectionSummary(section: TimetableSection) {
 
 export function TimetablePage() {
   const { user } = useAuth();
-  const [roadmapId, setRoadmapId] = useState<number | null>(null);
   const [data, setData] = useState<TimetableRecommendation | null>(null);
   const [scheduleIndex, setScheduleIndex] = useState(0);
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
@@ -88,7 +89,6 @@ export function TimetablePage() {
         const roadmap = await getCurrentRoadmap();
         const result = await recommendTimetable(roadmap.id, TARGET_YEAR, TARGET_SEMESTER);
         if (cancelled) return;
-        setRoadmapId(roadmap.id);
         setData(result);
       } catch (caught) {
         if (!cancelled) setError(getApiErrorMessage(caught, "시간표 후보를 불러오지 못했습니다."));
@@ -138,13 +138,24 @@ export function TimetablePage() {
 
   async function sendPrompt(text: string) {
     const message = text.trim();
-    if (!message || roadmapId === null || isSending) return;
+    if (!message || isSending) return;
+
+    // 서버가 대화를 저장하지 않으므로 지금까지의 대화를 그대로 넘겨준다.
+    const history: TimetableChatTurn[] = chat.map((entry) => ({
+      role: entry.role,
+      content: entry.content,
+    }));
 
     setPrompt("");
     setIsSending(true);
     setChat((current) => [...current, { key: `u-${current.length}`, role: "user", content: message }]);
     try {
-      const response = await chatWithRoadmapAgent(roadmapId, message);
+      const response = await chatWithTimetableAgent(
+        TARGET_YEAR,
+        TARGET_SEMESTER,
+        message,
+        history,
+      );
       setChat((current) => [
         ...current,
         { key: `a-${current.length}`, role: "assistant", content: response.reply },
@@ -418,7 +429,8 @@ export function TimetablePage() {
               aria-label="AI에게 메시지 보내기"
               placeholder="예 : 남은 요건으로 시간표 짜줘"
               value={prompt}
-              disabled={roadmapId === null || isSending}
+              /* 시간표 에이전트는 로드맵 없이도 동작한다(수강기록·진로만으로 후보 제안). */
+              disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
             />
             <button type="submit" aria-label="메시지 전송" disabled={!prompt.trim() || isSending}>
