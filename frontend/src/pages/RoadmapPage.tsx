@@ -22,7 +22,8 @@ import {
 import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapChatSession, RoadmapConversation, RoadmapItem } from "../api/roadmaps";
 import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { GraduationProgram } from "../api/studentInfo";
-import { isMockAuthEnabled } from "../api/auth";
+import { isMockAuthEnabled, visibleGrades } from "../api/auth";
+import type { AdmissionType } from "../api/auth";
 import { useAuth } from "../auth/AuthContext";
 
 type RoadmapTab = "semester" | "requirements" | "curriculum";
@@ -1224,6 +1225,15 @@ function normalizeSemester(value: string | null) {
   return value;
 }
 
+/** 편입/조기이수 인정 학점을 뜻하는 semester 값. 학년 계산이 불가능한 lump-sum이다. */
+const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
+const PRE_ADMISSION_KEY = "pre-admission";
+const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
+
+function isPreAdmissionSemester(value: string | null) {
+  return value !== null && PRE_ADMISSION_SEMESTERS.has(value);
+}
+
 function displayCategory(value: string | null) {
   const compact = value?.replace(/\s/g, "") ?? "이수구분 미정";
   const labels: Record<string, string> = {
@@ -1257,9 +1267,33 @@ function buildActivityTermMap(activities: ActivityRecord[]) {
   return map;
 }
 
-function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
+/**
+ * 로드맵 학년 슬롯을 만든다.
+ *
+ * 편입생은 1·2학년 커리큘럼을 밟지 않으므로 그 학년 칸을 아예 만들지 않고,
+ * 대신 맨 앞에 "입학 전 인정 학점" 칸을 둔다. 편입 인정 학점은 어느 학년에도
+ * 속하지 않는 lump-sum이라 정규 학기 슬롯에 넣으면 실제 3학년 1학기와 겹친다.
+ */
+function buildApiTimeline(
+  items: RoadmapItem[],
+  admissionType: AdmissionType = "freshman",
+): ApiTimelineTerm[] {
+  const isTransfer = admissionType === "transfer";
   const regularTerms: ApiTimelineTerm[] = [];
-  for (let grade = 1; grade <= 4; grade += 1) {
+
+  if (isTransfer) {
+    regularTerms.push({
+      key: PRE_ADMISSION_KEY,
+      term: PRE_ADMISSION_LABEL,
+      period: "편입 인정",
+      grade: null,
+      year: null,
+      semester: null,
+      items: [],
+    });
+  }
+
+  for (const grade of visibleGrades(admissionType)) {
     for (const semester of ["1학기", "2학기"]) {
       regularTerms.push({
         key: `${grade}-${semester}`,
@@ -1276,10 +1310,15 @@ function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
   const terms = new Map(regularTerms.map((term) => [term.key, term]));
   items.filter((item) => item.status !== "dropped").forEach((item) => {
     const semester = normalizeSemester(item.planned_semester);
+    // 입학전성적은 planned_grade가 비어 있고 semester 원본이 그대로 남아 있다.
+    // 편입생만 전용 칸을 갖는다. 조기이수 학점이 있는 신입생은 학년 흐름을
+    // 흐트러뜨리지 않도록 아래 "기타 이수 내역"으로 보낸다.
+    const isPreAdmission = isPreAdmissionSemester(item.planned_semester);
+    const preAdmissionKey = isTransfer && isPreAdmission ? PRE_ADMISSION_KEY : null;
     const regularKey = item.planned_grade && (semester === "1학기" || semester === "2학기")
       ? `${item.planned_grade}-${semester}`
       : null;
-    const key = regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
+    const key = preAdmissionKey ?? regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
     const existing = terms.get(key);
 
     if (existing) {
@@ -1290,7 +1329,13 @@ function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
 
     terms.set(key, {
       key,
-      term: [item.planned_year ? `${item.planned_year}년` : null, semester ?? "학기 미정"].filter(Boolean).join(" "),
+      term: isPreAdmission
+        ? [item.planned_year ? `${item.planned_year}년` : null, PRE_ADMISSION_LABEL]
+            .filter(Boolean)
+            .join(" ")
+        : [item.planned_year ? `${item.planned_year}년` : null, semester ?? "학기 미정"]
+            .filter(Boolean)
+            .join(" "),
       period: "기타 이수 내역",
       grade: item.planned_grade,
       year: item.planned_year,
@@ -1571,7 +1616,11 @@ function ConnectedRoadmapPage() {
   }, [activeTab, roadmap, graduation]);
 
   const visibleItems = useMemo(() => draftItems ?? roadmap?.items ?? [], [draftItems, roadmap]);
-  const timeline = useMemo(() => buildApiTimeline(visibleItems), [visibleItems]);
+  const admissionType = user?.admission_type ?? "freshman";
+  const timeline = useMemo(
+    () => buildApiTimeline(visibleItems, admissionType),
+    [visibleItems, admissionType],
+  );
   const activityTermMap = useMemo(() => buildActivityTermMap(activities), [activities]);
 
   useEffect(() => {

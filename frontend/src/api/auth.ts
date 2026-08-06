@@ -19,6 +19,26 @@ export type AcademicProgramInput = {
   program_type: "primary" | "dual" | "minor" | "interdisciplinary";
 };
 
+/**
+ * 신입학/편입학. 편입생은 1·2학년 커리큘럼을 밟지 않아 로드맵과 내 정보 화면을
+ * "입학 전 인정 학점 + 3·4학년"으로 구성한다.
+ */
+export type AdmissionType = "freshman" | "transfer";
+
+/** 편입생이 편성되는 학년. 부산대는 3학년 편입이 표준이라 하나로 고정한다. */
+export const TRANSFER_ENTRY_GRADE = 3;
+
+/** 이 학생의 커리큘럼이 시작되는 학년. */
+export function entryGrade(admissionType: AdmissionType | null | undefined) {
+  return admissionType === "transfer" ? TRANSFER_ENTRY_GRADE : 1;
+}
+
+/** 화면에 학년 슬롯으로 그려야 하는 학년 목록. */
+export function visibleGrades(admissionType: AdmissionType | null | undefined) {
+  const start = entryGrade(admissionType);
+  return Array.from({ length: 5 - start }, (_, index) => start + index);
+}
+
 export type User = {
   id: number;
   email: string;
@@ -27,6 +47,7 @@ export type User = {
   department: string | null;
   major: string | null;
   academic_year: number | null;
+  admission_type: AdmissionType;
   career_goal: string | null;
   advisor_name: string | null;
   advisor_consulted: boolean;
@@ -38,6 +59,8 @@ export type ProfileUpdatePayload = {
   department: string;
   major?: string | null;
   academic_year: number;
+  /** 생략하면 서버가 기존 값을 유지한다. */
+  admission_type?: AdmissionType;
 };
 
 export type SignupPayload = {
@@ -47,6 +70,7 @@ export type SignupPayload = {
   student_id: string;
   /** 서버에서도 선택 필드다. 회원가입 STEP 2에서 학사정보를 불러오면 채워진다. */
   academic_year?: number;
+  admission_type?: AdmissionType;
   school?: string;
   college?: string;
   department?: string;
@@ -59,6 +83,7 @@ function createMockUser(
   name = "테스트 학생",
   email = "mock@plan-u.local",
   academicYear = 3,
+  admissionType: AdmissionType = "freshman",
 ): User {
   return {
     id: 0,
@@ -68,6 +93,7 @@ function createMockUser(
     department: "의생명융합공학부",
     major: "데이터사이언스전공",
     academic_year: academicYear,
+    admission_type: admissionType,
     career_goal: "데이터 사이언티스트",
     advisor_name: "김도현 교수",
     advisor_consulted: false,
@@ -90,7 +116,13 @@ export function hasAuthSession() {
 
 export async function signup(payload: SignupPayload) {
   if (isMockAuthEnabled) {
-    return createMockUser(payload.student_id, payload.name, payload.email, payload.academic_year);
+    return createMockUser(
+      payload.student_id,
+      payload.name,
+      payload.email,
+      payload.academic_year,
+      payload.admission_type,
+    );
   }
 
   const { data } = await apiClient.post<User>("/auth/signup", payload, {

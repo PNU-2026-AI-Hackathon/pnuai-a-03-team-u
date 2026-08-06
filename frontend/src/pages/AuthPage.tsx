@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { useAuth } from "../auth/AuthContext";
-import type { AcademicProgramInput } from "../api/auth";
+import type { AcademicProgramInput, AdmissionType } from "../api/auth";
 import { PNU_EMAIL_DOMAIN, toPnuEmail } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
 
@@ -28,6 +28,7 @@ export function AuthPage() {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupName, setSignupName] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [admissionType, setAdmissionType] = useState<AdmissionType>("freshman");
   const [department, setDepartment] = useState("");
   const [primaryMajor, setPrimaryMajor] = useState("");
   const [careerGoal, setCareerGoal] = useState("");
@@ -105,6 +106,7 @@ export function AuthPage() {
         password: signupPassword,
         name: signupName,
         student_id: studentId,
+        admission_type: admissionType,
         school: "부산대학교",
         department: department || undefined,
         career_goal: careerGoal || undefined,
@@ -261,6 +263,34 @@ export function AuthPage() {
                   />
                 </label>
               </div>
+
+              <fieldset className="auth-field auth-choice">
+                <legend>입학 구분</legend>
+                <div className="auth-choice-options">
+                  <label className={`auth-choice-option${admissionType === "freshman" ? " is-selected" : ""}`}>
+                    <input
+                      type="radio"
+                      name="admission-type"
+                      value="freshman"
+                      checked={admissionType === "freshman"}
+                      onChange={() => setAdmissionType("freshman")}
+                    />
+                    <span className="auth-choice-label">신입학</span>
+                    <span className="auth-choice-hint">1학년부터 이수</span>
+                  </label>
+                  <label className={`auth-choice-option${admissionType === "transfer" ? " is-selected" : ""}`}>
+                    <input
+                      type="radio"
+                      name="admission-type"
+                      value="transfer"
+                      checked={admissionType === "transfer"}
+                      onChange={() => setAdmissionType("transfer")}
+                    />
+                    <span className="auth-choice-label">편입학</span>
+                    <span className="auth-choice-hint">3학년부터 이수</span>
+                  </label>
+                </div>
+              </fieldset>
 
               <label className="auth-field">
                 <span>부산대 웹메일 입력</span>

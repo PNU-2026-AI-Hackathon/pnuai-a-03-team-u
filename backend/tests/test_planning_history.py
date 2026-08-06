@@ -30,9 +30,13 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         db.flush()
         return db
 
-    def test_pre_enrollment_records_land_on_grade_3_first_semester(self):
-        """편입 인정(입학전성적) 이수기록은 로드맵에서 3학년 1학기로 표시된다.
-        예전엔 planned_grade=None으로 남아 UI가 1학년 1학기로 그렸다."""
+    def test_pre_enrollment_records_keep_their_own_slot(self):
+        """입학전성적은 어느 학년에도 속하지 않는 lump-sum이라 학년을 비워 둔다.
+
+        예전에는 3학년 1학기로 못 박았는데, 그러면 편입생이 실제로 이수한 3학년
+        1학기와 같은 칸에 합쳐져 버린다. 화면이 "입학 전 인정 학점"을 별도 칸으로
+        그리므로 semester 원본을 살려 두는 편이 맞다.
+        """
         db = self.make_db()
         db.add_all([
             StudentCourseRecord(user_id=1, raw_course_name="이산수학",
@@ -46,8 +50,8 @@ class SyncCompletedCoursesTest(unittest.TestCase):
 
         self.assertEqual(2, len(saved))
         for item in saved:
-            self.assertEqual(3, item.planned_grade)
-            self.assertEqual("1학기", item.planned_semester)
+            self.assertIsNone(item.planned_grade)
+            self.assertEqual("입학전성적", item.planned_semester)
             self.assertEqual("2026", item.planned_year)
             self.assertEqual("completed", item.status)
 
@@ -72,9 +76,38 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         self.assertEqual((1, "2학기"), (by_name["B"].planned_grade, by_name["B"].planned_semester))
         self.assertEqual((2, "1학기"), (by_name["C"].planned_grade, by_name["C"].planned_semester))
 
-    def test_transfer_and_regular_can_coexist(self):
-        """편입 학생이 3-1을 실제로 이수한 경우, 입학전성적 rows와 3-1 rows가
-        나란히 3-1 슬롯에 이수 완료로 올라간다."""
+    def test_transfer_student_first_semester_is_grade_3(self):
+        """편입생의 첫 재학 학기는 3학년 1학기다.
+
+        예전에는 재학 순번을 신입생 기준으로만 세서 grade=1로 찍혔고, 입학전성적은
+        3학년 1학기로 못 박혀 있어 시간 순서가 뒤집혀 보였다.
+        """
+        db = self.make_db()
+        db.query(User).filter_by(id=1).update({"admission_type": "transfer"})
+        db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                 category="전공기초", credits=3, year="2026", semester="입학전성적"),
+            StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                 category="전공필수", credits=3, year="2026", semester="1학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="알고리즘",
+                                 category="전공필수", credits=3, year="2026", semester="2학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="캡스톤",
+                                 category="전공필수", credits=3, year="2027", semester="1학기"),
+        ])
+        db.flush()
+
+        saved = sync_completed_courses_to_roadmap(db, user_id=1, roadmap_id=1)
+        by_name = {it.course_name: it for it in saved}
+
+        # 입학 전 인정 학점은 학년 슬롯 밖.
+        self.assertIsNone(by_name["이산수학"].planned_grade)
+        # 재학 학기는 3학년부터 시작해 두 학기마다 오른다.
+        self.assertEqual((3, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].planned_semester))
+        self.assertEqual((3, "2학기"), (by_name["알고리즘"].planned_grade, by_name["알고리즘"].planned_semester))
+        self.assertEqual((4, "1학기"), (by_name["캡스톤"].planned_grade, by_name["캡스톤"].planned_semester))
+
+    def test_freshman_with_pre_admission_credits_still_starts_at_grade_1(self):
+        """조기이수 인정 학점이 있어도 신입생이면 재학 학기는 1학년부터 센다."""
         db = self.make_db()
         db.add_all([
             StudentCourseRecord(user_id=1, raw_course_name="이산수학",
@@ -87,9 +120,7 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         saved = sync_completed_courses_to_roadmap(db, user_id=1, roadmap_id=1)
         by_name = {it.course_name: it for it in saved}
 
-        self.assertEqual((3, "1학기"), (by_name["이산수학"].planned_grade, by_name["이산수학"].planned_semester))
-        # 정규 3-1 rows는 재학 순번상 첫 학기라 grade=1로 계산됨(현재 랭킹 규칙).
-        # 이 테스트의 취지는 입학전성적 rows가 3-1로 확실히 오고 정규 매핑 로직은 건드려지지 않는다는 것.
+        self.assertIsNone(by_name["이산수학"].planned_grade)
         self.assertEqual((1, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].planned_semester))
 
 

@@ -24,7 +24,8 @@ import type {
   LanguageScorePayload,
   LanguageScoreRecord,
 } from "../api/profile";
-import { updateMyProfile } from "../api/auth";
+import { entryGrade, updateMyProfile } from "../api/auth";
+import type { AdmissionType } from "../api/auth";
 import {
   getCourseRecords,
   getGraduationProgress,
@@ -142,16 +143,84 @@ function formatCredit(value: number) {
 
 function formatTerm(year: string | null, semester: string | null) {
   if (!year && !semester) return "학기 정보 없음";
-  return `${year ?? ""}${year ? "년 " : ""}${semester ?? ""}${semester ? "학기" : ""}`.trim();
+  // "1"/"2"만 학기 번호라 접미사를 붙인다. "여름계절수업"처럼 이미 완성된 이름에
+  // 붙이면 "여름계절수업학기"가 된다.
+  const semesterLabel = semester === "1" || semester === "2" ? `${semester}학기` : semester ?? "";
+  return `${year ?? ""}${year ? "년 " : ""}${semesterLabel}`.trim();
 }
 
-function groupCoursesByTerm(courses: CourseRecord[]) {
-  const groups = new Map<string, CourseRecord[]>();
-  courses.forEach((course) => {
-    const term = formatTerm(course.year, course.semester);
-    groups.set(term, [...(groups.get(term) ?? []), course]);
+/** 편입/조기이수 인정 학점. 학년 계산이 불가능한 lump-sum이라 별도 칸으로 뺀다. */
+const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
+const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
+const REGULAR_SEMESTERS = new Set(["1학기", "2학기"]);
+
+function semesterOrder(year: string, semester: string) {
+  return Number(year) * 10 + (semester === "1학기" ? 1 : 2);
+}
+
+/**
+ * 이수 내역을 학년 기준으로 묶는다.
+ *
+ * 달력 연도가 아니라 "몇 번째 재학 학기인가"로 학년을 센다. 휴학 학기는 등록
+ * 기록 자체가 없어 순번에서 빠지므로, 복학해서 달력상 학기가 밀려도 학년은
+ * 밀리지 않는다. 편입생은 첫 재학 학기가 3학년 1학기다.
+ *
+ * 백엔드 history.py의 _curriculum_term과 같은 규칙이다. 두 곳이 어긋나면
+ * 내 정보와 성장 로드맵이 같은 과목을 다른 학년으로 표시하게 된다.
+ */
+function groupCoursesByGrade(
+  courses: CourseRecord[],
+  admissionType: AdmissionType | null | undefined,
+) {
+  const startGrade = entryGrade(admissionType);
+
+  const rankKeys = [
+    ...new Set(
+      courses
+        .filter((course) => course.year && course.semester && REGULAR_SEMESTERS.has(course.semester))
+        .map((course) => `${course.year}|${course.semester}`),
+    ),
+  ].sort((left, right) => {
+    const [leftYear, leftSemester] = left.split("|");
+    const [rightYear, rightSemester] = right.split("|");
+    return semesterOrder(leftYear, leftSemester) - semesterOrder(rightYear, rightSemester);
   });
-  return [...groups.entries()];
+  const rankByKey = new Map(rankKeys.map((key, index) => [key, index + 1]));
+
+  // sortKey는 화면 순서용이다. 입학 전 인정 학점이 항상 맨 앞에 오고, 학년을
+  // 매길 수 없는 계절수업 등은 맨 뒤로 간다.
+  const groups = new Map<string, { label: string; sortKey: number; courses: CourseRecord[] }>();
+  courses.forEach((course) => {
+    let label: string;
+    let sortKey: number;
+
+    if (course.semester && PRE_ADMISSION_SEMESTERS.has(course.semester)) {
+      label = PRE_ADMISSION_LABEL;
+      sortKey = -1;
+    } else {
+      const rank = course.year && course.semester
+        ? rankByKey.get(`${course.year}|${course.semester}`)
+        : undefined;
+      const grade = rank === undefined ? null : startGrade + Math.floor((rank - 1) / 2);
+      if (rank === undefined || grade === null || grade > 4) {
+        // 계절수업처럼 학년 슬롯에 못 넣는 기록은 원래 표기를 살려 맨 뒤로 보낸다.
+        // 연도를 더해 계절수업끼리는 시간순으로 정렬되게 한다.
+        label = formatTerm(course.year, course.semester);
+        sortKey = 900 + (Number(course.year) || 0);
+      } else {
+        label = `${grade}학년 ${rank % 2 === 1 ? "1학기" : "2학기"}`;
+        sortKey = rank;
+      }
+    }
+
+    const existing = groups.get(label);
+    if (existing) existing.courses.push(course);
+    else groups.set(label, { label, sortKey, courses: [course] });
+  });
+
+  return [...groups.values()]
+    .sort((left, right) => left.sortKey - right.sortKey)
+    .map((group) => [group.label, group.courses] as const);
 }
 
 function calculateGpa(courses: CourseRecord[], majorOnly = false) {
@@ -215,6 +284,9 @@ export function InfoPage() {
   const [profileOverrides, setProfileOverrides] = useState<ProfileOverrides | null>(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [profileEditDraft, setProfileEditDraft] = useState<ProfileOverrides>({ name: "", major: "", academicYear: 1 });
+  // ProfileOverrides(로컬 저장용 타입)에 넣지 않고 따로 둔다. 입학 구분은 화면
+  // 표시 보정값이 아니라 서버가 들고 있어야 하는 학적 정보다.
+  const [admissionDraft, setAdmissionDraft] = useState<AdmissionType>("freshman");
   const [profileEditError, setProfileEditError] = useState("");
   const [courseEditDraft, setCourseEditDraft] = useState<CourseRecord[]>([]);
   const [isAddingCourse, setIsAddingCourse] = useState(false);
@@ -275,7 +347,11 @@ export function InfoPage() {
 
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
   const displayedGraduation = isProfileEditing ? graduationEditDraft : graduation;
-  const gradeTerms = useMemo(() => groupCoursesByTerm(displayedCourses), [displayedCourses]);
+  const admissionType = user?.admission_type ?? "freshman";
+  const gradeTerms = useMemo(
+    () => groupCoursesByGrade(displayedCourses, admissionType),
+    [displayedCourses, admissionType],
+  );
   const syncedName = studentRecord["이름"] ?? studentRecord["성명"];
   const syncedStudentId = studentRecord["학번"];
   const baseProfileName = isMockStudentDataEnabled ? syncedName ?? user?.name : user?.name ?? syncedName;
@@ -335,6 +411,7 @@ export function InfoPage() {
       major: hasDuplicateProgramName ? "" : profileMajor ?? "",
       academicYear: academicYear ?? 1,
     });
+    setAdmissionDraft(admissionType);
     setCourseEditDraft(courses.map((course) => ({ ...course })));
     setIsAddingCourse(false);
     setNewCourseDraft(emptyCourseDraft());
@@ -390,6 +467,7 @@ export function InfoPage() {
         department: nextOverrides.department,
         major: nextOverrides.major || null,
         academic_year: nextOverrides.academicYear,
+        admission_type: admissionDraft,
       });
       const savedCourses = await replaceCourseRecords(courseEditDraft);
       const graduationResult = hasGraduationEdited && nextGraduation
@@ -706,6 +784,13 @@ export function InfoPage() {
                 <span>학년</span>
                 <input type="number" min="1" max="6" value={profileEditDraft.academicYear} onChange={(event) => setProfileEditDraft((current) => ({ ...current, academicYear: Number(event.target.value || 1) }))} />
               </label>
+              <label>
+                <span>입학 구분</span>
+                <select value={admissionDraft} onChange={(event) => setAdmissionDraft(event.target.value as AdmissionType)}>
+                  <option value="freshman">신입학 (1학년부터)</option>
+                  <option value="transfer">편입학 (3학년부터)</option>
+                </select>
+              </label>
             </div>
           ) : (
             <>
@@ -730,7 +815,12 @@ export function InfoPage() {
                   </span>
                 ) : null}
               </p>
-              <p>{academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}</p>
+              <p>
+                {academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}
+                {admissionType === "transfer"
+                  ? ` · 편입학 (${entryGrade(admissionType)}학년부터 이수)`
+                  : null}
+              </p>
             </>
           )}
           {profileEditError ? <p className="profile-edit-error" role="alert">{profileEditError}</p> : null}

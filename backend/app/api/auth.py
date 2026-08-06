@@ -25,6 +25,7 @@ from app.core.mailer import send_password_reset_email
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.domains.academics.hierarchy import resolve_hierarchy
 from app.domains.academics.models import Department, Major, UserAcademicProgram
+from app.domains.users.admission import AdmissionType, normalize_admission_type
 from app.domains.users.models import PasswordResetToken, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -62,6 +63,8 @@ class SignupRequest(BaseModel):
     name: str
     student_id: str
     academic_year: int | None = Field(default=None, ge=1, le=6)
+    # "freshman" | "transfer". 편입생은 1·2학년 커리큘럼을 밟지 않아 로드맵 구성이 다르다.
+    admission_type: AdmissionType = "freshman"
     school: str | None = None
     college: str | None = None
     department: str | None = None
@@ -154,6 +157,9 @@ class UserResponse(BaseModel):
     department: str | None
     major: str | None
     academic_year: int | None
+    # 옛 행은 NULL일 수 있어 "transfer가 아니면 신입학"으로 정규화해서 내려준다.
+    # 프론트가 null 분기를 따로 하지 않아도 되게 하려는 것이다.
+    admission_type: AdmissionType
     career_goal: str | None
     advisor_name: str | None
     advisor_consulted: bool
@@ -188,6 +194,7 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         department=_department_name(db, user.department_id),
         major=_major_name(db, user.major_id),
         academic_year=user.academic_year,
+        admission_type=normalize_admission_type(user.admission_type),
         career_goal=user.career_goal,
         advisor_name=user.advisor_name,
         advisor_consulted=user.advisor_consulted,
@@ -224,6 +231,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         name=payload.name,
         student_id=payload.student_id,
         academic_year=payload.academic_year,
+        admission_type=payload.admission_type,
         department_id=top_department_id,
         career_goal=payload.career_goal,
     )

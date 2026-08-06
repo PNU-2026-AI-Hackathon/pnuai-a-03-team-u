@@ -7248,6 +7248,69 @@ body.theme-dark .topnav .theme-mode-button {
   outline: none;
 }
 
+/* 입학 구분(신입학/편입학) 라디오. 두 칸을 카드처럼 나눠 선택 상태를 크게 보여준다. */
+.auth-choice {
+  gap: 8px;
+}
+
+.auth-choice > legend {
+  padding: 0;
+  color: var(--shell-dim);
+  font-size: 12px;
+}
+
+.auth-choice-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-choice-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--shell-line);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+/* 라디오 자체는 숨기고 카드 테두리로 선택 상태를 나타낸다. 키보드 포커스는
+   :focus-within으로 카드에 그대로 드러나므로 접근성은 유지된다. */
+.auth-choice-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.auth-choice-option:hover {
+  border-color: var(--shell-accent);
+}
+
+.auth-choice-option:focus-within {
+  outline: 2px solid var(--shell-accent);
+  outline-offset: 1px;
+}
+
+.auth-choice-option.is-selected {
+  border-color: var(--shell-accent);
+  background: var(--blue-soft);
+}
+
+.auth-choice-label {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.auth-choice-hint {
+  color: var(--shell-dim);
+  font-size: 12px;
+}
+
 /* 아이디 + 고정 @pusan.ac.kr — 부산대 마일스톤과 같은 입력 형태 */
 .auth-email-field {
   display: flex;

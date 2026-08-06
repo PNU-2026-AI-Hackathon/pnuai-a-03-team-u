@@ -14,14 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.planning.models import CourseRoadmapItem
-
-# 편입/조기이수 인정 학점을 로드맵에 배치할 기본 학기.
-# 부산대는 3학년 편입이 표준이라 3-1로 못 박는다. StudentCourseRecord.semester는
-# "입학전성적"으로 그대로 유지(어디서 왔는지 기록 보존)하고, 파생되는
-# CourseRoadmapItem에서만 3-1로 표시해 로드맵 UI가 1학년 1학기로 그리지 않게 한다.
-_TRANSFER_CREDIT_SEMESTERS = {"입학전성적"}
-_TRANSFER_DEFAULT_GRADE = 3
-_TRANSFER_DEFAULT_SEMESTER = "1학기"
+from app.domains.users.admission import (
+    PRE_ADMISSION_SEMESTERS,
+    entry_grade as admission_entry_grade,
+)
+from app.domains.users.models import User
 
 _REGULAR_SEMESTERS = ("1학기", "2학기")
 
@@ -53,28 +50,32 @@ def _curriculum_term(
     semester_rank: dict[tuple[str, str], int],
     year: str | None,
     semester: str | None,
+    entry_grade: int = 1,
 ) -> tuple[int | None, str | None]:
     """정규 학기 record 하나에 대응하는 (planned_grade, planned_semester)를 돌려준다.
 
-    planned_grade: 재학 학기 순번 기준 학년. 1~4를 벗어나면 None.
+    planned_grade: 재학 학기 순번 기준 학년. entry_grade에서 시작해 두 학기마다
+    하나씩 오른다. 편입생은 첫 재학 학기가 3학년 1학기다. 4학년을 넘으면 None.
     planned_semester: 순번의 홀/짝으로 도출한 커리큘럼 상 학기. 정규 학기가 아니면
     원본 semester를 그대로 돌려준다 — 계절수업 같은 값은 유지해야 표시·필터링이 깨지지 않는다.
 
-    특수 케이스: `입학전성적`(편입/조기이수 인정)은 학년 계산이 불가능하지만 그대로
-    두면 UI에서 planned_grade=None을 1학년 1학기로 그리게 된다. 부산대 편입 표준인
-    3-1로 못 박아 로드맵에서 3학년 1학기 이수로 표시한다(_min_completed_grade가
-    입학전성적을 3학년으로 간주하는 것과 동일한 정책).
+    특수 케이스: `입학전성적`(편입/조기이수 인정)은 어느 학년에도 속하지 않는
+    lump-sum이라 planned_grade를 None으로 두고 semester를 원본 그대로 남긴다.
+    화면은 이 값을 학년 슬롯이 아니라 "입학 전 인정 학점" 칸으로 따로 그린다.
+
+    예전에는 이걸 3학년 1학기로 못 박았는데, 그러면 편입생의 실제 3학년 1학기와
+    같은 칸에 합쳐져 버린다. 실제로 그렇게 겹쳐 있었다.
     """
     if year is None or semester is None:
         return None, semester
-    if semester in _TRANSFER_CREDIT_SEMESTERS:
-        return _TRANSFER_DEFAULT_GRADE, _TRANSFER_DEFAULT_SEMESTER
+    if semester in PRE_ADMISSION_SEMESTERS:
+        return None, semester
     if semester not in _REGULAR_SEMESTERS:
         return None, semester
     rank = semester_rank.get((year, semester))
     if rank is None:
         return None, semester
-    grade = (rank + 1) // 2
+    grade = entry_grade + (rank - 1) // 2
     if not (1 <= grade <= 4):
         return None, semester
     curriculum_semester = "1학기" if rank % 2 == 1 else "2학기"
@@ -93,10 +94,15 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
     """
     records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
     semester_rank = _build_semester_rank(records)
+    # 편입생은 첫 재학 학기가 3학년 1학기다. 신입생 기준으로 세면 1학년으로 찍힌다.
+    user = db.get(User, user_id)
+    entry_grade = admission_entry_grade(user.admission_type if user else None)
 
     saved: list[CourseRoadmapItem] = []
     for record in records:
-        planned_grade, planned_semester = _curriculum_term(semester_rank, record.year, record.semester)
+        planned_grade, planned_semester = _curriculum_term(
+            semester_rank, record.year, record.semester, entry_grade
+        )
 
         existing = (
             db.query(CourseRoadmapItem)
