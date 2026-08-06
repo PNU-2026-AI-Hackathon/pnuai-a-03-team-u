@@ -173,10 +173,23 @@ def _suggested_actions(messages: list[CourseRoadmapChatMessage]) -> list[Suggest
     return [SuggestedActionResponse(label=label, prompt=prompt) for label, prompt in actions]
 
 
-def _load_conversation(db: Session, roadmap_id: int) -> ConversationResponse:
+def _load_conversation(
+    db: Session, roadmap_id: int, session_id: int | None = None
+) -> ConversationResponse:
+    """로드맵의 대화 기록을 읽는다.
+
+    session_id를 주면 그 스레드의 메시지만 돌려준다. 주지 않으면 로드맵의 모든
+    메시지를 섞어서 돌려주는데, 이건 세션 도입 이전 호출부와의 호환을 위한
+    동작이라 세션 UI가 있는 화면은 반드시 session_id를 넘겨야 한다.
+
+    pending_changes는 세션이 아닌 로드맵 전역이라 session_id와 무관하게 같다.
+    """
+    conditions = [CourseRoadmapChatMessage.roadmap_id == roadmap_id]
+    if session_id is not None:
+        conditions.append(CourseRoadmapChatMessage.session_id == session_id)
     messages = db.scalars(
         select(CourseRoadmapChatMessage)
-        .where(CourseRoadmapChatMessage.roadmap_id == roadmap_id)
+        .where(*conditions)
         .order_by(CourseRoadmapChatMessage.id)
     ).all()
     pending_changes = db.scalars(
@@ -198,23 +211,48 @@ def _load_conversation(db: Session, roadmap_id: int) -> ConversationResponse:
     )
 
 
+def _assert_session_belongs(db: Session, roadmap_id: int, session_id: int) -> None:
+    session = db.get(CourseRoadmapChatSession, session_id)
+    if session is None or session.roadmap_id != roadmap_id:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+
+
 @router.get("/messages", response_model=ConversationResponse)
 def get_roadmap_messages(
     roadmap_id: int,
+    session_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     _get_owned_roadmap(db, current_user.id, roadmap_id)
-    return _load_conversation(db, roadmap_id)
+    if session_id is not None:
+        _assert_session_belongs(db, roadmap_id, session_id)
+    return _load_conversation(db, roadmap_id, session_id)
 
 
 @router.delete("/messages", status_code=204)
 def delete_roadmap_messages(
     roadmap_id: int,
+    session_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """대화를 지운다. session_id를 주면 그 스레드만, 없으면 로드맵 전체를 지운다.
+
+    pending_changes는 로드맵 전역이라 특정 세션만 지울 때는 남겨둔다 — 다른
+    세션에서 받은 제안까지 같이 날아가면 안 된다.
+    """
     _get_owned_roadmap(db, current_user.id, roadmap_id)
+    if session_id is not None:
+        _assert_session_belongs(db, roadmap_id, session_id)
+        db.execute(
+            delete(CourseRoadmapChatMessage).where(
+                CourseRoadmapChatMessage.roadmap_id == roadmap_id,
+                CourseRoadmapChatMessage.session_id == session_id,
+            )
+        )
+        db.commit()
+        return
     db.execute(
         delete(PendingRoadmapChange).where(PendingRoadmapChange.roadmap_id == roadmap_id)
     )
@@ -254,7 +292,12 @@ def chat_with_roadmap_agent(
             PendingChangeResponse.from_model(c, name_map.get(c.id))
             for c in result["pending_changes"]
         ],
-        suggested_actions=_load_conversation(db, roadmap_id).suggested_actions,
+        # 추천 액션은 "직전 사용자 발화"를 보고 정하므로 이번 대화가 벌어진
+        # 세션으로 좁혀야 한다. 로드맵 전체로 보면 다른 스레드의 마지막 발화가
+        # 끼어들어 엉뚱한 버튼이 뜬다.
+        suggested_actions=_load_conversation(
+            db, roadmap_id, result["session_id"]
+        ).suggested_actions,
     )
 
 

@@ -4541,6 +4541,64 @@ body.theme-dark .semester-course-status.status-completed {
   color: var(--blue);
 }
 
+/* 대화 스레드 전환. 레일이 좁아 /chat처럼 목록을 세로로 못 펴므로 드롭다운으로 접는다. */
+.ai-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.ai-session-select:disabled {
+  background: var(--gray-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
+.ai-session-new,
+.ai-session-delete {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #637084;
+  cursor: pointer;
+}
+
+.ai-session-new:hover:not(:disabled) {
+  border-color: #bdd4f2;
+  color: var(--blue);
+}
+
+.ai-session-delete:hover:not(:disabled) {
+  border-color: #f4c2c2;
+  color: var(--red);
+}
+
+.ai-session-new:disabled,
+.ai-session-delete:disabled {
+  color: #c2c9d4;
+  cursor: default;
+}
+
 .ai-roadmap-panel .chat-log {
   display: grid;
   gap: 10px;
