@@ -114,7 +114,7 @@ def _sections_for_item(
         select(CourseTime).where(CourseTime.offering_id.in_(offering_ids))
     ).all():
         times_by_offering.setdefault(t.offering_id, []).append(t)
-    return [
+    sections = [
         _SectionInfo(
             item_id=item.id,
             course_id=item.course_id,
@@ -129,6 +129,11 @@ def _sections_for_item(
         )
         for r in rows
     ]
+    # 시간 정보가 있는 분반을 앞세운다. 시간이 없는 분반은 어떤 조합과도 충돌하지
+    # 않아 조합 탐색에서 먼저 뽑히는데, 그러면 주간 시간표에 블록이 하나도 안 그려진다.
+    # (크롤링이 아직 모든 분반의 시간을 채우지 못했다.)
+    sections.sort(key=lambda s: 0 if s.times else 1)
+    return sections
 
 
 def _serialize_section(section: _SectionInfo) -> dict:
