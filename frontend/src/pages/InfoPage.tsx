@@ -187,40 +187,46 @@ function groupCoursesByGrade(
   });
   const rankByKey = new Map(rankKeys.map((key, index) => [key, index + 1]));
 
-  // sortKey는 화면 순서용이다. 입학 전 인정 학점이 항상 맨 앞에 오고, 학년을
-  // 매길 수 없는 계절수업 등은 맨 뒤로 간다.
-  const groups = new Map<string, { label: string; sortKey: number; courses: CourseRecord[] }>();
+  // sortKey는 화면 순서용이다. 학년을 매길 수 없는 계절수업은 학년 뒤로,
+  // 입학 전 인정 학점은 맨 마지막으로 보낸다 — 재학 중 성적을 먼저 보고
+  // 입학 전 인정분은 참고로 확인하는 순서다(로드맵은 시간 흐름이라 반대로 맨 앞).
+  const groups = new Map<
+    string,
+    { label: string; sublabel: string | null; sortKey: number; courses: CourseRecord[] }
+  >();
   courses.forEach((course) => {
     let label: string;
+    let sublabel: string | null = null;
     let sortKey: number;
 
     if (course.semester && PRE_ADMISSION_SEMESTERS.has(course.semester)) {
       label = PRE_ADMISSION_LABEL;
-      sortKey = -1;
+      sortKey = Number.MAX_SAFE_INTEGER;
     } else {
       const rank = course.year && course.semester
         ? rankByKey.get(`${course.year}|${course.semester}`)
         : undefined;
       const grade = rank === undefined ? null : startGrade + Math.floor((rank - 1) / 2);
       if (rank === undefined || grade === null || grade > 4) {
-        // 계절수업처럼 학년 슬롯에 못 넣는 기록은 원래 표기를 살려 맨 뒤로 보낸다.
+        // 계절수업처럼 학년 슬롯에 못 넣는 기록은 원래 표기를 살린다.
         // 연도를 더해 계절수업끼리는 시간순으로 정렬되게 한다.
         label = formatTerm(course.year, course.semester);
         sortKey = 900 + (Number(course.year) || 0);
       } else {
         label = `${grade}학년 ${rank % 2 === 1 ? "1학기" : "2학기"}`;
+        // 학년은 재학 순번 기준이라 달력 학기와 어긋날 수 있다(휴학 등).
+        // 성적표를 대조할 수 있게 원래 학기를 같이 보여준다.
+        sublabel = formatTerm(course.year, course.semester);
         sortKey = rank;
       }
     }
 
     const existing = groups.get(label);
     if (existing) existing.courses.push(course);
-    else groups.set(label, { label, sortKey, courses: [course] });
+    else groups.set(label, { label, sublabel, sortKey, courses: [course] });
   });
 
-  return [...groups.values()]
-    .sort((left, right) => left.sortKey - right.sortKey)
-    .map((group) => [group.label, group.courses] as const);
+  return [...groups.values()].sort((left, right) => left.sortKey - right.sortKey);
 }
 
 function calculateGpa(courses: CourseRecord[], majorOnly = false) {
@@ -973,13 +979,16 @@ export function InfoPage() {
             </div>
             {gradeTerms.length === 0 ? <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p> : null}
             <div className="grade-term-list">
-              {gradeTerms.map(([term, termCourses]) => {
+              {gradeTerms.map(({ label: term, sublabel, courses: termCourses }) => {
                 const termGpa = calculateGpa(termCourses);
                 const termMajorGpa = calculateGpa(termCourses, true);
                 return (
                 <section key={term}>
                   <div className="grade-term-head">
-                    <h4>{term}</h4>
+                    <h4>
+                      {term}
+                      {sublabel ? <small className="grade-term-calendar">{sublabel}</small> : null}
+                    </h4>
                     <div className="grade-term-scores">
                       <span>총평점 <strong>{formatGpa(termGpa)}</strong></span>
                       <span>전공평점 <strong>{formatGpa(termMajorGpa)}</strong></span>
