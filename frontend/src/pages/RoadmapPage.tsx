@@ -1497,6 +1497,14 @@ function ConnectedRoadmapPage() {
 
   async function handleDeleteSession() {
     if (!roadmap || activeSessionId === null || isAiLoading) return;
+    // 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
+    // 한 번 물어본다.
+    const target = sessions.find((session) => session.session_id === activeSessionId);
+    const label = target?.title?.trim() || "이 대화";
+    const count = target?.message_count ?? 0;
+    const detail = count > 0 ? `메시지 ${count}개가 함께 삭제됩니다.` : "";
+    if (!window.confirm(`'${label}'을(를) 삭제할까요? ${detail}\n되돌릴 수 없습니다.`)) return;
+
     setAiError("");
     try {
       await deleteRoadmapSession(roadmap.id, activeSessionId);
