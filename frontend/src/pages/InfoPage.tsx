@@ -172,8 +172,9 @@ const SEMESTER_RANK: Record<string, number> = {
  * 화면이라 성적표와 표기가 같아야 대조가 된다. 학년 기준 배치는 성장 로드맵이
  * 담당한다.
  *
- * 순서는 시간 축이다. 입학 전 인정 학점이 가장 먼저 오고, 그다음부터 연도·학기
- * 순으로 이어진다. 계절수업은 같은 해의 앞 학기와 뒤 학기 사이에 들어간다.
+ * 순서는 시간 축의 최신순이다. 가장 최근 학기가 맨 위에 오고, 입학 전 인정
+ * 학점이 가장 오래된 것이라 맨 아래로 간다. 계절수업은 같은 해의 앞 학기와
+ * 뒤 학기 사이에 들어간다.
  */
 function groupCoursesByTerm(courses: CourseRecord[]) {
   const groups = new Map<string, { label: string; sortKey: number; courses: CourseRecord[] }>();
@@ -190,7 +191,7 @@ function groupCoursesByTerm(courses: CourseRecord[]) {
     else groups.set(label, { label, sortKey, courses: [course] });
   });
 
-  return [...groups.values()].sort((left, right) => left.sortKey - right.sortKey);
+  return [...groups.values()].sort((left, right) => right.sortKey - left.sortKey);
 }
 
 function calculateGpa(courses: CourseRecord[], majorOnly = false) {
