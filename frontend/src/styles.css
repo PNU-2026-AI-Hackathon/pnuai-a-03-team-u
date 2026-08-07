@@ -5456,17 +5456,6 @@ body.theme-dark .semester-course-status.status-completed {
 
 .grade-term-head h4 {
   margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-/* 학년은 재학 순번 기준이라 달력 학기와 어긋날 수 있다. 성적표를 대조할 수
-   있도록 원래 학기(2026년 1학기)를 부제로 함께 보여준다. */
-.grade-term-calendar {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
 }
 
 .grade-term-scores {

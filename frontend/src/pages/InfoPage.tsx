@@ -149,81 +149,45 @@ function formatTerm(year: string | null, semester: string | null) {
   return `${year ?? ""}${year ? "년 " : ""}${semesterLabel}`.trim();
 }
 
-/** 편입/조기이수 인정 학점. 학년 계산이 불가능한 lump-sum이라 별도 칸으로 뺀다. */
+/** 편입/조기이수 인정 학점. 어느 학기에도 속하지 않는 lump-sum이라 따로 뺀다. */
 const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
 const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
-const REGULAR_SEMESTERS = new Set(["1학기", "2학기"]);
 
-function semesterOrder(year: string, semester: string) {
-  return Number(year) * 10 + (semester === "1학기" ? 1 : 2);
-}
+/** 한 해 안에서의 학기 순서. 계절수업은 앞 학기와 뒤 학기 사이에 온다. */
+const SEMESTER_RANK: Record<string, number> = {
+  "1학기": 1,
+  "1": 1,
+  여름계절수업: 2,
+  여름: 2,
+  "2학기": 3,
+  "2": 3,
+  겨울계절수업: 4,
+  겨울: 4,
+};
 
 /**
- * 이수 내역을 학년 기준으로 묶는다.
+ * 이수 내역을 성적표 그대로 달력 학기로 묶는다.
  *
- * 달력 연도가 아니라 "몇 번째 재학 학기인가"로 학년을 센다. 휴학 학기는 등록
- * 기록 자체가 없어 순번에서 빠지므로, 복학해서 달력상 학기가 밀려도 학년은
- * 밀리지 않는다. 편입생은 첫 재학 학기가 3학년 1학기다.
+ * 학년(3학년 1학기)이 아니라 연도·학기로 보여준다 — 여기는 성적을 확인하는
+ * 화면이라 성적표와 표기가 같아야 대조가 된다. 학년 기준 배치는 성장 로드맵이
+ * 담당한다.
  *
- * 백엔드 history.py의 _curriculum_term과 같은 규칙이다. 두 곳이 어긋나면
- * 내 정보와 성장 로드맵이 같은 과목을 다른 학년으로 표시하게 된다.
+ * 순서는 시간 축이다. 입학 전 인정 학점이 가장 먼저 오고, 그다음부터 연도·학기
+ * 순으로 이어진다. 계절수업은 같은 해의 앞 학기와 뒤 학기 사이에 들어간다.
  */
-function groupCoursesByGrade(
-  courses: CourseRecord[],
-  admissionType: AdmissionType | null | undefined,
-) {
-  const startGrade = entryGrade(admissionType);
+function groupCoursesByTerm(courses: CourseRecord[]) {
+  const groups = new Map<string, { label: string; sortKey: number; courses: CourseRecord[] }>();
 
-  const rankKeys = [
-    ...new Set(
-      courses
-        .filter((course) => course.year && course.semester && REGULAR_SEMESTERS.has(course.semester))
-        .map((course) => `${course.year}|${course.semester}`),
-    ),
-  ].sort((left, right) => {
-    const [leftYear, leftSemester] = left.split("|");
-    const [rightYear, rightSemester] = right.split("|");
-    return semesterOrder(leftYear, leftSemester) - semesterOrder(rightYear, rightSemester);
-  });
-  const rankByKey = new Map(rankKeys.map((key, index) => [key, index + 1]));
-
-  // sortKey는 화면 순서용이다. 학년을 매길 수 없는 계절수업은 학년 뒤로,
-  // 입학 전 인정 학점은 맨 마지막으로 보낸다 — 재학 중 성적을 먼저 보고
-  // 입학 전 인정분은 참고로 확인하는 순서다(로드맵은 시간 흐름이라 반대로 맨 앞).
-  const groups = new Map<
-    string,
-    { label: string; sublabel: string | null; sortKey: number; courses: CourseRecord[] }
-  >();
   courses.forEach((course) => {
-    let label: string;
-    let sublabel: string | null = null;
-    let sortKey: number;
-
-    if (course.semester && PRE_ADMISSION_SEMESTERS.has(course.semester)) {
-      label = PRE_ADMISSION_LABEL;
-      sortKey = Number.MAX_SAFE_INTEGER;
-    } else {
-      const rank = course.year && course.semester
-        ? rankByKey.get(`${course.year}|${course.semester}`)
-        : undefined;
-      const grade = rank === undefined ? null : startGrade + Math.floor((rank - 1) / 2);
-      if (rank === undefined || grade === null || grade > 4) {
-        // 계절수업처럼 학년 슬롯에 못 넣는 기록은 원래 표기를 살린다.
-        // 연도를 더해 계절수업끼리는 시간순으로 정렬되게 한다.
-        label = formatTerm(course.year, course.semester);
-        sortKey = 900 + (Number(course.year) || 0);
-      } else {
-        label = `${grade}학년 ${rank % 2 === 1 ? "1학기" : "2학기"}`;
-        // 학년은 재학 순번 기준이라 달력 학기와 어긋날 수 있다(휴학 등).
-        // 성적표를 대조할 수 있게 원래 학기를 같이 보여준다.
-        sublabel = formatTerm(course.year, course.semester);
-        sortKey = rank;
-      }
-    }
+    const isPreAdmission = Boolean(course.semester && PRE_ADMISSION_SEMESTERS.has(course.semester));
+    const label = isPreAdmission ? PRE_ADMISSION_LABEL : formatTerm(course.year, course.semester);
+    const sortKey = isPreAdmission
+      ? Number.MIN_SAFE_INTEGER
+      : (Number(course.year) || 0) * 10 + (SEMESTER_RANK[course.semester ?? ""] ?? 9);
 
     const existing = groups.get(label);
     if (existing) existing.courses.push(course);
-    else groups.set(label, { label, sublabel, sortKey, courses: [course] });
+    else groups.set(label, { label, sortKey, courses: [course] });
   });
 
   return [...groups.values()].sort((left, right) => left.sortKey - right.sortKey);
@@ -354,10 +318,7 @@ export function InfoPage() {
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
   const displayedGraduation = isProfileEditing ? graduationEditDraft : graduation;
   const admissionType = user?.admission_type ?? "freshman";
-  const gradeTerms = useMemo(
-    () => groupCoursesByGrade(displayedCourses, admissionType),
-    [displayedCourses, admissionType],
-  );
+  const gradeTerms = useMemo(() => groupCoursesByTerm(displayedCourses), [displayedCourses]);
   const syncedName = studentRecord["이름"] ?? studentRecord["성명"];
   const syncedStudentId = studentRecord["학번"];
   const baseProfileName = isMockStudentDataEnabled ? syncedName ?? user?.name : user?.name ?? syncedName;
@@ -979,16 +940,13 @@ export function InfoPage() {
             </div>
             {gradeTerms.length === 0 ? <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p> : null}
             <div className="grade-term-list">
-              {gradeTerms.map(({ label: term, sublabel, courses: termCourses }) => {
+              {gradeTerms.map(({ label: term, courses: termCourses }) => {
                 const termGpa = calculateGpa(termCourses);
                 const termMajorGpa = calculateGpa(termCourses, true);
                 return (
                 <section key={term}>
                   <div className="grade-term-head">
-                    <h4>
-                      {term}
-                      {sublabel ? <small className="grade-term-calendar">{sublabel}</small> : null}
-                    </h4>
+                    <h4>{term}</h4>
                     <div className="grade-term-scores">
                       <span>총평점 <strong>{formatGpa(termGpa)}</strong></span>
                       <span>전공평점 <strong>{formatGpa(termMajorGpa)}</strong></span>
