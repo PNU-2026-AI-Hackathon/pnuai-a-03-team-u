@@ -24,6 +24,27 @@ from app.domains.academics.models import College, Department, Major
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 
+# 자동완성에서 감출 편제.
+#
+# SW융합트랙·SW연계전공·융합전공은 학생이 소속된 학과가 아니라 그 위에 얹는
+# 부가 과정이다. "내 학과"를 고르는 자리에 20개 넘게 섞여 나오면 정작 찾으려는
+# 학과가 묻힌다(예: "데이터"로 검색하면 SW융합트랙만 잔뜩 나온다).
+#
+# 목록에서 감출 뿐 입력 자체를 막지는 않는다. 실제로 융합전공 소속인 학생은
+# 이름을 직접 적으면 되고, 서버는 그 값을 그대로 받는다.
+#
+# "융합"만으로 거르면 의생명융합공학부·첨단융합학부·AI융합계산과학전공 같은
+# 정식 학과까지 사라진다. 반드시 뒤 단어까지 붙여서 판단한다.
+_HIDDEN_NAME_KEYWORDS = ("융합트랙", "연계전공", "융합전공")
+
+
+def _visible_name(column):
+    """이름에 부가 과정 키워드가 없는 행만 남기는 조건."""
+    condition = column.notilike(f"%{_HIDDEN_NAME_KEYWORDS[0]}%")
+    for keyword in _HIDDEN_NAME_KEYWORDS[1:]:
+        condition = condition & column.notilike(f"%{keyword}%")
+    return condition
+
 
 class DepartmentSearchResult(BaseModel):
     id: int
@@ -43,12 +64,13 @@ def search_departments(
     """학과/학부명으로 검색한다. q가 비면 전체 목록을 앞에서부터 돌려준다.
 
     "미지정" 단과대 소속은 제외한다 — 과거 자유 입력으로 잘못 생성된 껍데기라
-    사용자가 새로 고르면 안 되는 값이다.
+    사용자가 새로 고르면 안 되는 값이다. SW융합트랙 같은 부가 과정도 뺀다
+    (_HIDDEN_NAME_KEYWORDS 참고).
     """
     query = (
         select(Department, College)
         .join(College, College.id == Department.college_id)
-        .where(College.name != UNASSIGNED_COLLEGE)
+        .where(College.name != UNASSIGNED_COLLEGE, _visible_name(Department.name))
     )
     q = q.strip()
     if q:
@@ -60,7 +82,11 @@ def search_departments(
 
     department_ids = [department.id for department, _ in rows]
     majors_by_department: dict[int, list[str]] = {}
-    for major in db.scalars(select(Major).where(Major.department_id.in_(department_ids))).all():
+    for major in db.scalars(
+        select(Major).where(
+            Major.department_id.in_(department_ids), _visible_name(Major.name)
+        )
+    ).all():
         majors_by_department.setdefault(major.department_id, []).append(major.name)
 
     return [

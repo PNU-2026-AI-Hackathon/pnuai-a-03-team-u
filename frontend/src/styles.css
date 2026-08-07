@@ -7332,6 +7332,60 @@ body.theme-dark .topnav .theme-mode-button {
   outline: none;
 }
 
+/* 학과/전공 자동완성. 입력 바로 아래로 후보가 겹쳐 펼쳐진다. */
+.auth-autocomplete {
+  position: relative;
+}
+
+.auth-autocomplete-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 232px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.12);
+}
+
+.auth-autocomplete-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auth-autocomplete-option.is-active {
+  background: var(--blue-soft);
+}
+
+.auth-autocomplete-option small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.auth-autocomplete-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* 입학 구분(신입학/편입학) 라디오. 두 칸을 카드처럼 나눠 선택 상태를 크게 보여준다. */
 .auth-choice {
   gap: 8px;

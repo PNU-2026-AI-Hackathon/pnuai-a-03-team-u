@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ChevronDown } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { BrandMark } from "../components/layout/BrandMark";
+import { FieldAutocomplete } from "../components/auth/FieldAutocomplete";
+import type { AutocompleteOption } from "../components/auth/FieldAutocomplete";
+import { searchDepartments } from "../api/departments";
+import type { DepartmentSearchResult } from "../api/departments";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { useAuth } from "../auth/AuthContext";
 import type { AcademicProgramInput, AdmissionType } from "../api/auth";
@@ -11,6 +15,57 @@ import { getApiErrorMessage } from "../api/client";
 
 type AuthMode = "login" | "signup";
 type MessageKind = "error" | "success";
+
+/**
+ * 학과/학부 자동완성 후보. 입력이 멈추면 검색한다.
+ *
+ * 자동완성이 실패해도 입력은 계속할 수 있어야 하므로 오류를 삼킨다 —
+ * 후보가 안 뜨는 것과 가입이 막히는 것은 다른 문제다.
+ */
+function useDepartmentOptions(query: string) {
+  const [results, setResults] = useState<DepartmentSearchResult[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void searchDepartments(query.trim(), 8)
+        .then((data) => {
+          if (!cancelled) setResults(data);
+        })
+        .catch(() => undefined);
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  return results;
+}
+
+function toDepartmentOptions(results: DepartmentSearchResult[]): AutocompleteOption[] {
+  return results.map((item) => ({ value: item.name, hint: item.college }));
+}
+
+/**
+ * 고른 학과에 속한 전공만 후보로 내놓는다.
+ *
+ * 검색어가 학과명과 정확히 같을 때만 매칭되는데, 학과 후보를 고르면 입력값이
+ * 정식 명칭으로 채워지므로 자연스럽게 걸린다. 직접 타이핑해도 철자가 맞으면 뜬다.
+ */
+function majorOptionsFor(
+  results: DepartmentSearchResult[],
+  departmentName: string,
+  typed: string,
+): AutocompleteOption[] {
+  const matched = results.find((item) => item.name === departmentName.trim());
+  if (!matched) return [];
+  const keyword = typed.trim();
+  return matched.majors
+    .filter((major) => !keyword || major.includes(keyword))
+    .map((major) => ({ value: major, hint: matched.name }));
+}
 
 export function AuthPage() {
   const navigate = useNavigate();
@@ -37,6 +92,24 @@ export function AuthPage() {
   const [dualDepartment, setDualDepartment] = useState("");
   const [dualMajor, setDualMajor] = useState("");
   const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(false);
+
+  // 학과 3개(주전공/부전공/복수전공)는 각자 따로 검색한다.
+  const primaryResults = useDepartmentOptions(department);
+  const minorResults = useDepartmentOptions(minorDepartment);
+  const dualResults = useDepartmentOptions(dualDepartment);
+
+  const primaryMajorOptions = useMemo(
+    () => majorOptionsFor(primaryResults, department, primaryMajor),
+    [primaryResults, department, primaryMajor],
+  );
+  const minorMajorOptions = useMemo(
+    () => majorOptionsFor(minorResults, minorDepartment, minorMajor),
+    [minorResults, minorDepartment, minorMajor],
+  );
+  const dualMajorOptions = useMemo(
+    () => majorOptionsFor(dualResults, dualDepartment, dualMajor),
+    [dualResults, dualDepartment, dualMajor],
+  );
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -316,25 +389,29 @@ export function AuthPage() {
                   required
                 />
               </label>
-              <label className="auth-field">
-                <span>학과 또는 학부 입력</span>
-                <input
-                  type="text"
-                  placeholder="예 : 의생명융합공학부"
-                  value={department}
-                  onChange={(event) => setDepartment(event.target.value)}
-                  required
-                />
-              </label>
-              <label className="auth-field">
-                <span>세부전공 입력 (선택)</span>
-                <input
-                  type="text"
-                  placeholder="예 : 데이터사이언스전공"
-                  value={primaryMajor}
-                  onChange={(event) => setPrimaryMajor(event.target.value)}
-                />
-              </label>
+              <FieldAutocomplete
+                label="학과 또는 학부 입력"
+                placeholder="예 : 의생명융합공학부"
+                value={department}
+                onChange={(next) => {
+                  setDepartment(next);
+                  // 학과를 바꾸면 이전 학과의 전공은 더 이상 맞지 않는다.
+                  if (next.trim() !== department.trim()) setPrimaryMajor("");
+                }}
+                options={toDepartmentOptions(primaryResults)}
+                required
+              />
+              <FieldAutocomplete
+                label="세부전공 입력 (선택)"
+                placeholder="예 : 데이터사이언스전공"
+                value={primaryMajor}
+                onChange={setPrimaryMajor}
+                options={primaryMajorOptions}
+                minChars={0}
+                emptyHint={
+                  department.trim() ? "이 학부는 세부전공 구분이 없습니다" : "학부를 먼저 고르세요"
+                }
+              />
               <label className="auth-field">
                 <span>진로 입력</span>
                 <input
@@ -360,42 +437,52 @@ export function AuthPage() {
 
                 {isAdditionalProgramsOpen ? (
                   <div className="auth-program-grid" id="additional-program-fields">
-                    <label className="auth-field">
-                      <span>부전공 학과 또는 학부 입력</span>
-                      <input
-                        type="text"
-                        placeholder="예 : 의류학과"
-                        value={minorDepartment}
-                        onChange={(event) => setMinorDepartment(event.target.value)}
-                      />
-                    </label>
-                    <label className="auth-field">
-                      <span>부전공 세부전공 입력 (선택)</span>
-                      <input
-                        type="text"
-                        placeholder="예 : 패션디자인전공"
-                        value={minorMajor}
-                        onChange={(event) => setMinorMajor(event.target.value)}
-                      />
-                    </label>
-                    <label className="auth-field">
-                      <span>복수전공 학과 또는 학부 입력</span>
-                      <input
-                        type="text"
-                        placeholder="예 : 정보컴퓨터공학부"
-                        value={dualDepartment}
-                        onChange={(event) => setDualDepartment(event.target.value)}
-                      />
-                    </label>
-                    <label className="auth-field">
-                      <span>복수전공 세부전공 입력 (선택)</span>
-                      <input
-                        type="text"
-                        placeholder="예 : 컴퓨터공학전공"
-                        value={dualMajor}
-                        onChange={(event) => setDualMajor(event.target.value)}
-                      />
-                    </label>
+                    <FieldAutocomplete
+                      label="부전공 학과 또는 학부 입력"
+                      placeholder="예 : 의류학과"
+                      value={minorDepartment}
+                      onChange={(next) => {
+                        setMinorDepartment(next);
+                        if (next.trim() !== minorDepartment.trim()) setMinorMajor("");
+                      }}
+                      options={toDepartmentOptions(minorResults)}
+                    />
+                    <FieldAutocomplete
+                      label="부전공 세부전공 입력 (선택)"
+                      placeholder="예 : 패션디자인전공"
+                      value={minorMajor}
+                      onChange={setMinorMajor}
+                      options={minorMajorOptions}
+                      minChars={0}
+                      emptyHint={
+                        minorDepartment.trim()
+                          ? "이 학부는 세부전공 구분이 없습니다"
+                          : "학부를 먼저 고르세요"
+                      }
+                    />
+                    <FieldAutocomplete
+                      label="복수전공 학과 또는 학부 입력"
+                      placeholder="예 : 정보컴퓨터공학부"
+                      value={dualDepartment}
+                      onChange={(next) => {
+                        setDualDepartment(next);
+                        if (next.trim() !== dualDepartment.trim()) setDualMajor("");
+                      }}
+                      options={toDepartmentOptions(dualResults)}
+                    />
+                    <FieldAutocomplete
+                      label="복수전공 세부전공 입력 (선택)"
+                      placeholder="예 : 컴퓨터공학전공"
+                      value={dualMajor}
+                      onChange={setDualMajor}
+                      options={dualMajorOptions}
+                      minChars={0}
+                      emptyHint={
+                        dualDepartment.trim()
+                          ? "이 학부는 세부전공 구분이 없습니다"
+                          : "학부를 먼저 고르세요"
+                      }
+                    />
                   </div>
                 ) : null}
               </section>
