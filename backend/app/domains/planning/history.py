@@ -82,6 +82,57 @@ def _curriculum_term(
     return grade, curriculum_semester
 
 
+def _absolute_semester(year: str, semester: str) -> int:
+    """달력상 학기를 하나의 정수 축에 올린다. 이웃한 정규 학기끼리 1 차이가 난다."""
+    return int(year) * 2 + (0 if semester == "1학기" else 1)
+
+
+def project_curriculum_term(
+    db: Session, user_id: int, year: str, semester: str
+) -> tuple[int | None, str | None]:
+    """아직 이수하지 않은 학기가 커리큘럼상 몇 학년 몇 학기인지 추정한다.
+
+    시간표 추천을 로드맵에 반영할 때 쓴다. 이수 기록이 없는 미래 학기라
+    _build_semester_rank만으로는 순번을 매길 수 없어서, 마지막으로 등록한 학기의
+    순번에 달력상 거리를 더해 이어 붙인다.
+
+    planned_grade를 채우지 않으면 로드맵 화면이 그 항목을 학년 슬롯에 넣지 못하고
+    "2026년 2학기" 같은 기타 칸으로 떨어뜨린다.
+
+    앞으로 휴학할지는 알 수 없으므로 쉬지 않고 다닌다고 본다. 실제로 휴학하면
+    다음 포털 동기화가 이수 기록 기준으로 다시 계산해 바로잡는다.
+    """
+    if semester not in _REGULAR_SEMESTERS:
+        return None, semester
+    try:
+        target = _absolute_semester(year, semester)
+    except (TypeError, ValueError):
+        return None, semester
+
+    records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
+    semester_rank = _build_semester_rank(records)
+    user = db.get(User, user_id)
+    entry_grade = admission_entry_grade(user.admission_type if user else None)
+
+    rank = semester_rank.get((year, semester))
+    if rank is None:
+        if semester_rank:
+            last_key = max(semester_rank, key=lambda key: _semester_order(*key))
+            steps = target - _absolute_semester(*last_key)
+            if steps <= 0:
+                # 기록된 학기보다 과거인데 기록이 없다 — 근거가 없어 비워 둔다.
+                return None, semester
+            rank = semester_rank[last_key] + steps
+        else:
+            # 이수 기록이 아예 없으면 이번이 첫 학기다.
+            rank = 1
+
+    grade = entry_grade + (rank - 1) // 2
+    if not (1 <= grade <= 4):
+        return None, semester
+    return grade, "1학기" if rank % 2 == 1 else "2학기"
+
+
 def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int) -> list[CourseRoadmapItem]:
     """user_id의 StudentCourseRecord를 roadmap_id의 완료된 항목으로 upsert한다.
 

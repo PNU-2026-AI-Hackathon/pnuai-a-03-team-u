@@ -240,6 +240,12 @@ export function TimetablePage() {
       setApplyResult(result);
       setSuggestion(null);
       setSelectedOfferingIds(new Set());
+      // 반영된 과목이 주간 시간표와 과목 목록에 바로 나타나야 한다. 시간표 후보는
+      // 로드맵 항목에서 계산되므로 다시 불러온다.
+      const refreshed = await recommendTimetable(roadmapId, TARGET_YEAR, TARGET_SEMESTER);
+      setData(refreshed);
+      setScheduleIndex(0);
+      setExcludedIds(new Set());
     } catch (caught) {
       setApplyError(getApiErrorMessage(caught, "로드맵에 반영하지 못했습니다."));
     } finally {

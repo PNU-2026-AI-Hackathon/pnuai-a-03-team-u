@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.api.roadmaps import TimetableApplyRequest, apply_timetable_to_roadmap
 from app.core.db import Base
-from app.domains.academics.models import College, Department, Major, School
+from app.domains.academics.models import (
+    College,
+    Department,
+    Major,
+    School,
+    StudentCourseRecord,
+)
 from app.domains.courses.models import Course, CourseOffering
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
@@ -19,10 +25,13 @@ class TimetableApplyApiTest(unittest.TestCase):
             School.__table__, College.__table__, Department.__table__, Major.__table__,
             User.__table__, Course.__table__, CourseOffering.__table__,
             CourseRoadmap.__table__, CourseRoadmapItem.__table__,
+            # planned_grade를 이수 기록에서 역산하므로 이 테이블이 필요하다.
+            StudentCourseRecord.__table__,
         ])
 
     def setUp(self):
         self.db = Session(self.engine)
+        self.db.query(StudentCourseRecord).delete()
         self.db.query(CourseRoadmapItem).delete()
         self.db.query(CourseRoadmap).delete()
         self.db.query(CourseOffering).delete()
@@ -92,8 +101,21 @@ class TimetableApplyApiTest(unittest.TestCase):
         items = self.db.scalars(select(CourseRoadmapItem)).all()
         self.assertEqual(1, len(items))
 
+    def _enroll_first_semester(self):
+        """2025 1학기를 다닌 상태로 만든다.
+
+        이러면 2026 2학기는 커리큘럼상 2학년 2학기가 된다(순번 4). 저장되는
+        planned_semester가 확정돼야 중복 판정을 검증할 수 있다.
+        """
+        self.db.add(StudentCourseRecord(
+            user_id=1, raw_course_name="A", category="전공필수",
+            credits=3, year="2025", semester="1학기",
+        ))
+        self.db.commit()
+
     def test_duplicate_same_semester_is_silently_skipped(self):
         """이미 로드맵에 같은 학기·같은 과목이 있으면 저장하지 않고 skipped에 표시."""
+        self._enroll_first_semester()
         self.db.add(CourseRoadmapItem(
             roadmap_id=1, course_id=100, course_name="자료구조", category="전공필수",
             credits=3, planned_year="2026", planned_semester="2학기", status="planned",
@@ -110,6 +132,7 @@ class TimetableApplyApiTest(unittest.TestCase):
     def test_same_course_in_other_semester_does_not_block(self):
         """같은 과목이 다른 학기에 이미 있어도 이번 학기 저장은 막지 않는다.
         (재수강/재이수 시나리오 대비 — 서버가 아니라 LLM/UI가 판단)"""
+        self._enroll_first_semester()  # 저장될 학기는 2학년 2학기
         self.db.add(CourseRoadmapItem(
             roadmap_id=1, course_id=100, course_name="자료구조", category="전공필수",
             credits=3, planned_year="2026", planned_semester="1학기", status="planned",
@@ -120,9 +143,35 @@ class TimetableApplyApiTest(unittest.TestCase):
         self.assertEqual(1, len(result.applied))
         self.assertEqual(0, len(result.skipped))
 
-    def test_planned_grade_null_when_client_omits(self):
+    def test_planned_grade_is_derived_when_client_omits(self):
+        """프론트가 학년을 안 넘겨도 이수 기록에서 역산한다.
+
+        예전에는 null로 저장했는데, 그러면 로드맵 화면이 이 항목을 학년 슬롯에
+        못 넣고 "2026년 2학기" 같은 기타 칸으로 떨어뜨린다.
+
+        1학년 1·2학기를 마친 학생이 2026 2학기를 담으면 2학년 2학기가 된다
+        (2026 1학기를 건너뛴 만큼 순번이 밀린다).
+        """
+        self.db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="A", category="전공필수",
+                                 credits=3, year="2025", semester="1학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="B", category="전공필수",
+                                 credits=3, year="2025", semester="2학기"),
+        ])
+        self.db.commit()
+
         result = self._call([200])  # grade 안 넘김
-        self.assertIsNone(result.applied[0].planned_grade)
+
+        self.assertEqual(2, result.applied[0].planned_grade)
+        self.assertEqual("2026", result.applied[0].planned_year)
+        # planned_year는 달력 연도, planned_semester는 커리큘럼 학기다.
+        self.assertEqual("2학기", result.applied[0].planned_semester)
+
+    def test_planned_grade_defaults_to_first_term_without_records(self):
+        """이수 기록이 아예 없으면 이번이 첫 학기라고 본다."""
+        result = self._call([200])
+        self.assertEqual(1, result.applied[0].planned_grade)
+        self.assertEqual("1학기", result.applied[0].planned_semester)
 
     def test_removes_future_semester_duplicate_when_applying(self):
         """이번 학기(2026 2학기)에 자료구조를 저장할 때, 로드맵의 2027 1학기에 같은

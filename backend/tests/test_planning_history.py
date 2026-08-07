@@ -6,7 +6,10 @@ from sqlalchemy.orm import sessionmaker
 from app.core.db import Base
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.courses.models import Course
-from app.domains.planning.history import sync_completed_courses_to_roadmap
+from app.domains.planning.history import (
+    project_curriculum_term,
+    sync_completed_courses_to_roadmap,
+)
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
 
@@ -122,6 +125,70 @@ class SyncCompletedCoursesTest(unittest.TestCase):
 
         self.assertIsNone(by_name["이산수학"].planned_grade)
         self.assertEqual((1, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].planned_semester))
+
+
+class ProjectCurriculumTermTest(unittest.TestCase):
+    """아직 안 다닌 학기의 학년 추정.
+
+    시간표 추천을 로드맵에 반영할 때 planned_grade가 비면, 로드맵 화면이 그
+    항목을 학년 슬롯에 못 넣고 "2026년 2학기" 같은 기타 칸으로 떨어뜨린다.
+    """
+
+    def make_db(self, admission_type="freshman"):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_TABLES)
+        db = sessionmaker(bind=engine)()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    admission_type=admission_type))
+        db.add(CourseRoadmap(id=1, user_id=1))
+        db.flush()
+        return db
+
+    def _add_terms(self, db, terms):
+        for index, (year, semester) in enumerate(terms):
+            db.add(StudentCourseRecord(user_id=1, raw_course_name=f"과목{index}",
+                                        category="전공필수", credits=3,
+                                        year=year, semester=semester))
+        db.flush()
+
+    def test_다음_학기는_마지막_등록_학기_뒤로_이어진다(self):
+        db = self.make_db()
+        self._add_terms(db, [("2025", "1학기"), ("2025", "2학기")])
+        # 2학기까지 마쳤으니 다음은 2학년 1학기.
+        self.assertEqual((2, "1학기"), project_curriculum_term(db, 1, "2026", "1학기"))
+
+    def test_편입생은_3학년부터_이어진다(self):
+        """이 버그를 처음 본 상황. 2025-1학기와 2026-1학기만 다닌 편입생의
+        다음 학기(2026-2학기)는 4학년 1학기다."""
+        db = self.make_db(admission_type="transfer")
+        self._add_terms(db, [("2025", "1학기"), ("2026", "1학기")])
+        self.assertEqual((4, "1학기"), project_curriculum_term(db, 1, "2026", "2학기"))
+
+    def test_이미_다닌_학기는_그_순번을_그대로_쓴다(self):
+        db = self.make_db()
+        self._add_terms(db, [("2025", "1학기"), ("2025", "2학기")])
+        self.assertEqual((1, "2학기"), project_curriculum_term(db, 1, "2025", "2학기"))
+
+    def test_이수_기록이_없으면_첫_학기로_본다(self):
+        db = self.make_db()
+        self.assertEqual((1, "1학기"), project_curriculum_term(db, 1, "2026", "1학기"))
+        db_transfer = self.make_db(admission_type="transfer")
+        self.assertEqual((3, "1학기"), project_curriculum_term(db_transfer, 1, "2026", "1학기"))
+
+    def test_계절수업은_학년을_매기지_않는다(self):
+        db = self.make_db()
+        self._add_terms(db, [("2025", "1학기")])
+        self.assertEqual((None, "여름계절수업"),
+                         project_curriculum_term(db, 1, "2025", "여름계절수업"))
+
+    def test_4학년을_넘어가면_비워_둔다(self):
+        """졸업 후 학기까지 학년을 붙이면 로드맵에 없는 5학년 슬롯이 생긴다."""
+        db = self.make_db()
+        self._add_terms(db, [
+            ("2022", "1학기"), ("2022", "2학기"), ("2023", "1학기"), ("2023", "2학기"),
+            ("2024", "1학기"), ("2024", "2학기"), ("2025", "1학기"), ("2025", "2학기"),
+        ])
+        self.assertEqual((None, "1학기"), project_curriculum_term(db, 1, "2026", "1학기"))
 
 
 if __name__ == "__main__":
