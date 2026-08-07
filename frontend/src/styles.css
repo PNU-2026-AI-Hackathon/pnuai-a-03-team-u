@@ -8262,6 +8262,133 @@ body.theme-dark .topnav .theme-mode-button {
   color: var(--shell-accent);
 }
 
+/* AI 추천 승인 패널.
+   에이전트는 DB를 쓰지 않는다 — 여기서 체크하고 승인해야 로드맵에 반영된다.
+   로드맵 챗의 "선택 승인"(.ai-roadmap-proposal)과 같은 구조다. */
+.timetable-proposal {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--blue-soft);
+  border-radius: 12px;
+  background: var(--blue-soft);
+}
+
+.timetable-proposal-head span {
+  color: var(--blue-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timetable-proposal-head h4 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.timetable-proposal-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timetable-proposal ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timetable-proposal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.timetable-proposal-row input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.timetable-proposal-row strong {
+  display: block;
+  font-size: 14px;
+}
+
+.timetable-proposal-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timetable-proposal-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 13px;
+}
+
+.timetable-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.timetable-proposal-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.timetable-apply-button {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.timetable-proposal-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.timetable-applied {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px solid var(--green);
+  border-radius: 12px;
+  background: var(--green-soft);
+}
+
+.timetable-applied p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+
+/* 반영되지 않은 분반과 그 이유. 조용히 빠지면 사용자가 알 방법이 없다. */
+.timetable-applied-skipped {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .timetable-quick {
   display: flex;
   flex-wrap: wrap;

@@ -63,9 +63,24 @@ export async function recommendTimetable(roadmapId: number, year: string, semest
 
 export type TimetableChatTurn = { role: "user" | "assistant"; content: string };
 
+export type SuggestedOffering = {
+  offering_id: number;
+  course_id: number | null;
+  course_name: string | null;
+  course_code: string | null;
+  category: string | null;
+  credits: number | null;
+  section: string | null;
+  professor: string | null;
+  times: TimetableTime[];
+};
+
 export type TimetableChatSuggestion = {
   offering_ids: number[];
   rationale: string | null;
+  /** 승인 카드에 그릴 분반 상세. offering_ids만으로는 무엇을 담는지 알 수 없다. */
+  offerings: SuggestedOffering[];
+  total_credits: number;
 };
 
 export type TimetableChatResponse = {
@@ -95,5 +110,45 @@ export async function chatWithTimetableAgent(
     message,
     history,
   });
+  return data;
+}
+
+export type TimetableApplySkipped = {
+  offering_id: number;
+  course_id: number | null;
+  course_name: string | null;
+  reason: string;
+};
+
+export type TimetableApplyRemovedFromFuture = {
+  item_id: number;
+  course_id: number | null;
+  course_name: string | null;
+  planned_year: string | null;
+  planned_semester: string | null;
+};
+
+export type TimetableApplyResult = {
+  applied: { id: number; course_name: string | null }[];
+  skipped: TimetableApplySkipped[];
+  removed_from_future: TimetableApplyRemovedFromFuture[];
+};
+
+/**
+ * 사용자가 승인한 분반을 로드맵에 반영한다.
+ *
+ * 시간표 에이전트는 DB를 쓰지 않는다 — 추천만 하고, 실제 반영은 사용자가 고른
+ * offering_ids를 들고 여기로 한 번 더 와야 이뤄진다(human-in-the-loop).
+ */
+export async function applyTimetableToRoadmap(
+  roadmapId: number,
+  year: string,
+  semester: string,
+  offeringIds: number[],
+) {
+  const { data } = await apiClient.post<TimetableApplyResult>(
+    `/me/roadmaps/${roadmapId}/timetable/apply`,
+    { year, semester, offering_ids: offeringIds },
+  );
   return data;
 }
