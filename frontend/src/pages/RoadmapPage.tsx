@@ -1424,6 +1424,8 @@ function ConnectedRoadmapPage() {
   const [sessions, setSessions] = useState<RoadmapChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [isThreadLoading, setIsThreadLoading] = useState(false);
+  /** 휴지통을 눌렀을 때 레일 안에 뜨는 삭제 확인 바. */
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
@@ -1464,6 +1466,7 @@ function ConnectedRoadmapPage() {
 
   async function handleSelectSession(sessionId: number) {
     if (!roadmap || sessionId === activeSessionId || isAiLoading) return;
+    setIsConfirmingDelete(false); // 다른 대화를 고르면 확인 바는 닫는다
     setActiveSessionId(sessionId);
     setAiError("");
     setFailedPrompt("");
@@ -1480,6 +1483,7 @@ function ConnectedRoadmapPage() {
 
   async function handleCreateSession() {
     if (!roadmap || isAiLoading) return;
+    setIsConfirmingDelete(false);
     setAiError("");
     try {
       const session = await createRoadmapSession(roadmap.id);
@@ -1495,16 +1499,13 @@ function ConnectedRoadmapPage() {
     }
   }
 
+  /**
+   * 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
+   * 휴지통을 누르면 바로 지우지 않고 레일 안에 확인 바를 띄운다.
+   */
   async function handleDeleteSession() {
     if (!roadmap || activeSessionId === null || isAiLoading) return;
-    // 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
-    // 한 번 물어본다.
-    const target = sessions.find((session) => session.session_id === activeSessionId);
-    const label = target?.title?.trim() || "이 대화";
-    const count = target?.message_count ?? 0;
-    const detail = count > 0 ? `메시지 ${count}개가 함께 삭제됩니다.` : "";
-    if (!window.confirm(`'${label}'을(를) 삭제할까요? ${detail}\n되돌릴 수 없습니다.`)) return;
-
+    setIsConfirmingDelete(false);
     setAiError("");
     try {
       await deleteRoadmapSession(roadmap.id, activeSessionId);
@@ -1624,6 +1625,7 @@ function ConnectedRoadmapPage() {
   }, [activeTab, roadmap, graduation]);
 
   const visibleItems = useMemo(() => draftItems ?? roadmap?.items ?? [], [draftItems, roadmap]);
+  const activeSession = sessions.find((session) => session.session_id === activeSessionId) ?? null;
   const admissionType = user?.admission_type ?? "freshman";
   const timeline = useMemo(
     () => buildApiTimeline(visibleItems, admissionType),
@@ -2162,8 +2164,31 @@ function ConnectedRoadmapPage() {
             ))}
           </select>
           <button className="ai-session-new" type="button" aria-label="새 대화 시작" title="새 대화 시작" disabled={isAiLoading} onClick={() => void handleCreateSession()}><Plus size={15} aria-hidden="true" /></button>
-          <button className="ai-session-delete" type="button" aria-label="이 대화 삭제" title="이 대화 삭제" disabled={isAiLoading || activeSessionId === null} onClick={() => void handleDeleteSession()}><Trash2 size={15} aria-hidden="true" /></button>
+          <button className="ai-session-delete" type="button" aria-label="이 대화 삭제" title="이 대화 삭제" disabled={isAiLoading || activeSessionId === null} onClick={() => setIsConfirmingDelete(true)}><Trash2 size={15} aria-hidden="true" /></button>
         </div>
+
+        {isConfirmingDelete && activeSession ? (
+          <div className="ai-session-confirm" role="alertdialog" aria-label="대화 삭제 확인">
+            <p>
+              <strong>{activeSession.title?.trim() || "제목 없는 대화"}</strong>을(를) 삭제할까요?
+              {activeSession.message_count > 0
+                ? ` 메시지 ${activeSession.message_count}개가 함께 지워집니다.`
+                : null}
+              <span> 되돌릴 수 없습니다.</span>
+            </p>
+            <div className="ai-session-confirm-actions">
+              <button type="button" onClick={() => setIsConfirmingDelete(false)}>취소</button>
+              <button
+                className="ai-session-confirm-delete"
+                type="button"
+                autoFocus
+                onClick={() => void handleDeleteSession()}
+              >
+                <Trash2 size={13} aria-hidden="true" /> 삭제
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading || isThreadLoading}>
           {isThreadLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 지난 대화를 불러오는 중</p></div> : messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
           {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}

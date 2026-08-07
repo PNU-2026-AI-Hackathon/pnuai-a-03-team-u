@@ -62,6 +62,8 @@ export function ChatPage() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  /** 휴지통을 누른 세션. 그 자리에 삭제 확인 줄이 뜬다. */
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLOListElement>(null);
   /**
@@ -162,15 +164,13 @@ export function ChatPage() {
     }
   }
 
+  /**
+   * 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
+   * 휴지통을 누르면 바로 지우지 않고 목록 안에 확인 줄을 띄운다.
+   */
   async function handleDeleteSession(sessionId: number) {
     if (roadmapId === null) return;
-    // 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
-    // 한 번 물어본다.
-    const target = sessions.find((session) => session.session_id === sessionId);
-    const count = target?.message_count ?? 0;
-    const detail = count > 0 ? `메시지 ${count}개가 함께 삭제됩니다.` : "";
-    if (!window.confirm(`'${target ? sessionLabel(target) : "이 대화"}'을(를) 삭제할까요? ${detail}\n되돌릴 수 없습니다.`)) return;
-
+    setConfirmingDeleteId(null);
     setError(null);
     try {
       await deleteRoadmapSession(roadmapId, sessionId);
@@ -245,26 +245,48 @@ export function ChatPage() {
               <section className="chat-session-group" key={group.label}>
                 <h2>{group.label}</h2>
                 <ul>
-                  {group.items.map((session) => (
-                    <li key={session.session_id}>
-                      <button
-                        className={`chat-session${session.session_id === activeId ? " active" : ""}`}
-                        type="button"
-                        aria-current={session.session_id === activeId ? "true" : undefined}
-                        onClick={() => handleSelectSession(session.session_id)}
-                      >
-                        {sessionLabel(session)}
-                      </button>
-                      <button
-                        className="chat-session-delete"
-                        type="button"
-                        aria-label={`${sessionLabel(session)} 대화 삭제`}
-                        onClick={() => void handleDeleteSession(session.session_id)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
-                    </li>
-                  ))}
+                  {group.items.map((session) =>
+                    confirmingDeleteId === session.session_id ? (
+                      <li className="chat-session-confirm" key={session.session_id}>
+                        <p>
+                          삭제할까요?
+                          {session.message_count > 0 ? ` 메시지 ${session.message_count}개` : null}
+                        </p>
+                        <div>
+                          <button type="button" onClick={() => setConfirmingDeleteId(null)}>
+                            취소
+                          </button>
+                          <button
+                            className="chat-session-confirm-delete"
+                            type="button"
+                            autoFocus
+                            onClick={() => void handleDeleteSession(session.session_id)}
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </li>
+                    ) : (
+                      <li key={session.session_id}>
+                        <button
+                          className={`chat-session${session.session_id === activeId ? " active" : ""}`}
+                          type="button"
+                          aria-current={session.session_id === activeId ? "true" : undefined}
+                          onClick={() => handleSelectSession(session.session_id)}
+                        >
+                          {sessionLabel(session)}
+                        </button>
+                        <button
+                          className="chat-session-delete"
+                          type="button"
+                          aria-label={`${sessionLabel(session)} 대화 삭제`}
+                          onClick={() => setConfirmingDeleteId(session.session_id)}
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ),
+                  )}
                 </ul>
               </section>
             ))

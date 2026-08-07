@@ -4599,6 +4599,90 @@ body.theme-dark .semester-course-status.status-completed {
   cursor: default;
 }
 
+/* 삭제 확인 바. 브라우저 confirm 대신 레일 안에서 올라온다 —
+   되돌릴 수 없는 동작이라 어떤 대화가 지워지는지 보면서 결정하게 한다. */
+.ai-session-confirm {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  background: var(--rose);
+}
+
+.ai-session-confirm p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-session-confirm p span {
+  color: var(--red);
+}
+
+.ai-session-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ai-session-confirm-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ai-session-confirm-delete {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+/* AI 대화 화면은 세션 목록 안에서 그 줄만 확인 줄로 바뀐다. */
+.chat-session-confirm {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  background: var(--rose);
+}
+
+.chat-session-confirm p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.chat-session-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.chat-session-confirm button {
+  padding: 5px 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-session-confirm-delete {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
 .ai-roadmap-panel .chat-log {
   display: grid;
   gap: 10px;
