@@ -35,6 +35,7 @@ from app.domains.academics.models import (
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course, CourseOffering, CourseTime
+from app.domains.planning.history import project_curriculum_term
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
 
@@ -113,7 +114,7 @@ def _sections_for_item(
         select(CourseTime).where(CourseTime.offering_id.in_(offering_ids))
     ).all():
         times_by_offering.setdefault(t.offering_id, []).append(t)
-    return [
+    sections = [
         _SectionInfo(
             item_id=item.id,
             course_id=item.course_id,
@@ -128,6 +129,11 @@ def _sections_for_item(
         )
         for r in rows
     ]
+    # 시간 정보가 있는 분반을 앞세운다. 시간이 없는 분반은 어떤 조합과도 충돌하지
+    # 않아 조합 탐색에서 먼저 뽑히는데, 그러면 주간 시간표에 블록이 하나도 안 그려진다.
+    # (크롤링이 아직 모든 분반의 시간을 채우지 못했다.)
+    sections.sort(key=lambda s: 0 if s.times else 1)
+    return sections
 
 
 def _serialize_section(section: _SectionInfo) -> dict:
@@ -451,12 +457,22 @@ def recommend_timetable(
     year: str,
     semester: str,
 ) -> dict:
-    """대상 학기의 로드맵 항목으로 시간표를 짜본다."""
+    """대상 학기의 로드맵 항목으로 시간표를 짜본다.
+
+    로드맵 항목의 planned_year는 달력 연도지만 planned_semester는 커리큘럼 학기다
+    (history.py가 이수 기록을 옮길 때부터 쓰는 규약). 휴학 등으로 둘이 어긋나면
+    달력 학기로만 찾을 때 항목을 놓치므로, 달력 기준과 커리큘럼 기준을 모두 본다.
+    """
+    _, curriculum_semester = project_curriculum_term(db, user.id, year, semester)
+    semesters = {semester}
+    if curriculum_semester:
+        semesters.add(curriculum_semester)
+
     items = db.scalars(
         select(CourseRoadmapItem).where(
             CourseRoadmapItem.roadmap_id == roadmap.id,
             CourseRoadmapItem.planned_year == year,
-            CourseRoadmapItem.planned_semester == semester,
+            CourseRoadmapItem.planned_semester.in_(semesters),
             CourseRoadmapItem.status != "completed",
         )
     ).all()

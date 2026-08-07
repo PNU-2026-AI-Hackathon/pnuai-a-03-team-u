@@ -7,19 +7,23 @@ import type { ActivityRecord } from "../api/profile";
 import {
   chatWithRoadmapAgent,
   confirmRoadmapChanges,
-  resetRoadmapAgentSession,
   createRoadmapItem,
+  createRoadmapSession,
+  clearRoadmapConversation,
   deleteRoadmapItem,
+  deleteRoadmapSession,
   getCurrentRoadmap,
   getMyCurriculum,
   getRoadmapConversation,
+  listRoadmapSessions,
   searchCourses,
   updateRoadmapItem,
 } from "../api/roadmaps";
-import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapItem } from "../api/roadmaps";
+import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapChatSession, RoadmapConversation, RoadmapItem } from "../api/roadmaps";
 import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { GraduationProgram } from "../api/studentInfo";
-import { isMockAuthEnabled } from "../api/auth";
+import { isMockAuthEnabled, visibleGrades } from "../api/auth";
+import type { AdmissionType } from "../api/auth";
 import { useAuth } from "../auth/AuthContext";
 
 type RoadmapTab = "semester" | "requirements" | "curriculum";
@@ -1221,6 +1225,15 @@ function normalizeSemester(value: string | null) {
   return value;
 }
 
+/** 편입/조기이수 인정 학점을 뜻하는 semester 값. 학년 계산이 불가능한 lump-sum이다. */
+const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
+const PRE_ADMISSION_KEY = "pre-admission";
+const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
+
+function isPreAdmissionSemester(value: string | null) {
+  return value !== null && PRE_ADMISSION_SEMESTERS.has(value);
+}
+
 function displayCategory(value: string | null) {
   const compact = value?.replace(/\s/g, "") ?? "이수구분 미정";
   const labels: Record<string, string> = {
@@ -1254,9 +1267,33 @@ function buildActivityTermMap(activities: ActivityRecord[]) {
   return map;
 }
 
-function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
+/**
+ * 로드맵 학년 슬롯을 만든다.
+ *
+ * 편입생은 1·2학년 커리큘럼을 밟지 않으므로 그 학년 칸을 아예 만들지 않고,
+ * 대신 맨 앞에 "입학 전 인정 학점" 칸을 둔다. 편입 인정 학점은 어느 학년에도
+ * 속하지 않는 lump-sum이라 정규 학기 슬롯에 넣으면 실제 3학년 1학기와 겹친다.
+ */
+function buildApiTimeline(
+  items: RoadmapItem[],
+  admissionType: AdmissionType = "freshman",
+): ApiTimelineTerm[] {
+  const isTransfer = admissionType === "transfer";
   const regularTerms: ApiTimelineTerm[] = [];
-  for (let grade = 1; grade <= 4; grade += 1) {
+
+  if (isTransfer) {
+    regularTerms.push({
+      key: PRE_ADMISSION_KEY,
+      term: PRE_ADMISSION_LABEL,
+      period: "편입 인정",
+      grade: null,
+      year: null,
+      semester: null,
+      items: [],
+    });
+  }
+
+  for (const grade of visibleGrades(admissionType)) {
     for (const semester of ["1학기", "2학기"]) {
       regularTerms.push({
         key: `${grade}-${semester}`,
@@ -1273,10 +1310,15 @@ function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
   const terms = new Map(regularTerms.map((term) => [term.key, term]));
   items.filter((item) => item.status !== "dropped").forEach((item) => {
     const semester = normalizeSemester(item.planned_semester);
+    // 입학전성적은 planned_grade가 비어 있고 semester 원본이 그대로 남아 있다.
+    // 편입생만 전용 칸을 갖는다. 조기이수 학점이 있는 신입생은 학년 흐름을
+    // 흐트러뜨리지 않도록 아래 "기타 이수 내역"으로 보낸다.
+    const isPreAdmission = isPreAdmissionSemester(item.planned_semester);
+    const preAdmissionKey = isTransfer && isPreAdmission ? PRE_ADMISSION_KEY : null;
     const regularKey = item.planned_grade && (semester === "1학기" || semester === "2학기")
       ? `${item.planned_grade}-${semester}`
       : null;
-    const key = regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
+    const key = preAdmissionKey ?? regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
     const existing = terms.get(key);
 
     if (existing) {
@@ -1287,7 +1329,13 @@ function buildApiTimeline(items: RoadmapItem[]): ApiTimelineTerm[] {
 
     terms.set(key, {
       key,
-      term: [item.planned_year ? `${item.planned_year}년` : null, semester ?? "학기 미정"].filter(Boolean).join(" "),
+      term: isPreAdmission
+        ? [item.planned_year ? `${item.planned_year}년` : null, PRE_ADMISSION_LABEL]
+            .filter(Boolean)
+            .join(" ")
+        : [item.planned_year ? `${item.planned_year}년` : null, semester ?? "학기 미정"]
+            .filter(Boolean)
+            .join(" "),
       period: "기타 이수 내역",
       grade: item.planned_grade,
       year: item.planned_year,
@@ -1373,14 +1421,108 @@ function ConnectedRoadmapPage() {
   const [failedPrompt, setFailedPrompt] = useState("");
   const [requirementScrollState, setRequirementScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
+  const [sessions, setSessions] = useState<RoadmapChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
+  const [isThreadLoading, setIsThreadLoading] = useState(false);
+  /** 휴지통을 눌렀을 때 레일 안에 뜨는 삭제 확인 바. */
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
+  /**
+   * 화면에 떠 있는 messages가 어느 세션 것인지 기억한다. 대화를 보내면 답변을
+   * 낙관적으로 먼저 붙이므로, activeSessionId 변화만 보고 무조건 다시 읽으면
+   * 방금 주고받은 말이 깜빡인다.
+   */
+  const loadedSessionRef = useRef<number | null>(null);
 
   async function reloadRoadmap() {
     const nextRoadmap = await getCurrentRoadmap();
     setRoadmap(nextRoadmap);
     return nextRoadmap;
+  }
+
+  /** 서버 대화 응답을 화면 상태로 옮긴다. 비어 있으면 안내 문구로 되돌린다. */
+  function applyConversation(conversation: RoadmapConversation) {
+    setMessages(conversation.messages.length > 0
+      ? conversation.messages.map((message) => ({
+          id: `saved-${message.id}`,
+          speaker: message.role === "assistant" ? "AI" : "나",
+          text: message.content,
+        }))
+      : apiInitialMessages);
+    setPendingChanges(conversation.pending_changes);
+    setSelectedChangeIds(new Set(conversation.pending_changes.map((change) => change.change_id)));
+    setSuggestedActions(conversation.suggested_actions.length > 0
+      ? conversation.suggested_actions
+      : initialSuggestedActions);
+  }
+
+  async function refreshSessions(roadmapId: number) {
+    // 목록 갱신 실패는 대화 흐름을 막지 않는다.
+    const list = await listRoadmapSessions(roadmapId).catch(() => null);
+    if (list) setSessions(list);
+  }
+
+  async function handleSelectSession(sessionId: number) {
+    if (!roadmap || sessionId === activeSessionId || isAiLoading) return;
+    setIsConfirmingDelete(false); // 다른 대화를 고르면 확인 바는 닫는다
+    setActiveSessionId(sessionId);
+    setAiError("");
+    setFailedPrompt("");
+    setIsThreadLoading(true);
+    try {
+      applyConversation(await getRoadmapConversation(roadmap.id, sessionId));
+      loadedSessionRef.current = sessionId;
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "지난 대화를 불러오지 못했습니다."));
+    } finally {
+      setIsThreadLoading(false);
+    }
+  }
+
+  async function handleCreateSession() {
+    if (!roadmap || isAiLoading) return;
+    setIsConfirmingDelete(false);
+    setAiError("");
+    try {
+      const session = await createRoadmapSession(roadmap.id);
+      setSessions((current) => [session, ...current]);
+      setActiveSessionId(session.session_id);
+      loadedSessionRef.current = session.session_id; // 방금 만든 빈 세션이라 읽을 게 없다
+      setMessages(apiInitialMessages);
+      setSuggestedActions(initialSuggestedActions);
+      setPrompt("");
+      setFailedPrompt("");
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "새 대화를 만들지 못했습니다."));
+    }
+  }
+
+  /**
+   * 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
+   * 휴지통을 누르면 바로 지우지 않고 레일 안에 확인 바를 띄운다.
+   */
+  async function handleDeleteSession() {
+    if (!roadmap || activeSessionId === null || isAiLoading) return;
+    setIsConfirmingDelete(false);
+    setAiError("");
+    try {
+      await deleteRoadmapSession(roadmap.id, activeSessionId);
+      const remaining = sessions.filter((session) => session.session_id !== activeSessionId);
+      setSessions(remaining);
+      const nextId = remaining[0]?.session_id ?? null;
+      setActiveSessionId(nextId);
+      loadedSessionRef.current = nextId;
+      if (nextId === null) {
+        setMessages(apiInitialMessages);
+        setSuggestedActions(initialSuggestedActions);
+      } else {
+        applyConversation(await getRoadmapConversation(roadmap.id, nextId));
+      }
+    } catch (error) {
+      setAiError(getApiErrorMessage(error, "대화를 삭제하지 못했습니다."));
+    }
   }
 
   async function loadPage() {
@@ -1398,20 +1540,19 @@ function ConnectedRoadmapPage() {
         ?? graduationResult?.programs[0]
         ?? null;
       setGraduation(primaryProgram);
-      const conversation = await getRoadmapConversation(nextRoadmap.id).catch(() => null);
+      // 세션 목록을 먼저 잡고, 그중 하나의 대화만 읽는다. session_id 없이 읽으면
+      // 이 로드맵의 모든 스레드가 한 화면에 뒤섞여 나온다.
+      const sessionList = await listRoadmapSessions(nextRoadmap.id).catch(() => []);
+      setSessions(sessionList);
+      const firstSessionId = sessionList[0]?.session_id ?? null;
+      setActiveSessionId(firstSessionId);
+      const conversation = await getRoadmapConversation(
+        nextRoadmap.id,
+        firstSessionId ?? undefined,
+      ).catch(() => null);
       if (conversation) {
-        setMessages(conversation.messages.length > 0
-          ? conversation.messages.map((message) => ({
-              id: `saved-${message.id}`,
-              speaker: message.role === "assistant" ? "AI" : "나",
-              text: message.content,
-            }))
-          : apiInitialMessages);
-        setPendingChanges(conversation.pending_changes);
-        setSelectedChangeIds(new Set(conversation.pending_changes.map((change) => change.change_id)));
-        setSuggestedActions(conversation.suggested_actions.length > 0
-          ? conversation.suggested_actions
-          : initialSuggestedActions);
+        applyConversation(conversation);
+        loadedSessionRef.current = firstSessionId;
       }
     } catch (error) {
       setPageError(getApiErrorMessage(error, "로드맵을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
@@ -1484,7 +1625,12 @@ function ConnectedRoadmapPage() {
   }, [activeTab, roadmap, graduation]);
 
   const visibleItems = useMemo(() => draftItems ?? roadmap?.items ?? [], [draftItems, roadmap]);
-  const timeline = useMemo(() => buildApiTimeline(visibleItems), [visibleItems]);
+  const activeSession = sessions.find((session) => session.session_id === activeSessionId) ?? null;
+  const admissionType = user?.admission_type ?? "freshman";
+  const timeline = useMemo(
+    () => buildApiTimeline(visibleItems, admissionType),
+    [visibleItems, admissionType],
+  );
   const activityTermMap = useMemo(() => buildActivityTermMap(activities), [activities]);
 
   useEffect(() => {
@@ -1652,11 +1798,20 @@ function ConnectedRoadmapPage() {
     if (promptRef.current) promptRef.current.style.height = "auto";
 
     try {
-      const response = await chatWithRoadmapAgent(roadmap.id, trimmedValue);
+      const response = await chatWithRoadmapAgent(
+        roadmap.id,
+        trimmedValue,
+        activeSessionId ?? undefined,
+      );
+      // 세션을 안 넘겼으면 서버가 새로 열었을 수 있다. 화면은 이미 그 세션의
+      // 최신 상태이므로 다시 읽지 않도록 표시만 맞춰둔다.
+      setActiveSessionId(response.session_id);
+      loadedSessionRef.current = response.session_id;
       setMessages((current) => [...current, { id: `ai-${Date.now()}`, speaker: "AI", text: response.reply }]);
       setPendingChanges(response.pending_changes);
       setSelectedChangeIds(new Set(response.pending_changes.map((change) => change.change_id)));
       setSuggestedActions(response.suggested_actions);
+      void refreshSessions(roadmap.id);
     } catch (error) {
       setAiError(getApiErrorMessage(error, "AI 답변을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
       setFailedPrompt(trimmedValue);
@@ -1715,18 +1870,23 @@ function ConnectedRoadmapPage() {
     }
   }
 
+  /**
+   * 지금 보고 있는 스레드만 비운다. 세션 도입 전에는 로드맵 전체를 날렸는데,
+   * 그러면 다른 스레드와 아직 승인 안 한 변경안까지 같이 사라진다.
+   */
   async function handleResetConversation() {
     if (!roadmap || isAiLoading) return;
     setIsAiLoading(true);
     setAiError("");
     try {
-      await resetRoadmapAgentSession(roadmap.id);
+      await clearRoadmapConversation(roadmap.id, activeSessionId ?? undefined);
       setMessages(apiInitialMessages);
       setSuggestedActions(initialSuggestedActions);
       setPendingChanges([]);
       setSelectedChangeIds(new Set());
       setPrompt("");
       setFailedPrompt("");
+      void refreshSessions(roadmap.id);
     } catch (error) {
       setAiError(getApiErrorMessage(error, "대화 초기화에 실패했습니다."));
     } finally {
@@ -1987,9 +2147,50 @@ function ConnectedRoadmapPage() {
       </div>
 
       <aside className="ai-roadmap-panel">
-        <div className="ai-panel-head"><div className="ai-panel-copy"><p className="eyebrow">AI와 같이 요건 맞추기</p><h3>AI와 같이 로드맵 짜기</h3><p>남은 요건과 실제 로드맵을 기준으로 변경안을 제안합니다.</p></div><button className="ai-reset-button" type="button" aria-label="화면 대화 초기화" title="화면 대화 초기화" disabled={isAiLoading || pendingChanges.length > 0} onClick={handleResetConversation}><RotateCcw size={16} aria-hidden="true" /></button></div>
-        <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading}>
-          {messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
+        <div className="ai-panel-head"><div className="ai-panel-copy"><p className="eyebrow">AI와 같이 요건 맞추기</p><h3>AI와 같이 로드맵 짜기</h3><p>남은 요건과 실제 로드맵을 기준으로 변경안을 제안합니다.</p></div><button className="ai-reset-button" type="button" aria-label="이 대화 비우기" title="이 대화 비우기" disabled={isAiLoading || pendingChanges.length > 0} onClick={handleResetConversation}><RotateCcw size={16} aria-hidden="true" /></button></div>
+        <div className="ai-session-bar">
+          <select
+            className="ai-session-select"
+            aria-label="대화 스레드 선택"
+            value={activeSessionId ?? ""}
+            disabled={isAiLoading || isThreadLoading || sessions.length === 0}
+            onChange={(event) => void handleSelectSession(Number(event.target.value))}
+          >
+            {sessions.length === 0 ? <option value="">새 대화</option> : null}
+            {sessions.map((session) => (
+              <option key={session.session_id} value={session.session_id}>
+                {(session.title?.trim() || "제목 없는 대화")} · {session.message_count}개
+              </option>
+            ))}
+          </select>
+          <button className="ai-session-new" type="button" aria-label="새 대화 시작" title="새 대화 시작" disabled={isAiLoading} onClick={() => void handleCreateSession()}><Plus size={15} aria-hidden="true" /></button>
+          <button className="ai-session-delete" type="button" aria-label="이 대화 삭제" title="이 대화 삭제" disabled={isAiLoading || activeSessionId === null} onClick={() => setIsConfirmingDelete(true)}><Trash2 size={15} aria-hidden="true" /></button>
+        </div>
+
+        {isConfirmingDelete && activeSession ? (
+          <div className="ai-session-confirm" role="alertdialog" aria-label="대화 삭제 확인">
+            <p>
+              <strong>{activeSession.title?.trim() || "제목 없는 대화"}</strong>을(를) 삭제할까요?
+              {activeSession.message_count > 0
+                ? ` 메시지 ${activeSession.message_count}개가 함께 지워집니다.`
+                : null}
+              <span> 되돌릴 수 없습니다.</span>
+            </p>
+            <div className="ai-session-confirm-actions">
+              <button type="button" onClick={() => setIsConfirmingDelete(false)}>취소</button>
+              <button
+                className="ai-session-confirm-delete"
+                type="button"
+                autoFocus
+                onClick={() => void handleDeleteSession()}
+              >
+                <Trash2 size={13} aria-hidden="true" /> 삭제
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading || isThreadLoading}>
+          {isThreadLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 지난 대화를 불러오는 중</p></div> : messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
           {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}
           {aiError ? <div className="ai-chat-error" role="alert"><p>{aiError}</p>{failedPrompt ? <button type="button" onClick={() => void sendMessage(failedPrompt, false)}><RefreshCw size={13} aria-hidden="true" /> 다시 시도</button> : null}</div> : null}
         </div>

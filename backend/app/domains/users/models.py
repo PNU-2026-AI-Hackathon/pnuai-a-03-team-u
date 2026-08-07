@@ -19,6 +19,18 @@ class User(TimestampMixin, Base):
     # "OO과"처럼 학과 자체가 곧 전공이라 세부 전공 구분이 없으면 null.
     major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     academic_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "freshman"(신입학) | "transfer"(편입학). 편입생은 1·2학년 커리큘럼을 밟지 않아
+    # 로드맵을 "입학 전 인정 학점 + 3·4학년"으로 구성해야 한다.
+    #
+    # 이 값이 생기기 전에는 StudentCourseRecord에 semester="입학전성적" 행이 있는지
+    # 보고 편입 여부를 추론했다. 포털 동기화를 아직 안 한 편입생은 추론이 불가능했고,
+    # 반대로 조기이수 인정 학점이 있는 신입생을 편입생으로 잘못 볼 수도 있었다.
+    #
+    # nullable + server_default를 함께 둔다: 이미 가입한 사용자의 행을 한 번에
+    # 채워야 하고, 값이 없는 옛 행도 그대로 읽혀야 한다.
+    admission_type: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, server_default="freshman", default="freshman"
+    )
     career_goal: Mapped[str | None] = mapped_column(String(255))
     advisor_consulted: Mapped[bool] = mapped_column(default=False)
     # One-Stop 포털 학적부(fetch_student_record)의 "지도교수" 필드에서 크롤링.

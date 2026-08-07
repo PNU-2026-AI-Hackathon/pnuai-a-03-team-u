@@ -516,41 +516,39 @@ class TermCreditCapGuardTest(unittest.TestCase):
 
 
 class TransferStudentFallbackGuardTest(unittest.TestCase):
-    """편입생이 로드맵에 아직 completed 항목이 하나도 없어도(편입 인정만 있는 상태),
-    StudentCourseRecord.semester='입학전성적' 존재로 편입생임을 감지해 1·2학년
-    create를 도구 단에서 차단해야 한다."""
+    """편입생에게 1·2학년 과목을 새로 추천하지 못하게 막는다.
+
+    판정 근거는 users.admission_type='transfer'다. 예전에는 이수 기록에
+    semester='입학전성적' 행이 있는지로 추론했는데, 포털 동기화 전인 편입생은
+    판정할 수 없었고 조기이수 인정 학점이 있는 신입생은 잘못 걸렸다.
+    """
 
     def make_db(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
         return sessionmaker(bind=engine)()
 
-    def make_ctx(self, db):
+    def make_ctx(self, db, admission_type="freshman"):
         user = User(id=1, email="t@example.com", password_hash="x", name="편입생",
-                    department_id=10, major_id=20)
+                    department_id=10, major_id=20, admission_type=admission_type)
         db.add(user)
         roadmap = CourseRoadmap(id=1, user_id=1)
         db.add(roadmap)
         db.flush()
         return _ToolContext(db, user, roadmap)
 
-    def test_transfer_student_with_only_pre_enrollment_records_defaults_to_grade3(self):
+    def test_transfer_student_without_any_records_still_starts_at_grade3(self):
+        """포털 동기화 전이라 이수 기록이 하나도 없어도 편입생으로 판정된다.
+
+        추론 방식으로는 불가능했던 케이스다.
+        """
         db = self.make_db()
-        ctx = self.make_ctx(db)
-        # 편입 인정만 있고 아직 부산대 학기 시작 전
-        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
-                                     category="전공기초", credits=3,
-                                     year="2026", semester="입학전성적"))
-        db.flush()
+        ctx = self.make_ctx(db, admission_type="transfer")
         self.assertEqual(3, ctx._min_completed_grade())
 
     def test_transfer_student_create_at_grade_2_is_rejected(self):
         db = self.make_db()
-        ctx = self.make_ctx(db)
-        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
-                                     category="전공기초", credits=3,
-                                     year="2026", semester="입학전성적"))
-        db.flush()
+        ctx = self.make_ctx(db, admission_type="transfer")
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
                 action="create", reason="test",
@@ -558,6 +556,22 @@ class TransferStudentFallbackGuardTest(unittest.TestCase):
             )
         self.assertIn("error", result)
         self.assertIn("최저 학년은 3학년", result["error"])
+
+    def test_freshman_with_pre_admission_credits_is_not_treated_as_transfer(self):
+        """조기이수 인정 학점이 있는 신입생. 옛 추론 방식은 이걸 편입생으로 잘못 봤다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="freshman")
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     year="2026", semester="입학전성적"))
+        db.flush()
+        self.assertIsNone(ctx._min_completed_grade())
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="test",
+                planned_year="2026", planned_semester="1학기", planned_grade=1,
+            )
+        self.assertNotIn("error", result)
 
     def test_freshman_without_records_is_not_blocked(self):
         """일반 신입생(이수기록 없음)은 1학년으로 자유롭게 create 가능해야 한다."""

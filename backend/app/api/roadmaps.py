@@ -20,7 +20,7 @@ from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.models import Department, Major
 from app.domains.courses.models import Course, CourseOffering
-from app.domains.planning.history import sync_completed_courses_to_roadmap
+from app.domains.planning.history import project_curriculum_term, sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
 
@@ -387,6 +387,18 @@ def apply_timetable_to_roadmap(
     roadmap = _get_owned_roadmap(db, current_user.id, roadmap_id)
     target_key = _semester_sort_key(payload.year, payload.semester)
 
+    # planned_grade가 비면 로드맵 화면이 이 항목을 학년 슬롯에 넣지 못하고
+    # "2026년 2학기" 같은 기타 칸으로 떨어뜨린다. 프론트가 안 넘겨주면
+    # 이수 기록에서 커리큘럼 학년을 직접 계산한다.
+    planned_grade = payload.planned_grade
+    curriculum_semester = payload.semester
+    if planned_grade is None:
+        planned_grade, projected_semester = project_curriculum_term(
+            db, current_user.id, payload.year, payload.semester
+        )
+        if planned_grade is not None and projected_semester is not None:
+            curriculum_semester = projected_semester
+
     applied: list[CourseRoadmapItem] = []
     skipped: list[TimetableApplySkipped] = []
     removed_from_future: list[TimetableApplyRemovedFromFuture] = []
@@ -418,12 +430,14 @@ def apply_timetable_to_roadmap(
             continue
 
         # 같은 학기·같은 과목 중복 → 조용히 스킵 (LLM이 upstream에서 이미 안내한 전제)
+        # 저장하는 값(curriculum_semester)과 같은 기준으로 찾아야 한다. 달력 학기로
+        # 찾으면 방금 저장한 항목을 다음 호출에서 못 찾아 중복이 쌓인다.
         existing = db.scalar(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap.id,
                 CourseRoadmapItem.course_id == course.id,
                 CourseRoadmapItem.planned_year == payload.year,
-                CourseRoadmapItem.planned_semester == payload.semester,
+                CourseRoadmapItem.planned_semester == curriculum_semester,
             )
         )
         if existing is not None:
@@ -460,9 +474,12 @@ def apply_timetable_to_roadmap(
             course_name=course.course_name,
             category=course.category,
             credits=course.credits,
-            planned_grade=payload.planned_grade,
+            planned_grade=planned_grade,
             planned_year=payload.year,
-            planned_semester=payload.semester,
+            # planned_year는 달력 연도, planned_semester는 커리큘럼 학기다
+            # (history.py가 이수 기록을 옮길 때 쓰는 것과 같은 규약). 휴학으로
+            # 달력과 커리큘럼이 어긋나도 로드맵의 학년 슬롯에 정확히 들어간다.
+            planned_semester=curriculum_semester,
             source="ai",  # AI(시간표 에이전트)가 후보를 제시
             is_confirmed=True,  # 사용자가 UI에서 명시적으로 저장 눌러서 확정
             status="planned",

@@ -44,6 +44,7 @@ from app.domains.planning.models import (
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
+from app.domains.users.admission import TRANSFER_ENTRY_GRADE, is_transfer
 from app.domains.users.models import User
 
 _DEFAULT_CURRICULUM_YEAR = 2026
@@ -573,34 +574,26 @@ class _ToolContext:
         밟아온 최저 학년"을 계산한다. propose_change의 planned_grade 하한으로 쓴다.
 
         결정 순서:
-        1. 로드맵에 status='completed' + planned_grade IS NOT NULL 인 항목이 있으면
-           그 min(planned_grade)를 그대로 쓴다. (일반 재학생이 이미 학기를 밟았을 때)
-        2. 없으면(=편입 직후처럼 학기를 아직 안 밟은 상태) StudentCourseRecord에
-           semester='입학전성적' 행이 하나라도 있는지 본다. 있으면 이 학생은 편입
-           인정 학점을 갖고 3학년 이상에 편성됐다는 뜻이고, 편입 학년을 특정할 근거는
-           지금 스키마에서 부족하니 안전측으로 3을 반환한다(부산대는 3학년 편입이
-           표준). 3학년 편입생이 2학년 과목을 정규 학기에 새로 추천받는 것은 방지된다.
-        3. 그것도 아니면 None을 반환 — 일반 신입생 또는 커리큘럼 미확정 상태. 이 경우
-           1학년부터 자유롭게 create 가능.
+        1. 편입생이면(users.admission_type='transfer') 편입 학년을 그대로 쓴다.
+           이수 기록이 아직 없는 편입 직후 상태에서도 확실하게 판정된다.
+        2. 아니면 로드맵에 status='completed' + planned_grade IS NOT NULL 인 항목의
+           min(planned_grade)를 쓴다. (일반 재학생이 이미 학기를 밟았을 때)
+        3. 그것도 없으면 None — 일반 신입생 또는 커리큘럼 미확정 상태. 1학년부터
+           자유롭게 create 가능.
+
+        admission_type이 생기기 전에는 StudentCourseRecord에 semester='입학전성적'
+        행이 있는지로 편입을 추론했다. 포털 동기화 전인 편입생은 판정할 수 없었고,
+        조기이수 인정 학점이 있는 신입생은 편입생으로 잘못 걸렸다.
         """
-        grade = self.db.scalar(
+        if is_transfer(self.user.admission_type):
+            return TRANSFER_ENTRY_GRADE
+        return self.db.scalar(
             select(func.min(CourseRoadmapItem.planned_grade)).where(
                 CourseRoadmapItem.roadmap_id == self.roadmap.id,
                 CourseRoadmapItem.status == "completed",
                 CourseRoadmapItem.planned_grade.is_not(None),
             )
         )
-        if grade is not None:
-            return grade
-        transfer_row = self.db.scalar(
-            select(StudentCourseRecord.id).where(
-                StudentCourseRecord.user_id == self.user.id,
-                StudentCourseRecord.semester == "입학전성적",
-            ).limit(1)
-        )
-        if transfer_row is not None:
-            return 3
-        return None
 
     def _term_credit_cap(self) -> int:
         """이 학생의 정규 학기 학점 상한을 판정한다. primary 프로그램의 졸업기준학점 기반."""

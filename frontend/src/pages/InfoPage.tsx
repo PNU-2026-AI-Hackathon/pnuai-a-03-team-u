@@ -24,7 +24,8 @@ import type {
   LanguageScorePayload,
   LanguageScoreRecord,
 } from "../api/profile";
-import { updateMyProfile } from "../api/auth";
+import { entryGrade, updateMyProfile } from "../api/auth";
+import type { AdmissionType } from "../api/auth";
 import {
   getCourseRecords,
   getGraduationProgress,
@@ -142,16 +143,55 @@ function formatCredit(value: number) {
 
 function formatTerm(year: string | null, semester: string | null) {
   if (!year && !semester) return "학기 정보 없음";
-  return `${year ?? ""}${year ? "년 " : ""}${semester ?? ""}${semester ? "학기" : ""}`.trim();
+  // "1"/"2"만 학기 번호라 접미사를 붙인다. "여름계절수업"처럼 이미 완성된 이름에
+  // 붙이면 "여름계절수업학기"가 된다.
+  const semesterLabel = semester === "1" || semester === "2" ? `${semester}학기` : semester ?? "";
+  return `${year ?? ""}${year ? "년 " : ""}${semesterLabel}`.trim();
 }
 
+/** 편입/조기이수 인정 학점. 어느 학기에도 속하지 않는 lump-sum이라 따로 뺀다. */
+const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
+const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
+
+/** 한 해 안에서의 학기 순서. 계절수업은 앞 학기와 뒤 학기 사이에 온다. */
+const SEMESTER_RANK: Record<string, number> = {
+  "1학기": 1,
+  "1": 1,
+  여름계절수업: 2,
+  여름: 2,
+  "2학기": 3,
+  "2": 3,
+  겨울계절수업: 4,
+  겨울: 4,
+};
+
+/**
+ * 이수 내역을 성적표 그대로 달력 학기로 묶는다.
+ *
+ * 학년(3학년 1학기)이 아니라 연도·학기로 보여준다 — 여기는 성적을 확인하는
+ * 화면이라 성적표와 표기가 같아야 대조가 된다. 학년 기준 배치는 성장 로드맵이
+ * 담당한다.
+ *
+ * 순서는 시간 축의 최신순이다. 가장 최근 학기가 맨 위에 오고, 입학 전 인정
+ * 학점이 가장 오래된 것이라 맨 아래로 간다. 계절수업은 같은 해의 앞 학기와
+ * 뒤 학기 사이에 들어간다.
+ */
 function groupCoursesByTerm(courses: CourseRecord[]) {
-  const groups = new Map<string, CourseRecord[]>();
+  const groups = new Map<string, { label: string; sortKey: number; courses: CourseRecord[] }>();
+
   courses.forEach((course) => {
-    const term = formatTerm(course.year, course.semester);
-    groups.set(term, [...(groups.get(term) ?? []), course]);
+    const isPreAdmission = Boolean(course.semester && PRE_ADMISSION_SEMESTERS.has(course.semester));
+    const label = isPreAdmission ? PRE_ADMISSION_LABEL : formatTerm(course.year, course.semester);
+    const sortKey = isPreAdmission
+      ? Number.MIN_SAFE_INTEGER
+      : (Number(course.year) || 0) * 10 + (SEMESTER_RANK[course.semester ?? ""] ?? 9);
+
+    const existing = groups.get(label);
+    if (existing) existing.courses.push(course);
+    else groups.set(label, { label, sortKey, courses: [course] });
   });
-  return [...groups.entries()];
+
+  return [...groups.values()].sort((left, right) => right.sortKey - left.sortKey);
 }
 
 function calculateGpa(courses: CourseRecord[], majorOnly = false) {
@@ -215,6 +255,9 @@ export function InfoPage() {
   const [profileOverrides, setProfileOverrides] = useState<ProfileOverrides | null>(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [profileEditDraft, setProfileEditDraft] = useState<ProfileOverrides>({ name: "", major: "", academicYear: 1 });
+  // ProfileOverrides(로컬 저장용 타입)에 넣지 않고 따로 둔다. 입학 구분은 화면
+  // 표시 보정값이 아니라 서버가 들고 있어야 하는 학적 정보다.
+  const [admissionDraft, setAdmissionDraft] = useState<AdmissionType>("freshman");
   const [profileEditError, setProfileEditError] = useState("");
   const [courseEditDraft, setCourseEditDraft] = useState<CourseRecord[]>([]);
   const [isAddingCourse, setIsAddingCourse] = useState(false);
@@ -275,6 +318,7 @@ export function InfoPage() {
 
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
   const displayedGraduation = isProfileEditing ? graduationEditDraft : graduation;
+  const admissionType = user?.admission_type ?? "freshman";
   const gradeTerms = useMemo(() => groupCoursesByTerm(displayedCourses), [displayedCourses]);
   const syncedName = studentRecord["이름"] ?? studentRecord["성명"];
   const syncedStudentId = studentRecord["학번"];
@@ -335,6 +379,7 @@ export function InfoPage() {
       major: hasDuplicateProgramName ? "" : profileMajor ?? "",
       academicYear: academicYear ?? 1,
     });
+    setAdmissionDraft(admissionType);
     setCourseEditDraft(courses.map((course) => ({ ...course })));
     setIsAddingCourse(false);
     setNewCourseDraft(emptyCourseDraft());
@@ -390,6 +435,7 @@ export function InfoPage() {
         department: nextOverrides.department,
         major: nextOverrides.major || null,
         academic_year: nextOverrides.academicYear,
+        admission_type: admissionDraft,
       });
       const savedCourses = await replaceCourseRecords(courseEditDraft);
       const graduationResult = hasGraduationEdited && nextGraduation
@@ -706,6 +752,13 @@ export function InfoPage() {
                 <span>학년</span>
                 <input type="number" min="1" max="6" value={profileEditDraft.academicYear} onChange={(event) => setProfileEditDraft((current) => ({ ...current, academicYear: Number(event.target.value || 1) }))} />
               </label>
+              <label>
+                <span>입학 구분</span>
+                <select value={admissionDraft} onChange={(event) => setAdmissionDraft(event.target.value as AdmissionType)}>
+                  <option value="freshman">신입학 (1학년부터)</option>
+                  <option value="transfer">편입학 (3학년부터)</option>
+                </select>
+              </label>
             </div>
           ) : (
             <>
@@ -730,7 +783,12 @@ export function InfoPage() {
                   </span>
                 ) : null}
               </p>
-              <p>{academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}</p>
+              <p>
+                {academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}
+                {admissionType === "transfer"
+                  ? ` · 편입학 (${entryGrade(admissionType)}학년부터 이수)`
+                  : null}
+              </p>
             </>
           )}
           {profileEditError ? <p className="profile-edit-error" role="alert">{profileEditError}</p> : null}
@@ -883,7 +941,7 @@ export function InfoPage() {
             </div>
             {gradeTerms.length === 0 ? <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p> : null}
             <div className="grade-term-list">
-              {gradeTerms.map(([term, termCourses]) => {
+              {gradeTerms.map(({ label: term, courses: termCourses }) => {
                 const termGpa = calculateGpa(termCourses);
                 const termMajorGpa = calculateGpa(termCourses, true);
                 return (

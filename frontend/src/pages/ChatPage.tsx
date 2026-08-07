@@ -6,6 +6,7 @@ import {
   createRoadmapSession,
   deleteRoadmapSession,
   getCurrentRoadmap,
+  getRoadmapConversation,
   listRoadmapSessions,
   type RoadmapChatSession,
 } from "../api/roadmaps";
@@ -60,12 +61,20 @@ export function ChatPage() {
   const [prompt, setPrompt] = useState("");
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+  /** 휴지통을 누른 세션. 그 자리에 삭제 확인 줄이 뜬다. */
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLOListElement>(null);
+  /**
+   * 화면의 thread가 어느 세션 것인지 기억한다. 대화를 보내면 낙관적으로 화면에
+   * 먼저 붙이는데, activeId 변화만 보고 무조건 다시 불러오면 방금 쓴 말이
+   * 잠깐 사라졌다 돌아온다. 이미 그 세션을 들고 있으면 fetch를 건너뛴다.
+   */
+  const loadedSessionRef = useRef<number | null>(null);
 
   const displayName = readProfileOverrides()?.name ?? user?.name ?? "이도원";
   const groups = useMemo(() => groupSessions(sessions), [sessions]);
-  const activeSession = sessions.find((session) => session.session_id === activeId) ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +101,40 @@ export function ChatPage() {
     };
   }, []);
 
+  // 세션을 고르면 그 스레드에 쌓인 대화를 서버에서 되살린다.
+  useEffect(() => {
+    if (roadmapId === null || activeId === null) return;
+    if (loadedSessionRef.current === activeId) return;
+
+    let cancelled = false;
+    const sessionId = activeId;
+    setIsLoadingThread(true);
+
+    void (async () => {
+      try {
+        const conversation = await getRoadmapConversation(roadmapId, sessionId);
+        if (cancelled) return;
+        setThread(
+          conversation.messages.map((message) => ({
+            key: `msg-${message.id}`,
+            role: message.role,
+            content: message.content,
+          })),
+        );
+        loadedSessionRef.current = sessionId;
+      } catch (caught) {
+        if (cancelled) return;
+        setError(errorMessage(caught, "지난 대화를 불러오지 못했습니다."));
+      } finally {
+        if (!cancelled) setIsLoadingThread(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roadmapId, activeId]);
+
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
@@ -112,6 +155,8 @@ export function ChatPage() {
     try {
       const session = await createRoadmapSession(roadmapId);
       setSessions((current) => [session, ...current]);
+      // 방금 만든 빈 세션이라 서버에서 다시 읽을 게 없다.
+      loadedSessionRef.current = session.session_id;
       setActiveId(session.session_id);
       setThread([]);
     } catch (caught) {
@@ -119,13 +164,19 @@ export function ChatPage() {
     }
   }
 
+  /**
+   * 서버에서 세션과 메시지를 실제로 지운다(soft delete 아님). 되돌릴 수 없어
+   * 휴지통을 누르면 바로 지우지 않고 목록 안에 확인 줄을 띄운다.
+   */
   async function handleDeleteSession(sessionId: number) {
     if (roadmapId === null) return;
+    setConfirmingDeleteId(null);
     setError(null);
     try {
       await deleteRoadmapSession(roadmapId, sessionId);
       setSessions((current) => current.filter((session) => session.session_id !== sessionId));
       if (activeId === sessionId) {
+        loadedSessionRef.current = null;
         setActiveId(null);
         setThread([]);
       }
@@ -137,7 +188,7 @@ export function ChatPage() {
   function handleSelectSession(sessionId: number) {
     if (sessionId === activeId) return;
     setActiveId(sessionId);
-    setThread([]);
+    setThread([]); // 새 스레드가 도착할 때까지 이전 대화를 남겨두지 않는다
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -155,6 +206,9 @@ export function ChatPage() {
 
     try {
       const response = await chatWithRoadmapAgent(roadmapId, message, activeId ?? undefined);
+      // 세션 없이 보내면 서버가 세션을 새로 열거나 이어 쓴다. 화면의 thread가
+      // 이미 그 세션의 최신 상태이므로, 복원 effect가 다시 긁어오지 않게 표시한다.
+      loadedSessionRef.current = response.session_id;
       setActiveId(response.session_id);
       setThread((current) => [
         ...current,
@@ -167,11 +221,6 @@ export function ChatPage() {
       setIsSending(false);
     }
   }
-
-  // 이전 세션을 고르면 서버에 쌓인 메시지가 있어도 아직 불러올 수 없다
-  // (백엔드에 세션별 메시지 조회가 없음). 개수만 알려준다.
-  const unloadedCount =
-    thread.length === 0 && activeSession ? activeSession.message_count : 0;
 
   return (
     <div className="chat-screen">
@@ -196,26 +245,48 @@ export function ChatPage() {
               <section className="chat-session-group" key={group.label}>
                 <h2>{group.label}</h2>
                 <ul>
-                  {group.items.map((session) => (
-                    <li key={session.session_id}>
-                      <button
-                        className={`chat-session${session.session_id === activeId ? " active" : ""}`}
-                        type="button"
-                        aria-current={session.session_id === activeId ? "true" : undefined}
-                        onClick={() => handleSelectSession(session.session_id)}
-                      >
-                        {sessionLabel(session)}
-                      </button>
-                      <button
-                        className="chat-session-delete"
-                        type="button"
-                        aria-label={`${sessionLabel(session)} 대화 삭제`}
-                        onClick={() => void handleDeleteSession(session.session_id)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
-                    </li>
-                  ))}
+                  {group.items.map((session) =>
+                    confirmingDeleteId === session.session_id ? (
+                      <li className="chat-session-confirm" key={session.session_id}>
+                        <p>
+                          삭제할까요?
+                          {session.message_count > 0 ? ` 메시지 ${session.message_count}개` : null}
+                        </p>
+                        <div>
+                          <button type="button" onClick={() => setConfirmingDeleteId(null)}>
+                            취소
+                          </button>
+                          <button
+                            className="chat-session-confirm-delete"
+                            type="button"
+                            autoFocus
+                            onClick={() => void handleDeleteSession(session.session_id)}
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </li>
+                    ) : (
+                      <li key={session.session_id}>
+                        <button
+                          className={`chat-session${session.session_id === activeId ? " active" : ""}`}
+                          type="button"
+                          aria-current={session.session_id === activeId ? "true" : undefined}
+                          onClick={() => handleSelectSession(session.session_id)}
+                        >
+                          {sessionLabel(session)}
+                        </button>
+                        <button
+                          className="chat-session-delete"
+                          type="button"
+                          aria-label={`${sessionLabel(session)} 대화 삭제`}
+                          onClick={() => setConfirmingDeleteId(session.session_id)}
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ),
+                  )}
                 </ul>
               </section>
             ))
@@ -250,6 +321,11 @@ export function ChatPage() {
                 </li>
               ) : null}
             </ol>
+          ) : isLoadingThread ? (
+            <div className="chat-intro">
+              <LoaderCircle size={24} aria-hidden="true" />
+              <p className="chat-intro-sub">지난 대화를 불러오는 중입니다…</p>
+            </div>
           ) : (
             <div className="chat-intro">
               <span className="chat-intro-face">
@@ -257,11 +333,6 @@ export function ChatPage() {
               </span>
               <p className="chat-intro-title">무엇을 도와드릴까요?</p>
               <p className="chat-intro-sub">진로, 활동, 이력서 등 무엇이든 물어보세요</p>
-              {unloadedCount > 0 ? (
-                <p className="chat-intro-note">
-                  이 대화에 저장된 메시지 {unloadedCount}개 · 지난 메시지 불러오기는 준비 중입니다
-                </p>
-              ) : null}
             </div>
           )}
 

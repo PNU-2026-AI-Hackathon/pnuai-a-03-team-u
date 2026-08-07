@@ -4541,6 +4541,148 @@ body.theme-dark .semester-course-status.status-completed {
   color: var(--blue);
 }
 
+/* 대화 스레드 전환. 레일이 좁아 /chat처럼 목록을 세로로 못 펴므로 드롭다운으로 접는다. */
+.ai-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.ai-session-select:disabled {
+  background: var(--gray-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
+.ai-session-new,
+.ai-session-delete {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #637084;
+  cursor: pointer;
+}
+
+.ai-session-new:hover:not(:disabled) {
+  border-color: #bdd4f2;
+  color: var(--blue);
+}
+
+.ai-session-delete:hover:not(:disabled) {
+  border-color: #f4c2c2;
+  color: var(--red);
+}
+
+.ai-session-new:disabled,
+.ai-session-delete:disabled {
+  color: #c2c9d4;
+  cursor: default;
+}
+
+/* 삭제 확인 바. 브라우저 confirm 대신 레일 안에서 올라온다 —
+   되돌릴 수 없는 동작이라 어떤 대화가 지워지는지 보면서 결정하게 한다. */
+.ai-session-confirm {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  background: var(--rose);
+}
+
+.ai-session-confirm p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-session-confirm p span {
+  color: var(--red);
+}
+
+.ai-session-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ai-session-confirm-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ai-session-confirm-delete {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+/* AI 대화 화면은 세션 목록 안에서 그 줄만 확인 줄로 바뀐다. */
+.chat-session-confirm {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  background: var(--rose);
+}
+
+.chat-session-confirm p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.chat-session-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.chat-session-confirm button {
+  padding: 5px 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-session-confirm-delete {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
 .ai-roadmap-panel .chat-log {
   display: grid;
   gap: 10px;
@@ -7190,6 +7332,69 @@ body.theme-dark .topnav .theme-mode-button {
   outline: none;
 }
 
+/* 입학 구분(신입학/편입학) 라디오. 두 칸을 카드처럼 나눠 선택 상태를 크게 보여준다. */
+.auth-choice {
+  gap: 8px;
+}
+
+.auth-choice > legend {
+  padding: 0;
+  color: var(--shell-dim);
+  font-size: 12px;
+}
+
+.auth-choice-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-choice-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--shell-line);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+/* 라디오 자체는 숨기고 카드 테두리로 선택 상태를 나타낸다. 키보드 포커스는
+   :focus-within으로 카드에 그대로 드러나므로 접근성은 유지된다. */
+.auth-choice-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.auth-choice-option:hover {
+  border-color: var(--shell-accent);
+}
+
+.auth-choice-option:focus-within {
+  outline: 2px solid var(--shell-accent);
+  outline-offset: 1px;
+}
+
+.auth-choice-option.is-selected {
+  border-color: var(--shell-accent);
+  background: var(--blue-soft);
+}
+
+.auth-choice-label {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.auth-choice-hint {
+  color: var(--shell-dim);
+  font-size: 12px;
+}
+
 /* 아이디 + 고정 @pusan.ac.kr — 부산대 마일스톤과 같은 입력 형태 */
 .auth-email-field {
   display: flex;
@@ -7977,6 +8182,15 @@ body.theme-dark .topnav .theme-mode-button {
   font-size: 13px;
 }
 
+.timetable-hint.is-warn {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--rose);
+  color: var(--red);
+  line-height: 1.5;
+}
+
 .timetable-grid {
   display: grid;
   grid-template-columns: 44px repeat(5, minmax(0, 1fr));
@@ -8139,6 +8353,178 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-chat-row.user p {
   background: var(--shell-active);
   color: var(--shell-accent);
+}
+
+/* AI 추천 승인 패널.
+   에이전트는 DB를 쓰지 않는다 — 여기서 체크하고 승인해야 로드맵에 반영된다.
+   로드맵 챗의 "선택 승인"(.ai-roadmap-proposal)과 같은 구조다. */
+.timetable-proposal {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--blue-soft);
+  border-radius: 12px;
+  background: var(--blue-soft);
+}
+
+.timetable-proposal-head span {
+  color: var(--blue-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timetable-proposal-head h4 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.timetable-proposal-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timetable-proposal ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timetable-proposal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.timetable-proposal-row input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.timetable-proposal-row strong {
+  display: block;
+  font-size: 14px;
+}
+
+.timetable-proposal-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timetable-proposal-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 13px;
+}
+
+.timetable-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.timetable-proposal-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.timetable-apply-button {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.timetable-proposal-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 담았지만 아직 저장하지 않은 과목. 저장 전이라 로드맵에는 없다. */
+.timetable-draft {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px dashed var(--blue);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.timetable-draft > p {
+  margin: 0;
+  color: var(--blue-deep);
+  font-size: 13px;
+}
+
+.timetable-draft ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timetable-draft li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.timetable-draft li button {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.timetable-draft li button:hover {
+  color: var(--red);
+}
+
+.timetable-applied {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px solid var(--green);
+  border-radius: 12px;
+  background: var(--green-soft);
+}
+
+.timetable-applied p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+
+/* 반영되지 않은 분반과 그 이유. 조용히 빠지면 사용자가 알 방법이 없다. */
+.timetable-applied-skipped {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .timetable-quick {

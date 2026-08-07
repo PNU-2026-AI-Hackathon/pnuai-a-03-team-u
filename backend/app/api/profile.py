@@ -17,6 +17,7 @@ from app.api.auth import UserResponse, _load_user_response, get_current_user
 from app.core.db import get_db
 from app.domains.academics.hierarchy import get_or_create_major, resolve_hierarchy
 from app.domains.academics.models import Department, Major, UserAcademicProgram
+from app.domains.users.admission import AdmissionType
 from app.domains.users.models import User, UserActivity, UserCertification, UserLanguageScore
 
 router = APIRouter(prefix="/me", tags=["profile"])
@@ -27,6 +28,10 @@ class ProfileUpdateRequest(BaseModel):
     department: str
     major: str | None = None
     academic_year: int = Field(ge=1, le=6)
+    # 마이그레이션이 "입학전성적 기록이 있으면 편입생"으로 초기값을 채우는데,
+    # 조기이수 인정 학점을 가진 신입생도 여기에 걸린다. 사용자가 직접 고칠 수
+    # 있어야 한다. 생략하면 기존 값을 유지한다.
+    admission_type: AdmissionType | None = None
 
 
 def _resolve_profile_program(
@@ -83,6 +88,8 @@ def update_profile(
     current_user.department_id = department_id
     current_user.major_id = major_id
     current_user.academic_year = payload.academic_year
+    if payload.admission_type is not None:
+        current_user.admission_type = payload.admission_type
     if program_changed:
         current_user.graduation_override = None
 

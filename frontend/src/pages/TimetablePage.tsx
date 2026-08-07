@@ -2,11 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowUp, Check, Plus, Search } from "lucide-react";
 import {
+  applyTimetableToRoadmap,
+  chatWithTimetableAgent,
   recommendTimetable,
+  type SuggestedOffering,
+  type TimetableApplyResult,
+  type TimetableChatSuggestion,
+  type TimetableChatTurn,
   type TimetableRecommendation,
   type TimetableSection,
 } from "../api/timetable";
-import { chatWithRoadmapAgent, getCurrentRoadmap } from "../api/roadmaps";
+import { getCurrentRoadmap } from "../api/roadmaps";
 import { getApiErrorMessage } from "../api/client";
 import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
@@ -65,9 +71,20 @@ function sectionSummary(section: TimetableSection) {
     .join(" · ");
 }
 
+/** AI가 추천한 분반 한 줄. sectionSummary와 같은 형식이지만 입력 타입이 다르다. */
+function offeringSummary(offering: SuggestedOffering) {
+  const slot = offering.times.find((time) => time.day_of_week && time.start_time);
+  return [
+    [offering.category, offering.credits ? `${offering.credits}학점` : null].filter(Boolean).join(" "),
+    slot ? `${slot.day_of_week} ${slot.start_time}-${slot.end_time}` : null,
+    offering.professor ? `${offering.professor} 교수` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function TimetablePage() {
   const { user } = useAuth();
-  const [roadmapId, setRoadmapId] = useState<number | null>(null);
   const [data, setData] = useState<TimetableRecommendation | null>(null);
   const [scheduleIndex, setScheduleIndex] = useState(0);
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
@@ -80,6 +97,21 @@ export function TimetablePage() {
   const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
 
+  /**
+   * AI가 마지막으로 제안한 시간표와 사용자가 체크한 분반.
+   *
+   * 에이전트는 DB를 쓰지 않는다 — 여기서 사용자가 고르고 승인 버튼을 눌러야
+   * 비로소 로드맵에 반영된다(로드맵 챗의 "선택 승인"과 같은 구조).
+   */
+  const [roadmapId, setRoadmapId] = useState<number | null>(null);
+  const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
+  const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
+  const [applyError, setApplyError] = useState("");
+  /** AI 추천에서 담았지만 아직 "저장"을 누르지 않은 분반. 로드맵에는 없다. */
+  const [draftOfferings, setDraftOfferings] = useState<SuggestedOffering[]>([]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -88,6 +120,7 @@ export function TimetablePage() {
         const roadmap = await getCurrentRoadmap();
         const result = await recommendTimetable(roadmap.id, TARGET_YEAR, TARGET_SEMESTER);
         if (cancelled) return;
+        // 상담 자체는 로드맵 없이도 되지만, 승인 결과를 반영할 곳은 로드맵이다.
         setRoadmapId(roadmap.id);
         setData(result);
       } catch (caught) {
@@ -112,8 +145,30 @@ export function TimetablePage() {
   const sections = schedule?.sections ?? [];
   const placedSections = sections.filter((section) => !excludedIds.has(section.item_id));
 
-  const totalCredits = placedSections.reduce((sum, section) => sum + (section.credits ?? 0), 0);
+  /**
+   * AI 추천으로 담았지만 아직 저장하지 않은 분반을 후보 과목과 같은 모양으로 맞춘다.
+   * 저장 전이라 로드맵 항목이 없어서 item_id 대신 음수 offering_id를 쓴다
+   * (후보 과목의 item_id와 겹치지 않게).
+   */
+  const draftSections: TimetableSection[] = draftOfferings
+    .filter((offering) => !placedSections.some((s) => s.offering_id === offering.offering_id))
+    .map((offering) => ({
+      item_id: -offering.offering_id,
+      course_id: offering.course_id,
+      course_code: offering.course_code,
+      course_name: offering.course_name,
+      category: offering.category,
+      credits: offering.credits,
+      offering_id: offering.offering_id,
+      section: offering.section,
+      professor: offering.professor,
+      times: offering.times,
+    }));
+
+  const allPlaced = [...placedSections, ...draftSections];
+  const totalCredits = allPlaced.reduce((sum, section) => sum + (section.credits ?? 0), 0);
   const conflictCount = data?.problematic_courses.length ?? 0;
+  const hasUnsaved = draftSections.length > 0;
 
   const visibleSections = sections.filter((section) => {
     const keyword = search.trim();
@@ -138,17 +193,34 @@ export function TimetablePage() {
 
   async function sendPrompt(text: string) {
     const message = text.trim();
-    if (!message || roadmapId === null || isSending) return;
+    if (!message || isSending) return;
+
+    // 서버가 대화를 저장하지 않으므로 지금까지의 대화를 그대로 넘겨준다.
+    const history: TimetableChatTurn[] = chat.map((entry) => ({
+      role: entry.role,
+      content: entry.content,
+    }));
 
     setPrompt("");
     setIsSending(true);
     setChat((current) => [...current, { key: `u-${current.length}`, role: "user", content: message }]);
     try {
-      const response = await chatWithRoadmapAgent(roadmapId, message);
+      const response = await chatWithTimetableAgent(
+        TARGET_YEAR,
+        TARGET_SEMESTER,
+        message,
+        history,
+      );
       setChat((current) => [
         ...current,
         { key: `a-${current.length}`, role: "assistant", content: response.reply },
       ]);
+      // 화면에 그릴 수 있는 분반이 실린 제안만 승인 카드로 띄운다.
+      const next = response.schedules.find((item) => item.offerings.length > 0) ?? null;
+      setSuggestion(next);
+      setSelectedOfferingIds(new Set(next?.offerings.map((o) => o.offering_id) ?? []));
+      setApplyResult(null);
+      setApplyError("");
     } catch (caught) {
       setChat((current) => [
         ...current,
@@ -168,8 +240,89 @@ export function TimetablePage() {
     void sendPrompt(prompt);
   }
 
+  function toggleOffering(offeringId: number) {
+    setSelectedOfferingIds((current) => {
+      const next = new Set(current);
+      if (next.has(offeringId)) next.delete(offeringId);
+      else next.add(offeringId);
+      return next;
+    });
+  }
+
+  /**
+   * 체크한 분반을 시간표에 담는다. 아직 로드맵에는 쓰지 않는다.
+   *
+   * AI 추천을 받자마자 로드맵이 바뀌면 되돌리기가 번거롭다. 시간표에서 넣고
+   * 빼며 비교한 뒤 상단 "저장"을 눌러야 로드맵에 반영된다.
+   */
+  function acceptSuggestion() {
+    if (!suggestion || selectedOfferingIds.size === 0) return;
+    const picked = suggestion.offerings.filter((offering) =>
+      selectedOfferingIds.has(offering.offering_id),
+    );
+    setDraftOfferings((current) => {
+      const byId = new Map(current.map((offering) => [offering.offering_id, offering]));
+      picked.forEach((offering) => byId.set(offering.offering_id, offering));
+      return [...byId.values()];
+    });
+    setSuggestion(null);
+    setSelectedOfferingIds(new Set());
+    setApplyResult(null);
+    setApplyError("");
+  }
+
+  function removeDraftOffering(offeringId: number) {
+    setDraftOfferings((current) =>
+      current.filter((offering) => offering.offering_id !== offeringId),
+    );
+  }
+
+  /** 상단 "저장". 여기서 처음으로 로드맵이 바뀐다. */
+  async function saveTimetable() {
+    if (roadmapId === null || isApplying) return;
+    // 후보에서 담은 과목 + AI 추천으로 담은 과목을 함께 저장한다.
+    const offeringIds = [
+      ...new Set([
+        ...placedSections.map((section) => section.offering_id).filter((id): id is number => id !== null),
+        ...draftOfferings.map((offering) => offering.offering_id),
+      ]),
+    ];
+    if (offeringIds.length === 0) return;
+
+    setIsApplying(true);
+    setApplyError("");
+    try {
+      const result = await applyTimetableToRoadmap(
+        roadmapId,
+        TARGET_YEAR,
+        TARGET_SEMESTER,
+        offeringIds,
+      );
+      setApplyResult(result);
+      setDraftOfferings([]);
+      // 반영 결과가 후보 계산에 반영되도록 다시 불러온다.
+      const refreshed = await recommendTimetable(roadmapId, TARGET_YEAR, TARGET_SEMESTER);
+      setData(refreshed);
+      setScheduleIndex(0);
+      setExcludedIds(new Set());
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "시간표를 저장하지 못했습니다."));
+    } finally {
+      setIsApplying(false);
+    }
+  }
+
+  function dismissSuggestion() {
+    setSuggestion(null);
+    setSelectedOfferingIds(new Set());
+  }
+
+  const selectedCredits = (suggestion?.offerings ?? [])
+    .filter((offering) => selectedOfferingIds.has(offering.offering_id))
+    .reduce((sum, offering) => sum + (offering.credits ?? 0), 0);
+
   /** 요일·시각에 걸린 블록을 grid-row로 배치한다. */
-  const blocks = placedSections.flatMap((section) =>
+  const blocks = allPlaced.flatMap((section) =>
     section.times.flatMap((time) => {
       const dayIndex = DAYS.indexOf(time.day_of_week ?? "");
       const start = toMinutes(time.start_time);
@@ -224,8 +377,14 @@ export function TimetablePage() {
               )}
             </select>
           </label>
-          <button type="button" className="timetable-save" disabled title="시간표 저장 API가 아직 없습니다">
-            저장
+          <button
+            type="button"
+            className="timetable-save"
+            disabled={isApplying || roadmapId === null || allPlaced.length === 0}
+            title="담은 과목을 성장 로드맵에 반영합니다"
+            onClick={() => void saveTimetable()}
+          >
+            {isApplying ? "저장 중…" : hasUnsaved ? `저장 (${draftSections.length}개 추가)` : "저장"}
           </button>
         </div>
       </header>
@@ -328,6 +487,14 @@ export function TimetablePage() {
             ) : null}
           </div>
           <p className="timetable-hint">담기 버튼으로 과목을 넣고 빼면서 후보를 비교하세요</p>
+          {/* 담은 과목은 있는데 그릴 블록이 하나도 없으면 화면이 고장난 것처럼 보인다.
+              수강편람 크롤링이 아직 요일·시각을 못 채운 분반이 많아서 생기는 일이다. */}
+          {allPlaced.length > 0 && blocks.length === 0 ? (
+            <p className="timetable-hint is-warn">
+              담은 {allPlaced.length}과목 모두 수강편람에 요일·시각 정보가 없어 시간표에
+              표시할 수 없습니다. 학점 합계와 과목 목록은 정상입니다.
+            </p>
+          ) : null}
 
           <div className="timetable-grid">
             <div className="timetable-grid-corner" />
@@ -405,6 +572,97 @@ export function TimetablePage() {
             {isSending ? <p className="timetable-empty">답변을 작성하고 있습니다…</p> : null}
           </div>
 
+          {suggestion ? (
+            <section className="timetable-proposal" aria-label="AI 시간표 추천 승인">
+              <div className="timetable-proposal-head">
+                <span>추천 시간표</span>
+                <h4>{suggestion.offerings.length}개 분반 · {suggestion.total_credits}학점</h4>
+                {suggestion.rationale ? <p>{suggestion.rationale}</p> : null}
+              </div>
+              <ul>
+                {suggestion.offerings.map((offering) => (
+                  <li key={offering.offering_id}>
+                    <label className="timetable-proposal-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedOfferingIds.has(offering.offering_id)}
+                        disabled={isApplying}
+                        onChange={() => toggleOffering(offering.offering_id)}
+                      />
+                      <span>
+                        <strong>
+                          {offering.course_name ?? `분반 ${offering.offering_id}`}
+                          {offering.section ? ` (${offering.section})` : ""}
+                        </strong>
+                        <small>{offeringSummary(offering)}</small>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {applyError ? (
+                <p className="timetable-proposal-error" role="alert">{applyError}</p>
+              ) : null}
+              <div className="timetable-proposal-actions">
+                <button type="button" disabled={isApplying} onClick={dismissSuggestion}>
+                  나중에
+                </button>
+                <button
+                  className="timetable-apply-button"
+                  type="button"
+                  disabled={selectedOfferingIds.size === 0}
+                  onClick={acceptSuggestion}
+                >
+                  <Check size={14} aria-hidden="true" />
+                  시간표에 담기 ({selectedOfferingIds.size}개 · {selectedCredits}학점)
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {draftOfferings.length > 0 ? (
+            <section className="timetable-draft" aria-label="아직 저장하지 않은 과목">
+              <p>담은 과목 {draftOfferings.length}개 — 상단 “저장”을 눌러야 로드맵에 반영됩니다.</p>
+              <ul>
+                {draftOfferings.map((offering) => (
+                  <li key={offering.offering_id}>
+                    <span>{offering.course_name ?? `분반 ${offering.offering_id}`}</span>
+                    <button
+                      type="button"
+                      aria-label={`${offering.course_name ?? "과목"} 빼기`}
+                      onClick={() => removeDraftOffering(offering.offering_id)}
+                    >
+                      빼기
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {applyError ? (
+            <p className="timetable-proposal-error" role="alert">{applyError}</p>
+          ) : null}
+
+          {applyResult ? (
+            <section className="timetable-applied" aria-live="polite">
+              <p>
+                <Check size={14} aria-hidden="true" />
+                {applyResult.applied.length}개 과목을 {TARGET_YEAR}년 {TARGET_SEMESTER} 로드맵에
+                반영했습니다.
+              </p>
+              {applyResult.skipped.length > 0 ? (
+                <ul className="timetable-applied-skipped">
+                  {applyResult.skipped.map((item) => (
+                    <li key={item.offering_id}>
+                      {item.course_name ?? `분반 ${item.offering_id}`} — {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
+
           <div className="timetable-quick">
             {QUICK_PROMPTS.map((item) => (
               <button key={item} type="button" onClick={() => void sendPrompt(item)} disabled={isSending}>
@@ -418,7 +676,8 @@ export function TimetablePage() {
               aria-label="AI에게 메시지 보내기"
               placeholder="예 : 남은 요건으로 시간표 짜줘"
               value={prompt}
-              disabled={roadmapId === null || isSending}
+              /* 시간표 에이전트는 로드맵 없이도 동작한다(수강기록·진로만으로 후보 제안). */
+              disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
             />
             <button type="submit" aria-label="메시지 전송" disabled={!prompt.trim() || isSending}>

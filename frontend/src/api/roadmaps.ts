@@ -206,13 +206,23 @@ export async function resetRoadmapAgentSession(roadmapId: number) {
   return data;
 }
 
-export async function getRoadmapConversation(roadmapId: number) {
-  const { data } = await apiClient.get<RoadmapConversation>(`/me/roadmaps/${roadmapId}/agent/messages`);
+/**
+ * 대화 기록을 읽는다. sessionId를 주면 그 스레드만, 생략하면 로드맵의 모든
+ * 메시지가 섞여서 온다 — 세션을 다루는 화면은 반드시 sessionId를 넘길 것.
+ */
+export async function getRoadmapConversation(roadmapId: number, sessionId?: number) {
+  const { data } = await apiClient.get<RoadmapConversation>(
+    `/me/roadmaps/${roadmapId}/agent/messages`,
+    { params: sessionId ? { session_id: sessionId } : undefined },
+  );
   return data;
 }
 
-export async function clearRoadmapConversation(roadmapId: number) {
-  await apiClient.delete(`/me/roadmaps/${roadmapId}/agent/messages`);
+/** sessionId를 주면 그 스레드만 비운다(세션 자체와 pending change는 남는다). */
+export async function clearRoadmapConversation(roadmapId: number, sessionId?: number) {
+  await apiClient.delete(`/me/roadmaps/${roadmapId}/agent/messages`, {
+    params: sessionId ? { session_id: sessionId } : undefined,
+  });
 }
 
 export async function getMyCurriculum() {
