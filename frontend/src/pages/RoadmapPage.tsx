@@ -1344,14 +1344,30 @@ function buildApiTimeline(
     });
   });
 
-  return [...terms.values()].map((term) => {
-    const hasPlanned = term.items.some((item) => item.status !== "completed");
-    const hasCompleted = term.items.some((item) => item.status === "completed");
-    return {
-      ...term,
-      period: hasPlanned ? "계획 학기" : hasCompleted ? "이수 내역" : term.period,
-    };
-  });
+  return [...terms.values()]
+    .map((term) => {
+      const hasPlanned = term.items.some((item) => item.status !== "completed");
+      const hasCompleted = term.items.some((item) => item.status === "completed");
+      return {
+        ...term,
+        period: hasPlanned ? "계획 학기" : hasCompleted ? "이수 내역" : term.period,
+      };
+    })
+    // 최신 학기가 맨 위. 내 정보의 이수 내역과 같은 방향이다.
+    .sort((left, right) => timelineSortKey(right) - timelineSortKey(left));
+}
+
+/**
+ * 학기 카드의 시간 순 위치. 값이 클수록 최근이다.
+ *
+ * 학년 슬롯은 학년·학기로, 학년을 매길 수 없는 기록(계절수업 등)은 달력 연도로
+ * 값을 매긴다. 둘은 축이 달라 직접 비교할 수 없어서, 학년 슬롯 전체보다 뒤에
+ * 오도록 900부터 시작하는 별도 구간을 쓴다.
+ */
+function timelineSortKey(term: ApiTimelineTerm) {
+  if (term.key === PRE_ADMISSION_KEY) return 0; // 입학 전 인정 학점이 가장 오래됐다
+  if (term.grade) return term.grade * 10 + (term.semester === "2학기" ? 2 : 1);
+  return 900 + (Number(term.year) || 0);
 }
 
 function summarizeApiTerm(items: RoadmapItem[]) {
