@@ -22,7 +22,18 @@ const TARGET_YEAR = "2026";
 const TARGET_SEMESTER = "2학기";
 
 const DAYS = ["월", "화", "수", "목", "금"];
-const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+/**
+ * 격자 한 칸의 크기(분).
+ *
+ * 부산대 수업은 대부분 75분(9:00~10:15)이라 1시간 칸에는 안 맞는다. 100분·50분
+ * 수업도 있어서 15분 칸으로도 부족하다. 5분으로 잡으면 실제 수강편람의 모든
+ * 수업이 정확히 떨어진다(어긋나는 행 0건 확인).
+ */
+const SLOT_MINUTES = 5;
+const SLOTS_PER_HOUR = 60 / SLOT_MINUTES;
+
+const DEFAULT_GRID_START = 9 * 60;
+const DEFAULT_GRID_END = 18 * 60;
 
 const CATEGORY_FILTERS = [
   { key: "전필", match: "전공 필수" },
@@ -321,28 +332,49 @@ export function TimetablePage() {
     .filter((offering) => selectedOfferingIds.has(offering.offering_id))
     .reduce((sum, offering) => sum + (offering.credits ?? 0), 0);
 
-  /** 요일·시각에 걸린 블록을 grid-row로 배치한다. */
-  const blocks = allPlaced.flatMap((section) =>
+  /** 담은 수업의 (요일, 시작분, 종료분). 격자 범위와 블록 배치가 같이 쓴다. */
+  const placedTimes = allPlaced.flatMap((section) =>
     section.times.flatMap((time) => {
       const dayIndex = DAYS.indexOf(time.day_of_week ?? "");
       const start = toMinutes(time.start_time);
       const end = toMinutes(time.end_time);
-      if (dayIndex < 0 || start === null || end === null) return [];
-      const startRow = (start - HOURS[0] * 60) / 60;
-      const span = Math.max((end - start) / 60, 0.5);
-      return [
-        {
-          key: `${section.item_id}-${time.day_of_week}-${time.start_time}`,
-          name: section.course_name ?? "과목",
-          classroom: time.classroom,
-          tone: categoryTone(section.category),
-          dayIndex,
-          startRow,
-          span,
-        },
-      ];
+      if (dayIndex < 0 || start === null || end === null || end <= start) return [];
+      return [{ section, time, dayIndex, start, end }];
     }),
   );
+
+  /**
+   * 격자에 그릴 시간 범위.
+   *
+   * 기본은 9~18시지만, 담은 수업이 그 밖으로 나가면 시간 단위로 넓힌다.
+   * 부산대는 8시 수업도 있고 야간 강의는 23시에 끝나기도 해서, 고정 범위로
+   * 두면 블록이 잘려 나간다.
+   */
+  const gridStart = placedTimes.reduce(
+    (earliest, item) => Math.min(earliest, Math.floor(item.start / 60) * 60),
+    DEFAULT_GRID_START,
+  );
+  const gridEnd = placedTimes.reduce(
+    (latest, item) => Math.max(latest, Math.ceil(item.end / 60) * 60),
+    DEFAULT_GRID_END,
+  );
+  const hours = Array.from(
+    { length: (gridEnd - gridStart) / 60 },
+    (_, index) => gridStart / 60 + index,
+  );
+
+  /** 분 단위 시각을 grid-row 번호로. 1행은 요일 머리글이라 +2. */
+  const toGridRow = (minutes: number) => (minutes - gridStart) / SLOT_MINUTES + 2;
+
+  const blocks = placedTimes.map(({ section, time, dayIndex, start, end }) => ({
+    key: `${section.item_id}-${time.day_of_week}-${time.start_time}`,
+    name: section.course_name ?? "과목",
+    classroom: time.classroom,
+    tone: categoryTone(section.category),
+    dayIndex,
+    rowStart: toGridRow(start),
+    rowSpan: (end - start) / SLOT_MINUTES,
+  }));
 
   return (
     <section className="timetable-page">
@@ -504,18 +536,29 @@ export function TimetablePage() {
               </div>
             ))}
 
-            {HOURS.map((hour, index) => (
-              <div className="timetable-grid-hour" key={hour} style={{ gridRow: index + 2 }}>
+            {/* 시각 라벨과 배경 칸은 한 시간(=12칸)씩 묶어 시간 단위 격자선을 유지한다.
+                블록만 5분 칸을 쓴다. */}
+            {hours.map((hour, index) => (
+              <div
+                className="timetable-grid-hour"
+                key={hour}
+                style={{
+                  gridRow: `${index * SLOTS_PER_HOUR + 2} / span ${SLOTS_PER_HOUR}`,
+                }}
+              >
                 {hour}
               </div>
             ))}
 
-            {HOURS.map((hour, rowIndex) =>
+            {hours.map((hour, rowIndex) =>
               DAYS.map((day, colIndex) => (
                 <div
                   className="timetable-grid-cell"
                   key={`${day}-${hour}`}
-                  style={{ gridRow: rowIndex + 2, gridColumn: colIndex + 2 }}
+                  style={{
+                    gridRow: `${rowIndex * SLOTS_PER_HOUR + 2} / span ${SLOTS_PER_HOUR}`,
+                    gridColumn: colIndex + 2,
+                  }}
                 />
               )),
             )}
@@ -526,7 +569,7 @@ export function TimetablePage() {
                 key={block.key}
                 style={{
                   gridColumn: block.dayIndex + 2,
-                  gridRow: `${Math.floor(block.startRow) + 2} / span ${Math.max(Math.round(block.span), 1)}`,
+                  gridRow: `${block.rowStart} / span ${block.rowSpan}`,
                 }}
               >
                 <strong>{block.name}</strong>
