@@ -2,10 +2,7 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AppLayout } from "../components/layout/AppLayout";
-import { ChatShell } from "../components/layout/ChatShell";
-import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { AuthPage } from "../pages/AuthPage";
-import { ChatPage } from "../pages/ChatPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
@@ -44,17 +41,16 @@ export function AppRouter() {
           <Route path="/reset-password" element={<GuestOnly><ResetPasswordPage /></GuestOnly>} />
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
-            <Route path="/activities" element={<ActivitiesPage />} />
             <Route path="/info" element={<InfoPage />} />
             <Route path="/roadmap" element={<RoadmapPage />} />
             <Route path="/timetable" element={<TimetablePage />} />
           </Route>
           {/* 회원가입 STEP 2·3. 학사정보 불러오기가 인증을 요구해서 로그인 뒤에 이어진다. */}
           <Route path="/onboarding" element={<RequireAuth><OnboardingPage /></RequireAuth>} />
-          {/* AI 대화만 시안대로 상단 네비 셸을 쓴다. */}
-          <Route element={<RequireAuth><ChatShell /></RequireAuth>}>
-            <Route path="/chat" element={<ChatPage />} />
-          </Route>
+          {/* 추천 활동(/activities)과 AI 대화(/chat)는 메뉴와 함께 라우트도 내렸다.
+              메뉴만 빼면 주소로 여전히 들어갈 수 있고, 로드맵 안의 AI 상담이
+              남아 있어 대화 기능 자체가 사라지는 것은 아니다.
+              화면 코드(ActivitiesPage/ChatPage/ChatShell)는 되살리기 쉽도록 남겨둔다. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
