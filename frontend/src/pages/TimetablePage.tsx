@@ -5,14 +5,16 @@ import {
   applyTimetableToRoadmap,
   chatWithTimetableAgent,
   recommendTimetable,
+  searchOfferings,
   type SuggestedOffering,
   type TimetableApplyResult,
   type TimetableChatSuggestion,
   type TimetableChatTurn,
   type TimetableRecommendation,
-  type TimetableSection,
 } from "../api/timetable";
 import { getCurrentRoadmap } from "../api/roadmaps";
+import { searchDepartments } from "../api/departments";
+import type { DepartmentSearchResult } from "../api/departments";
 import { getApiErrorMessage } from "../api/client";
 import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
@@ -70,19 +72,7 @@ function toMinutes(value: string | null) {
   return hour * 60 + minute;
 }
 
-/** 한 과목의 요약 줄. "전공 필수 3학점 · 월 10:00-11:15 · 김태완 교수" */
-function sectionSummary(section: TimetableSection) {
-  const slot = section.times.find((time) => time.day_of_week && time.start_time);
-  return [
-    [section.category, section.credits ? `${section.credits}학점` : null].filter(Boolean).join(" "),
-    slot ? `${slot.day_of_week} ${slot.start_time}-${slot.end_time}` : null,
-    section.professor ? `${section.professor} 교수` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-/** AI가 추천한 분반 한 줄. sectionSummary와 같은 형식이지만 입력 타입이 다르다. */
+/** 분반 한 줄 요약. "전공 필수 3학점 · 월 10:00-11:15 · 김태완 교수" */
 function offeringSummary(offering: SuggestedOffering) {
   const slot = offering.times.find((time) => time.day_of_week && time.start_time);
   return [
@@ -120,8 +110,17 @@ export function TimetablePage() {
   const [isApplying, setIsApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
   const [applyError, setApplyError] = useState("");
-  /** AI 추천에서 담았지만 아직 "저장"을 누르지 않은 분반. 로드맵에는 없다. */
-  const [draftOfferings, setDraftOfferings] = useState<SuggestedOffering[]>([]);
+  /**
+   * "과목 추가" 검색 상태.
+   *
+   * 예전에는 로드맵에 이미 담긴 과목에서 파생된 목록만 보여줘서, 계획에 없는
+   * 과목은 아예 고를 수 없었다. 이제 개설 강좌를 학부/전공으로 직접 찾는다.
+   */
+  const [departments, setDepartments] = useState<DepartmentSearchResult[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSearchResult | null>(null);
+  const [selectedMajor, setSelectedMajor] = useState<string>("");
+  const [offerings, setOfferings] = useState<SuggestedOffering[]>([]);
+  const [isSearchingOfferings, setIsSearchingOfferings] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +146,58 @@ export function TimetablePage() {
     };
   }, []);
 
+  // 학부 목록은 한 번만 통째로 받아 드롭다운에 채운다(정식 편제 110여 개).
+  // 다른 학부 과목도 담을 수 있어야 해서 내 학적으로 좁히지 않는다.
+  useEffect(() => {
+    let cancelled = false;
+    void searchDepartments("", 300)
+      .then((list) => {
+        if (cancelled) return;
+        setDepartments(list);
+        // 처음에는 내 학부를 골라둔다. 대부분 자기 학부부터 본다.
+        setSelectedDepartment(
+          (current) => current ?? list.find((item) => item.name === user?.department) ?? null,
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.department]);
+
+  // 고른 학부·전공·이수구분·키워드로 개설 강좌를 찾는다.
+  useEffect(() => {
+    let cancelled = false;
+    setIsSearchingOfferings(true);
+    const filter = CATEGORY_FILTERS.find((item) => item.key === activeFilter);
+    const timer = window.setTimeout(() => {
+      void searchOfferings({
+        year: TARGET_YEAR,
+        semester: TARGET_SEMESTER,
+        departmentId: selectedDepartment?.id ?? null,
+        major: selectedMajor || null,
+        category: filter?.match ?? null,
+        q: search.trim(),
+        limit: 60,
+      })
+        .then((list) => {
+          if (!cancelled) setOfferings(list);
+        })
+        .catch(() => {
+          if (!cancelled) setOfferings([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsSearchingOfferings(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [selectedDepartment, selectedMajor, activeFilter, search]);
+
   const candidates = useMemo(() => {
     if (!data) return [];
     return [...data.feasible_schedules, ...data.partial_schedules];
@@ -156,51 +207,17 @@ export function TimetablePage() {
   const sections = schedule?.sections ?? [];
   const placedSections = sections.filter((section) => !excludedIds.has(section.item_id));
 
-  /**
-   * AI 추천으로 담았지만 아직 저장하지 않은 분반을 후보 과목과 같은 모양으로 맞춘다.
-   * 저장 전이라 로드맵 항목이 없어서 item_id 대신 음수 offering_id를 쓴다
-   * (후보 과목의 item_id와 겹치지 않게).
-   */
-  const draftSections: TimetableSection[] = draftOfferings
-    .filter((offering) => !placedSections.some((s) => s.offering_id === offering.offering_id))
-    .map((offering) => ({
-      item_id: -offering.offering_id,
-      course_id: offering.course_id,
-      course_code: offering.course_code,
-      course_name: offering.course_name,
-      category: offering.category,
-      credits: offering.credits,
-      offering_id: offering.offering_id,
-      section: offering.section,
-      professor: offering.professor,
-      times: offering.times,
-    }));
-
-  const allPlaced = [...placedSections, ...draftSections];
+  const allPlaced = placedSections;
   const totalCredits = allPlaced.reduce((sum, section) => sum + (section.credits ?? 0), 0);
   const conflictCount = data?.problematic_courses.length ?? 0;
-  const hasUnsaved = draftSections.length > 0;
 
-  const visibleSections = sections.filter((section) => {
-    const keyword = search.trim();
-    if (keyword && !`${section.course_name ?? ""}${section.professor ?? ""}`.includes(keyword)) {
-      return false;
-    }
-    if (activeFilter) {
-      const filter = CATEGORY_FILTERS.find((item) => item.key === activeFilter);
-      if (filter && !(section.category ?? "").includes(filter.match)) return false;
-    }
-    return true;
-  });
-
-  function toggleSection(itemId: number) {
-    setExcludedIds((current) => {
-      const next = new Set(current);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  }
+  /**
+   * 이미 시간표에 들어가 있는 분반. "과목 추가" 목록에서 담기 완료 표시에 쓴다.
+   * AI 추천으로 담은 과목도 저장되고 나면 여기에 잡힌다.
+   */
+  const placedOfferingIds = new Set(
+    allPlaced.map((section) => section.offering_id).filter((id): id is number => id !== null),
+  );
 
   async function sendPrompt(text: string) {
     const message = text.trim();
@@ -261,45 +278,14 @@ export function TimetablePage() {
   }
 
   /**
-   * 체크한 분반을 시간표에 담는다. 아직 로드맵에는 쓰지 않는다.
+   * 고른 분반을 시간표에 담는다. 누르는 즉시 로드맵에 저장된다.
    *
-   * AI 추천을 받자마자 로드맵이 바뀌면 되돌리기가 번거롭다. 시간표에서 넣고
-   * 빼며 비교한 뒤 상단 "저장"을 눌러야 로드맵에 반영된다.
+   * 따로 "저장"을 누르게 하면 담아 놓고 저장을 안 한 채 화면을 떠나는 일이
+   * 생긴다. 대신 AI 추천은 체크박스로 무엇을 담을지 먼저 고르게 해서, 추천이
+   * 곧바로 로드맵을 바꾸지는 않는다.
    */
-  function acceptSuggestion() {
-    if (!suggestion || selectedOfferingIds.size === 0) return;
-    const picked = suggestion.offerings.filter((offering) =>
-      selectedOfferingIds.has(offering.offering_id),
-    );
-    setDraftOfferings((current) => {
-      const byId = new Map(current.map((offering) => [offering.offering_id, offering]));
-      picked.forEach((offering) => byId.set(offering.offering_id, offering));
-      return [...byId.values()];
-    });
-    setSuggestion(null);
-    setSelectedOfferingIds(new Set());
-    setApplyResult(null);
-    setApplyError("");
-  }
-
-  function removeDraftOffering(offeringId: number) {
-    setDraftOfferings((current) =>
-      current.filter((offering) => offering.offering_id !== offeringId),
-    );
-  }
-
-  /** 상단 "저장". 여기서 처음으로 로드맵이 바뀐다. */
-  async function saveTimetable() {
-    if (roadmapId === null || isApplying) return;
-    // 후보에서 담은 과목 + AI 추천으로 담은 과목을 함께 저장한다.
-    const offeringIds = [
-      ...new Set([
-        ...placedSections.map((section) => section.offering_id).filter((id): id is number => id !== null),
-        ...draftOfferings.map((offering) => offering.offering_id),
-      ]),
-    ];
-    if (offeringIds.length === 0) return;
-
+  async function addOfferings(offeringIds: number[]) {
+    if (roadmapId === null || isApplying || offeringIds.length === 0) return;
     setIsApplying(true);
     setApplyError("");
     try {
@@ -310,17 +296,25 @@ export function TimetablePage() {
         offeringIds,
       );
       setApplyResult(result);
-      setDraftOfferings([]);
-      // 반영 결과가 후보 계산에 반영되도록 다시 불러온다.
+      // 담은 과목이 주간 시간표에 바로 나타나야 한다. 후보는 로드맵 항목에서
+      // 계산되므로 다시 불러온다.
       const refreshed = await recommendTimetable(roadmapId, TARGET_YEAR, TARGET_SEMESTER);
       setData(refreshed);
       setScheduleIndex(0);
       setExcludedIds(new Set());
     } catch (caught) {
-      setApplyError(getApiErrorMessage(caught, "시간표를 저장하지 못했습니다."));
+      setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
     } finally {
       setIsApplying(false);
     }
+  }
+
+  async function acceptSuggestion() {
+    if (!suggestion || selectedOfferingIds.size === 0) return;
+    const picked = [...selectedOfferingIds];
+    setSuggestion(null);
+    setSelectedOfferingIds(new Set());
+    await addOfferings(picked);
   }
 
   function dismissSuggestion() {
@@ -409,15 +403,8 @@ export function TimetablePage() {
               )}
             </select>
           </label>
-          <button
-            type="button"
-            className="timetable-save"
-            disabled={isApplying || roadmapId === null || allPlaced.length === 0}
-            title="담은 과목을 성장 로드맵에 반영합니다"
-            onClick={() => void saveTimetable()}
-          >
-            {isApplying ? "저장 중…" : hasUnsaved ? `저장 (${draftSections.length}개 추가)` : "저장"}
-          </button>
+          {/* 담기 버튼이 곧바로 저장하므로 별도 "저장" 버튼은 두지 않는다. */}
+          {isApplying ? <span className="timetable-saving">담는 중…</span> : null}
         </div>
       </header>
 
@@ -445,16 +432,46 @@ export function TimetablePage() {
             />
           </label>
 
-          {/* Figma 과목 선택 드롭다운(학과/전공) — 현재는 내 학적 기준 단일 선택 */}
+          {/* 학부·전공으로 개설 강좌를 좁힌다. 내 학적에 묶여 있지 않아 다른 학부
+              과목도 담을 수 있다. */}
           <div className="timetable-scope">
             <label>
-              <select aria-label="학과 선택" defaultValue="dept">
-                <option value="dept">{user?.department ?? "학과 선택"}</option>
+              <select
+                aria-label="학부 선택"
+                value={selectedDepartment?.id ?? ""}
+                onChange={(event) => {
+                  const next = departments.find(
+                    (item) => item.id === Number(event.target.value),
+                  );
+                  setSelectedDepartment(next ?? null);
+                  setSelectedMajor(""); // 학부가 바뀌면 이전 전공은 맞지 않는다
+                }}
+              >
+                <option value="">전체 학부</option>
+                {departments.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
-              <select aria-label="전공 선택" defaultValue="major">
-                <option value="major">{user?.major ?? "학부 공통"}</option>
+              <select
+                aria-label="전공 선택"
+                value={selectedMajor}
+                onChange={(event) => setSelectedMajor(event.target.value)}
+                disabled={!selectedDepartment || selectedDepartment.majors.length === 0}
+              >
+                <option value="">
+                  {selectedDepartment && selectedDepartment.majors.length > 0
+                    ? "전공 전체"
+                    : "세부전공 없음"}
+                </option>
+                {(selectedDepartment?.majors ?? []).map((major) => (
+                  <option key={major} value={major}>
+                    {major}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
@@ -473,23 +490,24 @@ export function TimetablePage() {
           </div>
 
           <ul className="timetable-course-list">
-            {isLoading ? <li className="timetable-empty">불러오는 중입니다…</li> : null}
-            {!isLoading && visibleSections.length === 0 ? (
-              <li className="timetable-empty">표시할 과목이 없습니다.</li>
+            {isSearchingOfferings ? <li className="timetable-empty">불러오는 중입니다…</li> : null}
+            {!isSearchingOfferings && offerings.length === 0 ? (
+              <li className="timetable-empty">이 조건으로 개설된 과목이 없습니다.</li>
             ) : null}
 
-            {visibleSections.map((section) => {
-              const placed = !excludedIds.has(section.item_id);
+            {offerings.map((offering) => {
+              const placed = placedOfferingIds.has(offering.offering_id);
               return (
-                <li className="timetable-course" key={section.item_id}>
+                <li className="timetable-course" key={offering.offering_id}>
                   <div>
-                    <strong>{section.course_name ?? "과목"}</strong>
-                    <p>{sectionSummary(section)}</p>
+                    <strong>{offering.course_name ?? "과목"}</strong>
+                    <p>{offeringSummary(offering)}</p>
                   </div>
                   <button
                     type="button"
                     className={placed ? "is-placed" : ""}
-                    onClick={() => toggleSection(section.item_id)}
+                    disabled={placed || isApplying || roadmapId === null}
+                    onClick={() => void addOfferings([offering.offering_id])}
                   >
                     {placed ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
                     {placed ? "담기 완료" : "담기"}
@@ -660,26 +678,6 @@ export function TimetablePage() {
                   시간표에 담기 ({selectedOfferingIds.size}개 · {selectedCredits}학점)
                 </button>
               </div>
-            </section>
-          ) : null}
-
-          {draftOfferings.length > 0 ? (
-            <section className="timetable-draft" aria-label="아직 저장하지 않은 과목">
-              <p>담은 과목 {draftOfferings.length}개 — 상단 “저장”을 눌러야 로드맵에 반영됩니다.</p>
-              <ul>
-                {draftOfferings.map((offering) => (
-                  <li key={offering.offering_id}>
-                    <span>{offering.course_name ?? `분반 ${offering.offering_id}`}</span>
-                    <button
-                      type="button"
-                      aria-label={`${offering.course_name ?? "과목"} 빼기`}
-                      onClick={() => removeDraftOffering(offering.offering_id)}
-                    >
-                      빼기
-                    </button>
-                  </li>
-                ))}
-              </ul>
             </section>
           ) : null}
 

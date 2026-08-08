@@ -152,3 +152,42 @@ export async function applyTimetableToRoadmap(
   );
   return data;
 }
+
+export type OfferingSearchParams = {
+  year: string;
+  semester: string;
+  departmentId?: number | null;
+  major?: string | null;
+  category?: string | null;
+  q?: string;
+  limit?: number;
+};
+
+/**
+ * 대상 학기에 실제로 개설된 강좌를 학부/전공으로 좁혀 찾는다.
+ *
+ * 시간표 "과목 추가"가 쓰던 목록은 로드맵에 이미 담긴 과목에서 파생된 것이라,
+ * 아직 계획에 없는 과목은 아예 보이지 않았다. 다른 학부 과목을 담으려면 이쪽을 쓴다.
+ */
+export async function searchOfferings({
+  year,
+  semester,
+  departmentId,
+  major,
+  category,
+  q = "",
+  limit = 50,
+}: OfferingSearchParams) {
+  const { data } = await apiClient.get<SuggestedOffering[]>("/courses/offerings", {
+    params: {
+      year,
+      semester,
+      department_id: departmentId ?? undefined,
+      major: major || undefined,
+      category: category || undefined,
+      q,
+      limit,
+    },
+  });
+  return data;
+}
