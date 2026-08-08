@@ -37,11 +37,21 @@ const SLOTS_PER_HOUR = 60 / SLOT_MINUTES;
 const DEFAULT_GRID_START = 9 * 60;
 const DEFAULT_GRID_END = 18 * 60;
 
-const CATEGORY_FILTERS = [
-  { key: "전필", match: "전공 필수" },
-  { key: "전선", match: "전공 선택" },
-  { key: "교양", match: "교양" },
-];
+/**
+ * 과목을 고르는 첫 갈래.
+ *
+ * 화면의 한 갈래가 DB 이수구분 여러 개에 걸쳐 있어서 categories를 배열로 둔다
+ * (효원 균형·창의 교양이 그렇다). "전공"만 단과대 → 학부 → 전공으로 한 번 더
+ * 좁히고, 교양 계열은 학부와 무관하게 전교 개설이라 바로 목록을 보여준다.
+ */
+const COURSE_GROUPS = [
+  { key: "balance", label: "효원(균형·창의)교양", categories: ["효원균형교양", "효원창의교양"] },
+  { key: "general", label: "일반선택", categories: ["일반선택"] },
+  { key: "core", label: "효원핵심교양", categories: ["효원핵심교양"] },
+  { key: "major", label: "전공", categories: ["전공"] },
+] as const;
+
+type CourseGroupKey = (typeof COURSE_GROUPS)[number]["key"];
 
 const LEGEND = [
   { label: "전공 기초", tone: "base" },
@@ -90,7 +100,6 @@ export function TimetablePage() {
   const [scheduleIndex, setScheduleIndex] = useState(0);
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -116,7 +125,9 @@ export function TimetablePage() {
    * 예전에는 로드맵에 이미 담긴 과목에서 파생된 목록만 보여줘서, 계획에 없는
    * 과목은 아예 고를 수 없었다. 이제 개설 강좌를 학부/전공으로 직접 찾는다.
    */
+  const [groupKey, setGroupKey] = useState<CourseGroupKey>("major");
   const [departments, setDepartments] = useState<DepartmentSearchResult[]>([]);
+  const [selectedCollege, setSelectedCollege] = useState<string>("");
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSearchResult | null>(null);
   const [selectedMajor, setSelectedMajor] = useState<string>("");
   const [offerings, setOfferings] = useState<SuggestedOffering[]>([]);
@@ -154,10 +165,10 @@ export function TimetablePage() {
       .then((list) => {
         if (cancelled) return;
         setDepartments(list);
-        // 처음에는 내 학부를 골라둔다. 대부분 자기 학부부터 본다.
-        setSelectedDepartment(
-          (current) => current ?? list.find((item) => item.name === user?.department) ?? null,
-        );
+        // 처음에는 내 학부와 그 단과대를 골라둔다. 대부분 자기 학부부터 본다.
+        const mine = list.find((item) => item.name === user?.department) ?? null;
+        setSelectedDepartment((current) => current ?? mine);
+        setSelectedCollege((current) => current || (mine?.college ?? ""));
       })
       .catch(() => undefined);
 
@@ -166,18 +177,20 @@ export function TimetablePage() {
     };
   }, [user?.department]);
 
-  // 고른 학부·전공·이수구분·키워드로 개설 강좌를 찾는다.
+  // 고른 갈래(+전공이면 학부·전공)와 키워드로 개설 강좌를 찾는다.
   useEffect(() => {
     let cancelled = false;
     setIsSearchingOfferings(true);
-    const filter = CATEGORY_FILTERS.find((item) => item.key === activeFilter);
+    const group = COURSE_GROUPS.find((item) => item.key === groupKey);
+    // 교양·일반선택은 전교 개설이라 학부로 좁히면 오히려 결과가 사라진다.
+    const isMajor = groupKey === "major";
     const timer = window.setTimeout(() => {
       void searchOfferings({
         year: TARGET_YEAR,
         semester: TARGET_SEMESTER,
-        departmentId: selectedDepartment?.id ?? null,
-        major: selectedMajor || null,
-        category: filter?.match ?? null,
+        departmentId: isMajor ? selectedDepartment?.id ?? null : null,
+        major: isMajor ? selectedMajor || null : null,
+        categories: group ? [...group.categories] : undefined,
         q: search.trim(),
         limit: 60,
       })
@@ -196,7 +209,11 @@ export function TimetablePage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [selectedDepartment, selectedMajor, activeFilter, search]);
+  }, [groupKey, selectedDepartment, selectedMajor, search]);
+
+  /** 학부를 가진 단과대만. "미지정"은 잘못 생성된 껍데기라 서버가 이미 걸러준다. */
+  const colleges = [...new Set(departments.map((item) => item.college))].sort();
+  const collegeDepartments = departments.filter((item) => item.college === selectedCollege);
 
   const candidates = useMemo(() => {
     if (!data) return [];
@@ -434,60 +451,84 @@ export function TimetablePage() {
 
           {/* 학부·전공으로 개설 강좌를 좁힌다. 내 학적에 묶여 있지 않아 다른 학부
               과목도 담을 수 있다. */}
-          <div className="timetable-scope">
-            <label>
-              <select
-                aria-label="학부 선택"
-                value={selectedDepartment?.id ?? ""}
-                onChange={(event) => {
-                  const next = departments.find(
-                    (item) => item.id === Number(event.target.value),
-                  );
-                  setSelectedDepartment(next ?? null);
-                  setSelectedMajor(""); // 학부가 바뀌면 이전 전공은 맞지 않는다
-                }}
-              >
-                <option value="">전체 학부</option>
-                {departments.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <select
-                aria-label="전공 선택"
-                value={selectedMajor}
-                onChange={(event) => setSelectedMajor(event.target.value)}
-                disabled={!selectedDepartment || selectedDepartment.majors.length === 0}
-              >
-                <option value="">
-                  {selectedDepartment && selectedDepartment.majors.length > 0
-                    ? "전공 전체"
-                    : "세부전공 없음"}
-                </option>
-                {(selectedDepartment?.majors ?? []).map((major) => (
-                  <option key={major} value={major}>
-                    {major}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
+          {/* 1단계: 교양 계열인지 전공인지. 교양은 전교 개설이라 여기서 끝난다. */}
           <div className="timetable-filters">
-            {CATEGORY_FILTERS.map((filter) => (
+            {COURSE_GROUPS.map((group) => (
               <button
-                key={filter.key}
+                key={group.key}
                 type="button"
-                className={activeFilter === filter.key ? "selected" : ""}
-                onClick={() => setActiveFilter((current) => (current === filter.key ? null : filter.key))}
+                className={groupKey === group.key ? "selected" : ""}
+                onClick={() => setGroupKey(group.key)}
               >
-                {filter.key}
+                {group.label}
               </button>
             ))}
           </div>
+
+          {/* 2단계: 전공을 골랐을 때만 단과대 → 학부 → 전공으로 좁힌다. */}
+          {groupKey === "major" ? (
+            <div className="timetable-scope">
+              <label>
+                <select
+                  aria-label="단과대 선택"
+                  value={selectedCollege}
+                  onChange={(event) => {
+                    setSelectedCollege(event.target.value);
+                    // 단과대가 바뀌면 아래 두 단계는 다시 골라야 한다.
+                    setSelectedDepartment(null);
+                    setSelectedMajor("");
+                  }}
+                >
+                  <option value="">단과대 선택</option>
+                  {colleges.map((college) => (
+                    <option key={college} value={college}>
+                      {college}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <select
+                  aria-label="학부 선택"
+                  value={selectedDepartment?.id ?? ""}
+                  disabled={!selectedCollege}
+                  onChange={(event) => {
+                    const next = collegeDepartments.find(
+                      (item) => item.id === Number(event.target.value),
+                    );
+                    setSelectedDepartment(next ?? null);
+                    setSelectedMajor(""); // 학부가 바뀌면 이전 전공은 맞지 않는다
+                  }}
+                >
+                  <option value="">{selectedCollege ? "학부 전체" : "단과대를 먼저"}</option>
+                  {collegeDepartments.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <select
+                  aria-label="전공 선택"
+                  value={selectedMajor}
+                  onChange={(event) => setSelectedMajor(event.target.value)}
+                  disabled={!selectedDepartment || selectedDepartment.majors.length === 0}
+                >
+                  <option value="">
+                    {selectedDepartment && selectedDepartment.majors.length > 0
+                      ? "전공 전체"
+                      : "세부전공 없음"}
+                  </option>
+                  {(selectedDepartment?.majors ?? []).map((major) => (
+                    <option key={major} value={major}>
+                      {major}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           <ul className="timetable-course-list">
             {isSearchingOfferings ? <li className="timetable-empty">불러오는 중입니다…</li> : null}

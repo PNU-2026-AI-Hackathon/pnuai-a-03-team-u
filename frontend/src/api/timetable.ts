@@ -158,7 +158,8 @@ export type OfferingSearchParams = {
   semester: string;
   departmentId?: number | null;
   major?: string | null;
-  category?: string | null;
+  /** 화면의 한 갈래가 DB 이수구분 여러 개일 수 있어 배열로 받는다. */
+  categories?: string[];
   q?: string;
   limit?: number;
 };
@@ -174,7 +175,7 @@ export async function searchOfferings({
   semester,
   departmentId,
   major,
-  category,
+  categories,
   q = "",
   limit = 50,
 }: OfferingSearchParams) {
@@ -184,10 +185,13 @@ export async function searchOfferings({
       semester,
       department_id: departmentId ?? undefined,
       major: major || undefined,
-      category: category || undefined,
+      category: categories?.length ? categories : undefined,
       q,
       limit,
     },
+    // 배열을 category=a&category=b로 보낸다. axios 기본값은 category[]=a라
+    // FastAPI의 list[str] 쿼리 파라미터가 못 받고 조용히 무시된다.
+    paramsSerializer: { indexes: null },
   });
   return data;
 }

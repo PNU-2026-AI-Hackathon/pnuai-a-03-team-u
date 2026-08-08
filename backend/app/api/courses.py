@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import case, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -98,7 +98,9 @@ def search_offerings(
     # 전공은 이름으로 받는다. 학부 자동완성(/departments/search)이 전공을 이름
     # 목록으로만 주기 때문에, id를 요구하면 프론트가 한 번 더 조회해야 한다.
     major: str | None = None,
-    category: str | None = None,
+    # 여러 번 넘길 수 있다. "효원(균형·창의)교양"처럼 화면의 한 갈래가 DB에서는
+    # 두 개 이상의 이수구분으로 나뉘어 있기 때문이다.
+    category: list[str] | None = Query(None),
     q: str = "",
     limit: int = 50,
     current_user: User = Depends(get_current_user),
@@ -129,9 +131,11 @@ def search_offerings(
         # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한
         # 전공 과목까지 섞여 나온다.
         query = query.where(Course.major_id.in_(matched_major_ids))
-    if category:
-        # "전공"으로 전공기초·전공필수·전공선택을 한 번에 훑을 수 있게 부분 일치를 쓴다.
-        query = query.where(Course.category.ilike(f"%{category}%"))
+    wanted = [value.strip() for value in (category or []) if value.strip()]
+    if wanted:
+        # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
+        conditions = [Course.category.ilike(f"%{value}%") for value in wanted]
+        query = query.where(or_(*conditions))
     q = q.strip()
     if q:
         query = query.where(
