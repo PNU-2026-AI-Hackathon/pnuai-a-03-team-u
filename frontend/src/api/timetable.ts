@@ -195,3 +195,64 @@ export async function searchOfferings({
   });
   return data;
 }
+
+// --- 시간표(수강계획) CRUD ---------------------------------------------------
+
+export type TimetableSummary = {
+  id: number;
+  title: string;
+  year: string | null;
+  semester: string | null;
+  item_count: number;
+  total_credits: number;
+};
+
+export type TimetableDetail = TimetableSummary & {
+  offerings: SuggestedOffering[];
+};
+
+/** 이름 붙인 시간표 문서. 여기 담긴 건 계획일 뿐, 로드맵 반영은 apply가 따로 한다. */
+export async function listTimetables(year: string, semester: string) {
+  const { data } = await apiClient.get<TimetableSummary[]>("/me/timetables", {
+    params: { year, semester },
+  });
+  return data;
+}
+
+export async function createTimetable(year: string, semester: string, title?: string) {
+  const { data } = await apiClient.post<TimetableDetail>("/me/timetables", {
+    year,
+    semester,
+    title: title ?? null,
+  });
+  return data;
+}
+
+export async function getTimetable(id: number) {
+  const { data } = await apiClient.get<TimetableDetail>(`/me/timetables/${id}`);
+  return data;
+}
+
+export async function renameTimetable(id: number, title: string) {
+  const { data } = await apiClient.patch<TimetableDetail>(`/me/timetables/${id}`, { title });
+  return data;
+}
+
+export async function deleteTimetable(id: number) {
+  await apiClient.delete(`/me/timetables/${id}`);
+}
+
+/** 이미 담긴 분반은 서버가 조용히 건너뛴다(멱등). */
+export async function addTimetableItems(id: number, offeringIds: number[]) {
+  const { data } = await apiClient.post<TimetableDetail>(`/me/timetables/${id}/items`, {
+    offering_ids: offeringIds,
+  });
+  return data;
+}
+
+export async function removeTimetableItem(id: number, offeringId: number) {
+  const { data } = await apiClient.delete<TimetableDetail>(
+    `/me/timetables/${id}/items/${offeringId}`,
+  );
+  return data;
+}

@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { ArrowUp, Check, Plus, Search } from "lucide-react";
+import { ArrowUp, Check, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import {
+  addTimetableItems,
   applyTimetableToRoadmap,
   chatWithTimetableAgent,
-  recommendTimetable,
+  createTimetable,
+  deleteTimetable,
+  getTimetable,
+  listTimetables,
+  removeTimetableItem,
+  renameTimetable,
   searchOfferings,
   type SuggestedOffering,
   type TimetableApplyResult,
   type TimetableChatSuggestion,
   type TimetableChatTurn,
-  type TimetableRecommendation,
+  type TimetableDetail,
+  type TimetableSummary,
 } from "../api/timetable";
 import { getCurrentRoadmap } from "../api/roadmaps";
 import { searchDepartments } from "../api/departments";
@@ -35,6 +42,7 @@ const SLOT_MINUTES = 5;
 const SLOTS_PER_HOUR = 60 / SLOT_MINUTES;
 
 const DEFAULT_GRID_START = 9 * 60;
+// 담은 수업이 이 밖이면(8시 수업, 야간 강의 등) 격자가 알아서 넓어진다.
 const DEFAULT_GRID_END = 18 * 60;
 
 /**
@@ -96,9 +104,16 @@ function offeringSummary(offering: SuggestedOffering) {
 
 export function TimetablePage() {
   const { user } = useAuth();
-  const [data, setData] = useState<TimetableRecommendation | null>(null);
-  const [scheduleIndex, setScheduleIndex] = useState(0);
-  const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+  /**
+   * 시간표는 이름 붙인 문서다. 여러 개 만들어 비교하다가 마음에 드는 것을
+   * "로드맵에 반영"으로 확정한다. 담기/빼기는 열려 있는 시간표에 즉시 저장된다.
+   */
+  const [timetables, setTimetables] = useState<TimetableSummary[]>([]);
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<TimetableDetail | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -138,14 +153,20 @@ export function TimetablePage() {
 
     async function load() {
       try {
-        const roadmap = await getCurrentRoadmap();
-        const result = await recommendTimetable(roadmap.id, TARGET_YEAR, TARGET_SEMESTER);
+        // 로드맵은 "로드맵에 반영"과 AI 상담의 컨텍스트로만 쓴다.
+        const roadmap = await getCurrentRoadmap().catch(() => null);
+        const list = await listTimetables(TARGET_YEAR, TARGET_SEMESTER);
         if (cancelled) return;
-        // 상담 자체는 로드맵 없이도 되지만, 승인 결과를 반영할 곳은 로드맵이다.
-        setRoadmapId(roadmap.id);
-        setData(result);
+        if (roadmap) setRoadmapId(roadmap.id);
+        setTimetables(list);
+        if (list.length > 0) {
+          const first = await getTimetable(list[0].id);
+          if (cancelled) return;
+          setActiveId(first.id);
+          setDetail(first);
+        }
       } catch (caught) {
-        if (!cancelled) setError(getApiErrorMessage(caught, "시간표 후보를 불러오지 못했습니다."));
+        if (!cancelled) setError(getApiErrorMessage(caught, "시간표를 불러오지 못했습니다."));
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -215,26 +236,108 @@ export function TimetablePage() {
   const colleges = [...new Set(departments.map((item) => item.college))].sort();
   const collegeDepartments = departments.filter((item) => item.college === selectedCollege);
 
-  const candidates = useMemo(() => {
-    if (!data) return [];
-    return [...data.feasible_schedules, ...data.partial_schedules];
-  }, [data]);
+  const allPlaced = detail?.offerings ?? [];
+  const totalCredits = detail?.total_credits ?? 0;
 
-  const schedule = candidates[scheduleIndex] ?? null;
-  const sections = schedule?.sections ?? [];
-  const placedSections = sections.filter((section) => !excludedIds.has(section.item_id));
+  /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
+  const placedOfferingIds = new Set(allPlaced.map((offering) => offering.offering_id));
 
-  const allPlaced = placedSections;
-  const totalCredits = allPlaced.reduce((sum, section) => sum + (section.credits ?? 0), 0);
-  const conflictCount = data?.problematic_courses.length ?? 0;
+  /** 같은 요일에 시간이 겹치는 쌍의 수. 서버 검증 전에 화면에서 바로 보여준다. */
+  const conflictCount = useMemo(() => {
+    const slots = allPlaced.flatMap((offering) =>
+      offering.times.flatMap((time) => {
+        const start = toMinutes(time.start_time);
+        const end = toMinutes(time.end_time);
+        if (!time.day_of_week || start === null || end === null) return [];
+        return [{ day: time.day_of_week, start, end }];
+      }),
+    );
+    let count = 0;
+    for (let i = 0; i < slots.length; i += 1) {
+      for (let j = i + 1; j < slots.length; j += 1) {
+        if (
+          slots[i].day === slots[j].day &&
+          slots[i].start < slots[j].end &&
+          slots[j].start < slots[i].end
+        ) {
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }, [allPlaced]);
 
-  /**
-   * 이미 시간표에 들어가 있는 분반. "과목 추가" 목록에서 담기 완료 표시에 쓴다.
-   * AI 추천으로 담은 과목도 저장되고 나면 여기에 잡힌다.
-   */
-  const placedOfferingIds = new Set(
-    allPlaced.map((section) => section.offering_id).filter((id): id is number => id !== null),
-  );
+  /** 목록의 요약(개수·학점)을 detail과 어긋나지 않게 유지한다. */
+  function syncDetail(next: TimetableDetail) {
+    setDetail(next);
+    setTimetables((current) =>
+      current.map((item) =>
+        item.id === next.id
+          ? { ...item, title: next.title, item_count: next.item_count, total_credits: next.total_credits }
+          : item,
+      ),
+    );
+  }
+
+  async function handleSelectTimetable(id: number) {
+    if (id === activeId) return;
+    setIsRenaming(false);
+    setIsConfirmingDelete(false);
+    setApplyResult(null);
+    setApplyError("");
+    setActiveId(id);
+    try {
+      setDetail(await getTimetable(id));
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "시간표를 불러오지 못했습니다."));
+    }
+  }
+
+  async function handleCreateTimetable() {
+    setIsRenaming(false);
+    setIsConfirmingDelete(false);
+    try {
+      const created = await createTimetable(TARGET_YEAR, TARGET_SEMESTER);
+      setTimetables((current) => [...current, created]);
+      setActiveId(created.id);
+      setDetail(created);
+      setApplyResult(null);
+      setApplyError("");
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "시간표를 만들지 못했습니다."));
+    }
+  }
+
+  async function handleRenameTimetable() {
+    if (activeId === null) return;
+    const title = renameDraft.trim();
+    if (!title) {
+      setIsRenaming(false);
+      return;
+    }
+    try {
+      syncDetail(await renameTimetable(activeId, title));
+      setIsRenaming(false);
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "이름을 바꾸지 못했습니다."));
+    }
+  }
+
+  async function handleDeleteTimetable() {
+    if (activeId === null) return;
+    setIsConfirmingDelete(false);
+    try {
+      await deleteTimetable(activeId);
+      const remaining = timetables.filter((item) => item.id !== activeId);
+      setTimetables(remaining);
+      const next = remaining[0] ?? null;
+      setActiveId(next?.id ?? null);
+      setDetail(next ? await getTimetable(next.id) : null);
+      setApplyResult(null);
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "시간표를 삭제하지 못했습니다."));
+    }
+  }
 
   async function sendPrompt(text: string) {
     const message = text.trim();
@@ -295,14 +398,49 @@ export function TimetablePage() {
   }
 
   /**
-   * 고른 분반을 시간표에 담는다. 누르는 즉시 로드맵에 저장된다.
-   *
-   * 따로 "저장"을 누르게 하면 담아 놓고 저장을 안 한 채 화면을 떠나는 일이
-   * 생긴다. 대신 AI 추천은 체크박스로 무엇을 담을지 먼저 고르게 해서, 추천이
-   * 곧바로 로드맵을 바꾸지는 않는다.
+   * 고른 분반을 열린 시간표에 담는다. 시간표 문서에는 즉시 저장되지만,
+   * 로드맵은 "로드맵에 반영"을 눌러야 바뀐다 — 시간표는 비교용 초안이다.
    */
   async function addOfferings(offeringIds: number[]) {
-    if (roadmapId === null || isApplying || offeringIds.length === 0) return;
+    if (isApplying || offeringIds.length === 0) return;
+    setIsApplying(true);
+    setApplyError("");
+    try {
+      // 시간표가 하나도 없으면 먼저 만들어 준다. 담기 전에 생성을 강요하지 않는다.
+      let targetId = activeId;
+      if (targetId === null) {
+        const created = await createTimetable(TARGET_YEAR, TARGET_SEMESTER);
+        setTimetables((current) => [...current, created]);
+        setActiveId(created.id);
+        setDetail(created);
+        targetId = created.id;
+      }
+      syncDetail(await addTimetableItems(targetId, offeringIds));
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
+    } finally {
+      setIsApplying(false);
+    }
+  }
+
+  async function removeOffering(offeringId: number) {
+    if (activeId === null || isApplying) return;
+    setIsApplying(true);
+    setApplyError("");
+    try {
+      syncDetail(await removeTimetableItem(activeId, offeringId));
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "과목을 빼지 못했습니다."));
+    } finally {
+      setIsApplying(false);
+    }
+  }
+
+  /** "로드맵에 반영" — 여기서 처음으로 로드맵이 바뀐다. */
+  async function applyToRoadmap() {
+    if (roadmapId === null || detail === null || detail.offerings.length === 0 || isApplying) {
+      return;
+    }
     setIsApplying(true);
     setApplyError("");
     try {
@@ -310,17 +448,11 @@ export function TimetablePage() {
         roadmapId,
         TARGET_YEAR,
         TARGET_SEMESTER,
-        offeringIds,
+        detail.offerings.map((offering) => offering.offering_id),
       );
       setApplyResult(result);
-      // 담은 과목이 주간 시간표에 바로 나타나야 한다. 후보는 로드맵 항목에서
-      // 계산되므로 다시 불러온다.
-      const refreshed = await recommendTimetable(roadmapId, TARGET_YEAR, TARGET_SEMESTER);
-      setData(refreshed);
-      setScheduleIndex(0);
-      setExcludedIds(new Set());
     } catch (caught) {
-      setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
+      setApplyError(getApiErrorMessage(caught, "로드맵에 반영하지 못했습니다."));
     } finally {
       setIsApplying(false);
     }
@@ -344,13 +476,13 @@ export function TimetablePage() {
     .reduce((sum, offering) => sum + (offering.credits ?? 0), 0);
 
   /** 담은 수업의 (요일, 시작분, 종료분). 격자 범위와 블록 배치가 같이 쓴다. */
-  const placedTimes = allPlaced.flatMap((section) =>
-    section.times.flatMap((time) => {
+  const placedTimes = allPlaced.flatMap((offering) =>
+    offering.times.flatMap((time) => {
       const dayIndex = DAYS.indexOf(time.day_of_week ?? "");
       const start = toMinutes(time.start_time);
       const end = toMinutes(time.end_time);
       if (dayIndex < 0 || start === null || end === null || end <= start) return [];
-      return [{ section, time, dayIndex, start, end }];
+      return [{ offering, time, dayIndex, start, end }];
     }),
   );
 
@@ -377,11 +509,11 @@ export function TimetablePage() {
   /** 분 단위 시각을 grid-row 번호로. 1행은 요일 머리글이라 +2. */
   const toGridRow = (minutes: number) => (minutes - gridStart) / SLOT_MINUTES + 2;
 
-  const blocks = placedTimes.map(({ section, time, dayIndex, start, end }) => ({
-    key: `${section.item_id}-${time.day_of_week}-${time.start_time}`,
-    name: section.course_name ?? "과목",
+  const blocks = placedTimes.map(({ offering, time, dayIndex, start, end }) => ({
+    key: `${offering.offering_id}-${time.day_of_week}-${time.start_time}`,
+    name: offering.course_name ?? "과목",
     classroom: time.classroom,
-    tone: categoryTone(section.category),
+    tone: categoryTone(offering.category),
     dayIndex,
     rowStart: toGridRow(start),
     rowSpan: (end - start) / SLOT_MINUTES,
@@ -393,46 +525,125 @@ export function TimetablePage() {
         <div>
           <p className="eyebrow">시간표</p>
           <h2>
-            {TARGET_YEAR}-{TARGET_SEMESTER.replace("학기", "")} 시간표{" "}
-            {String.fromCharCode(65 + scheduleIndex)}
+            {TARGET_YEAR}-{TARGET_SEMESTER.replace("학기", "")}{" "}
+            {detail ? detail.title : "시간표"}
           </h2>
-          <p>로드맵의 다음 학기 계획 과목을 기준으로 시간표 후보를 만듭니다.</p>
+          <p>시간표를 여러 개 만들어 비교하고, 마음에 드는 것을 로드맵에 반영하세요.</p>
         </div>
         <div className="timetable-head-actions">
-          <label className="timetable-select">
-            <span className="sr-only">시간표 후보 선택</span>
-            <select
-              value={scheduleIndex}
-              onChange={(event) => {
-                setScheduleIndex(Number(event.target.value));
-                setExcludedIds(new Set());
+          {isRenaming ? (
+            <form
+              className="timetable-rename"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleRenameTimetable();
               }}
-              disabled={candidates.length === 0}
             >
-              {candidates.length === 0 ? (
-                <option value={0}>후보 없음</option>
-              ) : (
-                candidates.map((candidate, index) => (
-                  <option key={index} value={index}>
-                    시간표 {String.fromCharCode(65 + index)} · {candidate.total_credits}학점
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          {/* 담기 버튼이 곧바로 저장하므로 별도 "저장" 버튼은 두지 않는다. */}
-          {isApplying ? <span className="timetable-saving">담는 중…</span> : null}
+              <input
+                aria-label="시간표 이름"
+                value={renameDraft}
+                autoFocus
+                maxLength={100}
+                onChange={(event) => setRenameDraft(event.target.value)}
+              />
+              <button type="submit">확인</button>
+              <button type="button" onClick={() => setIsRenaming(false)}>취소</button>
+            </form>
+          ) : (
+            <>
+              <label className="timetable-select">
+                <span className="sr-only">시간표 선택</span>
+                <select
+                  value={activeId ?? ""}
+                  onChange={(event) => void handleSelectTimetable(Number(event.target.value))}
+                  disabled={timetables.length === 0}
+                >
+                  {timetables.length === 0 ? <option value="">시간표 없음</option> : null}
+                  {timetables.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title} · {item.total_credits}학점
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="timetable-tool"
+                type="button"
+                title="새 시간표 만들기"
+                aria-label="새 시간표 만들기"
+                onClick={() => void handleCreateTimetable()}
+              >
+                <Plus size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="timetable-tool"
+                type="button"
+                title="이름 바꾸기"
+                aria-label="이름 바꾸기"
+                disabled={detail === null}
+                onClick={() => {
+                  setRenameDraft(detail?.title ?? "");
+                  setIsRenaming(true);
+                  setIsConfirmingDelete(false);
+                }}
+              >
+                <Pencil size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="timetable-tool is-danger"
+                type="button"
+                title="시간표 삭제"
+                aria-label="시간표 삭제"
+                disabled={detail === null}
+                onClick={() => setIsConfirmingDelete(true)}
+              >
+                <Trash2 size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="timetable-save"
+                type="button"
+                title="이 시간표의 과목을 성장 로드맵에 반영합니다"
+                disabled={
+                  isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
+                }
+                onClick={() => void applyToRoadmap()}
+              >
+                {isApplying ? "처리 중…" : "로드맵에 반영"}
+              </button>
+            </>
+          )}
         </div>
       </header>
+
+      {isConfirmingDelete && detail ? (
+        <div className="timetable-delete-confirm" role="alertdialog" aria-label="시간표 삭제 확인">
+          <p>
+            <strong>{detail.title}</strong>을(를) 삭제할까요?
+            {detail.item_count > 0 ? ` 담긴 과목 ${detail.item_count}개가 함께 지워집니다.` : null}
+            {" "}로드맵에 이미 반영한 과목은 그대로 남습니다.
+          </p>
+          <div>
+            <button type="button" onClick={() => setIsConfirmingDelete(false)}>취소</button>
+            <button
+              className="timetable-delete-confirm-button"
+              type="button"
+              onClick={() => void handleDeleteTimetable()}
+            >
+              <Trash2 size={13} aria-hidden="true" /> 삭제
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="timetable-error" role="alert">
           {error}
         </p>
       ) : null}
-      {!error && !isLoading && candidates.length === 0 ? (
-        <p className="timetable-error">
-          {data?.note ?? "이 학기에 배치할 로드맵 과목이 없어 시간표 후보를 만들지 못했습니다."}
+      {!error && !isLoading && timetables.length === 0 ? (
+        <p className="timetable-empty-state">
+          아직 시간표가 없습니다. 오른쪽 위 ＋ 버튼으로 만들거나, 과목을 담으면 자동으로
+          만들어집니다.
         </p>
       ) : null}
 
@@ -547,25 +758,21 @@ export function TimetablePage() {
                   <button
                     type="button"
                     className={placed ? "is-placed" : ""}
-                    disabled={placed || isApplying || roadmapId === null}
-                    onClick={() => void addOfferings([offering.offering_id])}
+                    disabled={isApplying}
+                    title={placed ? "누르면 시간표에서 뺍니다" : undefined}
+                    onClick={() =>
+                      void (placed
+                        ? removeOffering(offering.offering_id)
+                        : addOfferings([offering.offering_id]))
+                    }
                   >
                     {placed ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                    {placed ? "담기 완료" : "담기"}
+                    {placed ? "담김 · 빼기" : "담기"}
                   </button>
                 </li>
               );
             })}
 
-            {data?.problematic_courses.map((course) => (
-              <li className="timetable-course is-conflict" key={`conflict-${course.item_id}`}>
-                <div>
-                  <strong>{course.course_name ?? `항목 ${course.item_id}`}</strong>
-                  <p>{course.reason ?? "다른 과목과 시간이 겹칩니다"}</p>
-                </div>
-                <span className="timetable-conflict-badge">충돌</span>
-              </li>
-            ))}
           </ul>
         </section>
 

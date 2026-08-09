@@ -13,6 +13,7 @@ from app.api.profile import router as profile_router
 from app.api.rag import router as rag_router
 from app.api.roadmap_agent import router as roadmap_agent_router
 from app.api.roadmaps import router as roadmaps_router
+from app.api.timetables import router as timetables_router
 from app.api.timetable import router as timetable_router
 from app.api.timetable_agent import router as timetable_agent_router
 from app.core.config import settings
@@ -47,6 +48,7 @@ app.include_router(graduation_router)
 app.include_router(rag_router)
 app.include_router(timetable_router)
 app.include_router(timetable_agent_router)
+app.include_router(timetables_router)
 
 
 @app.get("/health")
