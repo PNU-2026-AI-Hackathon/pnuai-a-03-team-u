@@ -42,9 +42,8 @@ const SLOT_MINUTES = 5;
 const SLOTS_PER_HOUR = 60 / SLOT_MINUTES;
 
 const DEFAULT_GRID_START = 9 * 60;
-// 야간 강의(18:00~21:00 개설이 많다)가 기본 화면에서 보이도록 21시까지 편다.
-// 담은 수업이 이 밖이면(8시 수업, 22시 넘는 실험 등) 격자가 알아서 더 넓어진다.
-const DEFAULT_GRID_END = 21 * 60;
+// 담은 수업이 이 밖이면(8시 수업, 야간 강의 등) 격자가 알아서 넓어진다.
+const DEFAULT_GRID_END = 18 * 60;
 
 /**
  * 과목을 고르는 첫 갈래.

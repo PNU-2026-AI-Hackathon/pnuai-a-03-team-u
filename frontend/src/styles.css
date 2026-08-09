@@ -8362,7 +8362,9 @@ body.theme-dark .topnav .theme-mode-button {
   /* 한 칸 = 5분. 부산대 수업은 대부분 75분이라 1시간 칸에는 안 맞고,
      100분·50분 수업까지 있어서 5분이어야 전부 정확히 떨어진다.
      시각 라벨과 배경 칸이 12칸씩 묶여 시간 단위 격자선은 그대로 보인다. */
-  grid-auto-rows: calc(52px / 12);
+  /* 한 시간 = 72px. 75분 블록(90px)에 과목명 2~3줄 + 강의실이 잘리지 않고
+     들어가는 높이다. 52px일 때는 블록 아래가 잘려 나갔다(실측 85px 필요). */
+  grid-auto-rows: calc(72px / 12);
   border: 1px solid var(--gray-line);
   border-radius: 12px;
   overflow: hidden;
@@ -8404,17 +8406,21 @@ body.theme-dark .topnav .theme-mode-button {
   z-index: 1;
   overflow: hidden;
   margin: 2px;
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 12px;
 }
 
 .timetable-block strong {
   display: block;
   font-size: 12px;
+  line-height: 1.25;
 }
 
 .timetable-block span {
+  display: block;
+  margin-top: 2px;
   font-size: 11px;
+  line-height: 1.2;
   opacity: 0.75;
 }
 
