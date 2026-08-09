@@ -5,7 +5,12 @@ from app.core.db import Base, TimestampMixin
 
 
 class CoursePlan(TimestampMixin, Base):
-    """특정 학기 수강계획."""
+    """특정 학기 수강계획(시간표 문서).
+
+    시간표 화면에서 "2026-2 시간표 A"처럼 이름 붙여 여러 개 만들고, 강좌를
+    담았다 빼며 비교하다가 마음에 드는 것을 로드맵에 반영하는 단위다.
+    스키마만 있고 아무도 안 쓰던 테이블을 시간표 CRUD가 살려 쓴다.
+    """
 
     __tablename__ = "course_plans"
 
@@ -13,6 +18,8 @@ class CoursePlan(TimestampMixin, Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     year: Mapped[str | None] = mapped_column(String(10))
     semester: Mapped[str | None] = mapped_column(String(20))
+    # 사용자가 붙이는 이름. "시간표 A", "공강 몰빵안" 같은 것.
+    title: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="draft")
     total_credits: Mapped[float | None] = mapped_column()
 

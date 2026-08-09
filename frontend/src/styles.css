@@ -8042,6 +8042,114 @@ body.theme-dark .topnav .theme-mode-button {
   opacity: 0.5;
 }
 
+/* 시간표 CRUD 도구 (새로 만들기 · 이름 바꾸기 · 삭제) */
+.timetable-tool {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: #637084;
+  cursor: pointer;
+}
+
+.timetable-tool:hover:not(:disabled) {
+  border-color: #bdd4f2;
+  color: var(--blue);
+}
+
+.timetable-tool.is-danger:hover:not(:disabled) {
+  border-color: #f4c2c2;
+  color: var(--red);
+}
+
+.timetable-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.timetable-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timetable-rename input {
+  width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.timetable-rename button {
+  padding: 8px 14px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.timetable-rename button[type="submit"] {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+/* 삭제 확인 바. 되돌릴 수 없는 동작이라 어떤 시간표가 지워지는지 보여주고 묻는다. */
+.timetable-delete-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--red);
+  border-radius: 12px;
+  background: var(--rose);
+}
+
+.timetable-delete-confirm p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timetable-delete-confirm > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.timetable-delete-confirm button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.timetable-delete-confirm-button {
+  border-color: var(--red) !important;
+  background: var(--red) !important;
+  color: #fff;
+}
+
+.timetable-empty-state {
+  padding: 12px 16px;
+  border: 1px dashed var(--gray-line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .timetable-error {
   margin: 0;
   padding: 14px 18px;
