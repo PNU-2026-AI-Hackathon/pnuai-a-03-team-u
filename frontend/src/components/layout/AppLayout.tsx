@@ -112,7 +112,7 @@ export function AppLayout() {
             <span>성장 로드맵</span>
           </NavLink>
           <NavLink
-            className={({ isActive }) => `nav-item schedule-link${isActive ? " active" : ""}`}
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
             to="/timetable"
           >
             <span className="nav-icon">▣</span>

@@ -151,9 +151,9 @@ input {
   gap: 8px;
 }
 
-.nav-item.schedule-link {
-  margin-top: 22px;
-}
+/* 시안에서는 시간표 작성이 메뉴 맨 아래에 떨어져 있어 위쪽 여백을 줬는데,
+   지금은 성장 로드맵 바로 밑으로 올라와서 그 여백이 혼자 노는 것처럼 보인다.
+   다른 메뉴와 같은 간격을 쓴다. */
 
 .nav-item {
   display: flex;
