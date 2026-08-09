@@ -151,9 +151,9 @@ input {
   gap: 8px;
 }
 
-.nav-item.schedule-link {
-  margin-top: 22px;
-}
+/* 시안에서는 시간표 작성이 메뉴 맨 아래에 떨어져 있어 위쪽 여백을 줬는데,
+   지금은 성장 로드맵 바로 밑으로 올라와서 그 여백이 혼자 노는 것처럼 보인다.
+   다른 메뉴와 같은 간격을 쓴다. */
 
 .nav-item {
   display: flex;
@@ -8248,7 +8248,13 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-grid {
   display: grid;
   grid-template-columns: 44px repeat(5, minmax(0, 1fr));
-  grid-auto-rows: 44px;
+  /* 1행은 요일 머리글이라 따로 높이를 준다. 아래 칸이 5분 단위로 잘게 쪼개져
+     있어서 grid-auto-rows를 그대로 받으면 머리글이 눌린다. */
+  grid-template-rows: 40px;
+  /* 한 칸 = 5분. 부산대 수업은 대부분 75분이라 1시간 칸에는 안 맞고,
+     100분·50분 수업까지 있어서 5분이어야 전부 정확히 떨어진다.
+     시각 라벨과 배경 칸이 12칸씩 묶여 시간 단위 격자선은 그대로 보인다. */
+  grid-auto-rows: calc(52px / 12);
   border: 1px solid var(--gray-line);
   border-radius: 12px;
   overflow: hidden;
@@ -8275,11 +8281,15 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-grid-hour {
   display: grid;
   grid-column: 1;
+  /* 정시 선에 맞춰 위로 붙인다. 수업이 10:30처럼 시간 중간에 시작하니
+     라벨이 칸 한가운데 있으면 어느 선이 10시인지 읽기 어렵다. */
+  align-content: start;
+  justify-items: center;
+  padding-top: 4px;
   background: var(--line);
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-  place-items: center;
 }
 
 .timetable-block {

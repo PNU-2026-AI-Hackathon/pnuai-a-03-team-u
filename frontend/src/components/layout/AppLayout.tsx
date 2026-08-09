@@ -31,10 +31,6 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
     eyebrow: "데이터사이언스전공",
     title: "성장 로드맵",
   },
-  "/activities": {
-    eyebrow: "개인별 추천",
-    title: "추천 활동",
-  },
   "/info": {
     eyebrow: "Student Data",
     title: "내 정보",
@@ -115,16 +111,8 @@ export function AppLayout() {
             <span className="nav-icon">⌁</span>
             <span>성장 로드맵</span>
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/chat">
-            <span className="nav-icon">✉</span>
-            <span>AI 대화</span>
-          </NavLink>
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/activities">
-            <span className="nav-icon">✦</span>
-            <span>추천 활동</span>
-          </NavLink>
           <NavLink
-            className={({ isActive }) => `nav-item schedule-link${isActive ? " active" : ""}`}
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
             to="/timetable"
           >
             <span className="nav-icon">▣</span>
@@ -142,7 +130,6 @@ export function AppLayout() {
           >
             학사 일정
           </a>
-          <NavLink to="/activities">추천 활동</NavLink>
           <a href="/" onClick={goToAdvisorCard}>상담 예약</a>
         </div>
 

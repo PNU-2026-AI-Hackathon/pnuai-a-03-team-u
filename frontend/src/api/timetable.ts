@@ -152,3 +152,46 @@ export async function applyTimetableToRoadmap(
   );
   return data;
 }
+
+export type OfferingSearchParams = {
+  year: string;
+  semester: string;
+  departmentId?: number | null;
+  major?: string | null;
+  /** 화면의 한 갈래가 DB 이수구분 여러 개일 수 있어 배열로 받는다. */
+  categories?: string[];
+  q?: string;
+  limit?: number;
+};
+
+/**
+ * 대상 학기에 실제로 개설된 강좌를 학부/전공으로 좁혀 찾는다.
+ *
+ * 시간표 "과목 추가"가 쓰던 목록은 로드맵에 이미 담긴 과목에서 파생된 것이라,
+ * 아직 계획에 없는 과목은 아예 보이지 않았다. 다른 학부 과목을 담으려면 이쪽을 쓴다.
+ */
+export async function searchOfferings({
+  year,
+  semester,
+  departmentId,
+  major,
+  categories,
+  q = "",
+  limit = 50,
+}: OfferingSearchParams) {
+  const { data } = await apiClient.get<SuggestedOffering[]>("/courses/offerings", {
+    params: {
+      year,
+      semester,
+      department_id: departmentId ?? undefined,
+      major: major || undefined,
+      category: categories?.length ? categories : undefined,
+      q,
+      limit,
+    },
+    // 배열을 category=a&category=b로 보낸다. axios 기본값은 category[]=a라
+    // FastAPI의 list[str] 쿼리 파라미터가 못 받고 조용히 무시된다.
+    paramsSerializer: { indexes: null },
+  });
+  return data;
+}
