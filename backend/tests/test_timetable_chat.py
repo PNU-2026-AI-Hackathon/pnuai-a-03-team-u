@@ -185,7 +185,7 @@ class RunTimetableChatIntegrationTest(unittest.TestCase):
             def bind_tools(self, tools, tool_choice=None):
                 return self
 
-            def invoke(self, messages):
+            def invoke(self, messages, config=None):
                 calls = self._script.pop(0)
                 msg = MagicMock()
                 msg.content = ""

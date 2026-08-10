@@ -356,12 +356,12 @@ _TOOLS = [
                     "category": {
                         "type": "string",
                         "description": (
-                            "이수구분 필터. 요건 표기로 넓게 잡거나('교양필수' → 효원핵심교양+기초교양, "
-                            "'교양선택' → 효원균형교양+효원창의교양) 세부 표기로 정확히 좁힐 수 있다. "
-                            "가능한 값: '전공필수', '전공선택', '전공기초', '교직과목', '교양필수', '교양선택', "
-                            "'효원핵심교양', '효원균형교양', '효원창의교양', '기초교양', '일반선택'. "
-                            "학생이 '균형교양만 더 채우고 싶다'처럼 세부 영역을 콕 집으면 '효원균형교양'으로 "
-                            "필터하고, 그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게 잡아라."
+                            "이수구분 필터. 학생 자연어를 그대로 넘기면 백엔드가 매핑한다 "
+                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양+기초교양). "
+                            "학생이 '균형교양만 더 채우고 싶다'처럼 세부 영역을 콕 집으면 '효원균형교양'으로, "
+                            "그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게. "
+                            "빈 결과 오면 응답의 `available_categories`를 보고 다른 값으로 재시도 — "
+                            "같은 인수로 재호출하지 마라."
                         ),
                     },
                     "program_type": {
@@ -776,7 +776,7 @@ class _ToolContext:
                     "evidence": f"program_courses.requirement_group='{pc.requirement_group}'",
                     "description": c.description,
                 })
-        return {
+        payload: dict = {
             "results": [
                 {
                     "course_id": r["course_id"],
@@ -792,6 +792,29 @@ class _ToolContext:
                 if r.get("course_id") is not None
             ]
         }
+        # 빈 결과에는 hint 부착 — LLM이 같은 인수로 반복 호출하지 않도록.
+        if not payload["results"]:
+            from app.ai.rag.curriculum_retriever import available_categories_for_scope
+            cats = available_categories_for_scope(
+                self.db,
+                department_id=search_dept_id,
+                major_id=search_major_id,
+                semester=semester,
+            )
+            payload["available_categories"] = cats
+            reason_parts = []
+            if category and category not in cats:
+                reason_parts.append(f"category={category!r}는 이 스코프 개설 목록에 없음")
+            if query:
+                reason_parts.append(f"query={query!r}로 매치 없음")
+            if grade:
+                reason_parts.append(f"grade={grade!r}로 좁힘 (제거 시 결과 있을 수 있음)")
+            payload["note"] = (
+                (" · ".join(reason_parts) or "결과 없음")
+                + ". available_categories 참고해 다른 값으로 재시도하거나, "
+                  "정말 매치 없으면 finish_response로 사용자에게 알려라."
+            )
+        return payload
 
     def propose_change(
         self,
@@ -1041,12 +1064,23 @@ class _ToolContext:
         return handler(**tool_input)
 
 
+# LLM 컨텍스트로 실을 최근 대화 턴 수. DB에는 전부 저장하고 유저는 UI에서 다 볼
+# 수 있지만, LLM에 매 요청마다 다 실으면 오래된 실패 컨텍스트(예: "공학작문 못 찾음")가
+# 남아 후속 응답을 오염시킨다(2026-08-10 관찰). 최근 N턴만 유지해서 참조 해석
+# ("아까 그거", "다른 걸로") 은 살리면서 오래된 오염은 잘라낸다.
+# N=6이면 대략 3 exchange(user+assistant × 3).
+_LLM_HISTORY_WINDOW = 6
+
+
 def _load_history(db: Session, session_id: int) -> list[CourseRoadmapChatMessage]:
-    return db.scalars(
+    """LLM 프롬프트에 실을 최근 N턴. DB 전체를 순회하지 않고 desc + limit 후 뒤집는다."""
+    latest = db.scalars(
         select(CourseRoadmapChatMessage)
         .where(CourseRoadmapChatMessage.session_id == session_id)
-        .order_by(CourseRoadmapChatMessage.id)
+        .order_by(CourseRoadmapChatMessage.id.desc())
+        .limit(_LLM_HISTORY_WINDOW)
     ).all()
+    return list(reversed(latest))
 
 
 def _build_student_context_block(db: Session, user: User) -> str:
@@ -1245,101 +1279,160 @@ def run_roadmap_chat(
     else:
         session = _get_or_create_default_session(db, roadmap, message)
 
-    db.add(
-        CourseRoadmapChatMessage(
-            roadmap_id=roadmap.id,
-            session_id=session.id,
-            role="user",
-            content=message,
-        )
-    )
-    db.flush()
+    # Langfuse trace: 이 대화 턴 전체(DB 작업 포함)를 하나의 agent-typed root observation으로
+    # 감싼다. root 시점을 함수 초입으로 앞당겨야 UI latency가 실제 소요시간과 일치한다.
+    from app.ai.llm.langfuse_callback import observe_agent_call
 
-    history = _load_history(db, session.id)
-    system_prompt = _SYSTEM_PROMPT + "\n\n" + _build_student_context_block(db, user)
-    messages: list = [SystemMessage(content=system_prompt)]
-    for m in history:
-        if m.role == "user":
-            messages.append(HumanMessage(content=m.content))
-        else:
-            messages.append(AIMessage(content=m.content))
-
-    llm = _build_llm()
-    ctx = _ToolContext(db, user, roadmap)
-
-    # tool_choice="any"를 매 턴 강제한다(langchain이 각 프로바이더 형식으로 변환:
-    # OpenAI "required", Anthropic "any" 등) — "일반 텍스트로 바로 답하기"라는
-    # 탈출구를 아예 없애서, 모델이 search_courses/propose_change 없이 과목명을
-    # 지어내 대충 텍스트로 답하고 끝내버리는 걸 막는다. 사용자에게 보이는 답변도
-    # finish_response라는 도구 호출로만 나가게 만들어서(위 _TOOLS 참고),
-    # "확인된 과목만 finish_response 전에 propose_change로 제안했어야 한다"는
-    # 순서를 프롬프트뿐 아니라 도구 인터페이스 자체로 강제한다.
-    llm_required = llm.bind_tools(_TOOLS, tool_choice="any")
-
-    final_text = ""
-    finished = False
-    for _ in range(MAX_TOOL_ITERATIONS):
-        ai_msg: AIMessage = llm_required.invoke(messages)
-        messages.append(ai_msg)
-
-        if not ai_msg.tool_calls:
-            # 이론상 tool_choice="any"면 안 나와야 하지만, 방어적으로 처리.
-            if isinstance(ai_msg.content, str) and ai_msg.content:
-                final_text = ai_msg.content
-            break
-
-        for tool_call in ai_msg.tool_calls:
-            name = tool_call["name"]
-            arguments = tool_call["args"] or {}
-            if name == "finish_response":
-                final_text = arguments.get("message", "")
-                result = {"delivered": True}
-                finished = True
-            else:
-                result = ctx.dispatch(name, arguments)
-            messages.append(
-                ToolMessage(
-                    tool_call_id=tool_call["id"],
-                    content=json.dumps(result, ensure_ascii=False),
+    with observe_agent_call(
+        agent="roadmap_chat",
+        user_id=user.id,
+        session_id=session.id,
+        user_message=message,
+    ) as trace:
+        # 페이즈 1: 사용자 메시지 저장 (DB write).
+        with trace.span("persist_user_message"):
+            db.add(
+                CourseRoadmapChatMessage(
+                    roadmap_id=roadmap.id,
+                    session_id=session.id,
+                    role="user",
+                    content=message,
                 )
             )
+            db.flush()
 
-        if finished:
-            break
+        # 페이즈 2: 히스토리 로드 + 학생 컨텍스트 빌드 (DB read heavy).
+        with trace.span("load_history_and_context", as_type="retriever"):
+            history = _load_history(db, session.id)
+            context_block = _build_student_context_block(db, user)
 
-    if not final_text:
-        # MAX_TOOL_ITERATIONS를 다 쓰도록 finish_response를 못 부른 경우다.
-        # propose_change 자체는 이미 성공적으로 쌓였을 수 있으므로(실제로 그런
-        # 경우가 있었다 — 요청 범위를 벗어난 추가 제안을 만드느라 턴을 다 씀),
-        # 뭉뚱그린 사과문 대신 도구 없이 한 번 더 불러서 지금까지 쌓인 tool
-        # 결과를 바탕으로 실제 요약을 받아낸다.
-        try:
-            wrapup = llm.invoke(
-                messages
-                + [
-                    HumanMessage(
-                        content=(
-                            "지금까지 확인/제안한 내용을 바탕으로 사용자에게 보여줄 "
-                            "답변을 정리해서 말해줘. 새 도구는 호출하지 마."
-                        )
-                    )
-                ]
+        system_prompt = _SYSTEM_PROMPT + "\n\n" + context_block
+        messages: list = [SystemMessage(content=system_prompt)]
+        for m in history:
+            if m.role == "user":
+                messages.append(HumanMessage(content=m.content))
+            else:
+                messages.append(AIMessage(content=m.content))
+
+        llm = _build_llm()
+        ctx = _ToolContext(db, user, roadmap)
+
+        # 대시보드 필터·breakdown용 metadata (개인정보 아님).
+        primary_prog = db.scalars(
+            select(UserAcademicProgram).filter_by(user_id=user.id, program_type="primary")
+        ).first()
+        has_non_primary = db.scalar(
+            select(func.count(UserAcademicProgram.id)).where(
+                UserAcademicProgram.user_id == user.id,
+                UserAcademicProgram.program_type != "primary",
             )
-            final_text = wrapup.content if isinstance(wrapup.content, str) else ""
-        except Exception:  # noqa: BLE001 - 마무리 요약 실패는 폴백 문구로 넘어간다
-            final_text = ""
-        if not final_text:
-            final_text = "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
-
-    db.add(
-        CourseRoadmapChatMessage(
-            roadmap_id=roadmap.id,
-            session_id=session.id,
-            role="assistant",
-            content=final_text,
         )
-    )
-    db.commit()
+        trace.add_metadata({
+            "roadmap_id": roadmap.id,
+            "history_length": len(history),
+            "admission_type": user.admission_type,
+            "curriculum_year": primary_prog.curriculum_year if primary_prog else None,
+            "has_non_primary_program": bool(has_non_primary),
+            "model": settings.ROADMAP_AGENT_MODEL,
+        })
+
+        # tool_choice="any"를 매 턴 강제한다(langchain이 각 프로바이더 형식으로 변환:
+        # OpenAI "required", Anthropic "any" 등) — "일반 텍스트로 바로 답하기"라는
+        # 탈출구를 아예 없애서, 모델이 search_courses/propose_change 없이 과목명을
+        # 지어내 대충 텍스트로 답하고 끝내버리는 걸 막는다. 사용자에게 보이는 답변도
+        # finish_response라는 도구 호출로만 나가게 만들어서(위 _TOOLS 참고),
+        # "확인된 과목만 finish_response 전에 propose_change로 제안했어야 한다"는
+        # 순서를 프롬프트뿐 아니라 도구 인터페이스 자체로 강제한다.
+        llm_required = llm.bind_tools(_TOOLS, tool_choice="any")
+
+        final_text = ""
+        finished = False
+        iterations_used = 0
+        non_finish_tool_calls = 0
+        for _ in range(MAX_TOOL_ITERATIONS):
+            iterations_used += 1
+            ai_msg: AIMessage = llm_required.invoke(messages, config=trace.config)
+            messages.append(ai_msg)
+
+            if not ai_msg.tool_calls:
+                # 이론상 tool_choice="any"면 안 나와야 하지만, 방어적으로 처리.
+                if isinstance(ai_msg.content, str) and ai_msg.content:
+                    final_text = ai_msg.content
+                break
+
+            for tool_call in ai_msg.tool_calls:
+                name = tool_call["name"]
+                arguments = tool_call["args"] or {}
+                if name == "finish_response":
+                    final_text = arguments.get("message", "")
+                    result = {"delivered": True}
+                    finished = True
+                else:
+                    non_finish_tool_calls += 1
+                    with trace.span(f"tool:{name}", as_type="tool", input=arguments) as tool_span:
+                        result = ctx.dispatch(name, arguments)
+                        if tool_span is not None:
+                            tool_span.update(output=result)
+                messages.append(
+                    ToolMessage(
+                        tool_call_id=tool_call["id"],
+                        content=json.dumps(result, ensure_ascii=False),
+                    )
+                )
+
+            if finished:
+                break
+
+        if not final_text:
+            # MAX_TOOL_ITERATIONS를 다 쓰도록 finish_response를 못 부른 경우다.
+            # propose_change 자체는 이미 성공적으로 쌓였을 수 있으므로(실제로 그런
+            # 경우가 있었다 — 요청 범위를 벗어난 추가 제안을 만드느라 턴을 다 씀),
+            # 뭉뚱그린 사과문 대신 도구 없이 한 번 더 불러서 지금까지 쌓인 tool
+            # 결과를 바탕으로 실제 요약을 받아낸다.
+            try:
+                wrapup = llm.invoke(
+                    messages
+                    + [
+                        HumanMessage(
+                            content=(
+                                "지금까지 확인/제안한 내용을 바탕으로 사용자에게 보여줄 "
+                                "답변을 정리해서 말해줘. 새 도구는 호출하지 마."
+                            )
+                        )
+                    ],
+                    config=trace.config,
+                )
+                final_text = wrapup.content if isinstance(wrapup.content, str) else ""
+            except Exception:  # noqa: BLE001 - 마무리 요약 실패는 폴백 문구로 넘어간다
+                final_text = ""
+            if not final_text:
+                final_text = "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
+
+        # 페이즈 3: assistant 메시지 저장 (DB write + commit).
+        with trace.span("persist_assistant_message"):
+            db.add(
+                CourseRoadmapChatMessage(
+                    roadmap_id=roadmap.id,
+                    session_id=session.id,
+                    role="assistant",
+                    content=final_text,
+                )
+            )
+            db.commit()
+
+        trace.set_output({
+            "reply": final_text,
+            "pending_changes_count": len(ctx.pending_changes),
+        })
+        # 대시보드 시계열/분포 차트용 정량 스코어.
+        trace.score("finished_with_tool", finished)  # finish_response 정상 호출률
+        trace.score("iterations_used", iterations_used)  # 평균/분포
+        trace.score(
+            "iteration_efficiency",
+            round(1 - (iterations_used - 1) / max(MAX_TOOL_ITERATIONS - 1, 1), 3),
+        )  # 0~1, 높을수록 짧게 끝남
+        trace.score("tool_calls", non_finish_tool_calls)
+        trace.score("pending_changes", len(ctx.pending_changes))
 
     return {"reply": final_text, "pending_changes": ctx.pending_changes, "session_id": session.id}
 
