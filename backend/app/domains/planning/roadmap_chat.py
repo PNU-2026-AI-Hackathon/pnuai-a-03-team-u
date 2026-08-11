@@ -1189,6 +1189,43 @@ def _build_student_context_block(db: Session, user: User) -> str:
     career = user.career_goal.strip() if user.career_goal else ""
     career_line = career if career else "(등록된 진로 목표 없음 — 프로필에서 입력하면 반영된다)"
 
+    # AI융합트랙 안내 — 학생 학과가 14개 대상 학과 중 하나면 이수 가능. 이미 등록한
+    # 트랙이 있으면 진도 요약, 없고 대상 학과면 "이수 가능하다" 안내.
+    ai_track_block = ""
+    from app.domains.academics.models import GraduationRequirement as _GR
+    if user.department_id is not None:
+        candidate_grs = db.scalars(
+            select(_GR).where(
+                _GR.department_id == user.department_id,
+                _GR.program_type == "interdisciplinary",
+                _GR.required_total_credits == 21,
+            )
+        ).all()
+        track_grs = [
+            g for g in candidate_grs
+            if (g.special_rules or {}).get("certification_type") == "AI융합트랙"
+        ]
+        if track_grs:
+            enrolled_major_ids = {
+                p.major_id for p in programs
+                if p.program_type == "interdisciplinary" and p.status == "active"
+            }
+            lines = []
+            for g in track_grs:
+                m = db.get(_Major, g.major_id) if g.major_id else None
+                tname = m.name if m else "?"
+                enrolled = g.major_id in enrolled_major_ids
+                lines.append(f"  - {tname}: {'[이수 등록됨]' if enrolled else '[미등록]'}")
+            ai_track_block = f"""
+
+- **AI융합트랙 (졸업요건 아님, 인증 프로그램)**:
+{chr(10).join(lines)}
+  → 학과 전공과목 12~15학점 + AI융합 공통교과목 6~9학점 = 총 21학점 이수 시
+    졸업증명서에 이수 과정명 표기. 학생이 이수 의사 표명하면 관련 안내를 하고,
+    미등록 상태에서 학생이 관심을 보이면 "프로필의 AI융합트랙 등록에서 시작할 수 있다"고
+    안내해라. 이미 등록됐고 학생이 관련 질문을 하면 evaluate_program 성격의 정보를
+    조회해 진도를 알려줘라. 트랙 미이수는 졸업에 영향 없다는 점을 명확히 해라."""
+
     return f"""[이 학생 프로필 — 매 추천 판단 시 이 정보를 함께 고려해라]
 
 - **진로 목표**: {career_line}
@@ -1218,6 +1255,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
     finish_response에서도 "네가 아직 안 든 {missing_example} 영역 보강 차원에서 이
     과목을 추천한다"처럼 근거를 밝혀라. 세부영역 판정 자체는 학교 판정 결과라 네가
     뒤집지 말고 그대로 신뢰해라.
+{ai_track_block}
 """
 
 
