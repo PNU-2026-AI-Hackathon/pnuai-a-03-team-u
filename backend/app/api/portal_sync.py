@@ -39,7 +39,6 @@ from app.ingestion.normalizers.pnu_normalizer import (
     map_academic_program_registrations,
     map_grades,
     map_student_record,
-    save_portal_credential,
 )
 
 router = APIRouter(prefix="/me", tags=["portal-sync"])
@@ -156,7 +155,10 @@ def sync_portal_data(
     registration_rows = _table_rows_as_text(expected_info["tables"][0]) if expected_info["tables"] else []
     expected_normalized = normalize_graduation_expected_info(expected_info)
 
-    save_portal_credential(db, current_user.id, payload.login_id, payload.password)
+    # 학교 포털 비밀번호는 저장하지 않는다 (프론트 회원가입 온보딩 문구 정합).
+    # 실제로 이 값을 재사용하는 코드가 없다 — 스케줄된 백그라운드 크롤이 없고
+    # decrypt_secret은 호출되지 않는다. 매 sync 요청마다 사용자가 다시 입력하는
+    # 흐름을 유지한다. 자동 크롤 도입 시점에 이 정책 재검토.
     map_student_record(db, current_user.id, student_record)
     saved_records = map_grades(db, current_user.id, grades_tables)
     saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)

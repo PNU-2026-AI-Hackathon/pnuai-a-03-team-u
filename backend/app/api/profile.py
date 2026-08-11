@@ -310,3 +310,99 @@ def delete_language_score(
     score = _get_owned_language_score(db, current_user.id, score_id)
     db.delete(score)
     db.commit()
+
+
+# --- 회원 탈퇴 (hard delete) ---------------------------------------------
+
+# 유저 소유 데이터를 삭제하는 순서 (FK 자식부터 부모로). raw SQL로 처리해서
+# 이 브랜치에 ORM 모델이 없는 테이블(예: 다른 PR에서 추가된 timetable_chat_*)도
+# 정합하게 청소한다. `WHERE EXISTS (SELECT 1 FROM information_schema.tables ...)`로
+# 없는 테이블은 조용히 스킵.
+#
+# 순서 근거: users.id → 직접 참조 9개 + 2-hop 6개. 자식(2-hop)을 먼저 지우고
+# 부모(direct)를 지운 뒤 마지막에 user 자체.
+_ACCOUNT_DELETE_STEPS: list[tuple[str, str]] = [
+    # 2-hop first (children of direct-owned tables)
+    ("course_roadmap_chat_messages",
+     "DELETE FROM course_roadmap_chat_messages "
+     "WHERE roadmap_id IN (SELECT id FROM course_roadmaps WHERE user_id = :uid)"),
+    ("course_roadmap_chat_sessions",
+     "DELETE FROM course_roadmap_chat_sessions "
+     "WHERE roadmap_id IN (SELECT id FROM course_roadmaps WHERE user_id = :uid)"),
+    ("pending_roadmap_changes",
+     "DELETE FROM pending_roadmap_changes "
+     "WHERE roadmap_id IN (SELECT id FROM course_roadmaps WHERE user_id = :uid)"),
+    ("course_roadmap_items",
+     "DELETE FROM course_roadmap_items "
+     "WHERE roadmap_id IN (SELECT id FROM course_roadmaps WHERE user_id = :uid)"),
+    ("course_plan_items",
+     "DELETE FROM course_plan_items "
+     "WHERE plan_id IN (SELECT id FROM course_plans WHERE user_id = :uid)"),
+    # 별도 PR로 추가된 시간표 챗 세션·메시지 (이 브랜치에 ORM은 없지만 DB엔 있을 수 있음).
+    # PR #120 머지 순서에 관계없이 안전.
+    ("timetable_chat_messages",
+     "DELETE FROM timetable_chat_messages "
+     "WHERE session_id IN (SELECT id FROM timetable_chat_sessions WHERE user_id = :uid)"),
+    ("timetable_chat_sessions",
+     "DELETE FROM timetable_chat_sessions WHERE user_id = :uid"),
+    # student_course_records는 user_academic_program_id도 참조하므로 program 삭제 전에.
+    ("student_course_records", "DELETE FROM student_course_records WHERE user_id = :uid"),
+    # Direct user_id 참조 테이블
+    ("course_roadmaps", "DELETE FROM course_roadmaps WHERE user_id = :uid"),
+    ("course_plans", "DELETE FROM course_plans WHERE user_id = :uid"),
+    ("user_academic_programs", "DELETE FROM user_academic_programs WHERE user_id = :uid"),
+    ("user_activities", "DELETE FROM user_activities WHERE user_id = :uid"),
+    ("user_certifications", "DELETE FROM user_certifications WHERE user_id = :uid"),
+    ("user_language_scores", "DELETE FROM user_language_scores WHERE user_id = :uid"),
+    ("password_reset_tokens", "DELETE FROM password_reset_tokens WHERE user_id = :uid"),
+    # 이전 감사에서 저장 중단 결정됐지만, 옛 행이 남아 있으면 정리.
+    ("portal_credentials", "DELETE FROM portal_credentials WHERE user_id = :uid"),
+    # 마지막으로 user 본체
+    ("users", "DELETE FROM users WHERE id = :uid"),
+]
+
+
+class AccountDeletionResponse(BaseModel):
+    deleted_user_id: int
+    deleted_rows: dict[str, int]
+
+
+@router.delete("/account", response_model=AccountDeletionResponse)
+def delete_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccountDeletionResponse:
+    """현재 로그인 사용자의 계정과 관련 데이터를 완전 삭제한다.
+
+    hard delete 방식 — 되돌릴 수 없다. 프론트에서 확인 다이얼로그 후 호출할 것.
+    성공 시 응답 body에 테이블별 삭제 행 수를 담아 감사·디버그에 활용한다.
+    JWT 세션 무효화는 프론트에서 로컬 토큰 삭제로 처리한다 (서버측 세션 저장소
+    없음).
+    """
+    from sqlalchemy import text as sql_text
+
+    uid = current_user.id
+    result: dict[str, int] = {}
+    # 존재하지 않는 테이블은 조용히 스킵. Postgres information_schema로 사전 확인.
+    existing = {
+        row[0]
+        for row in db.execute(sql_text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public'"
+        )).all()
+    }
+    for tbl, stmt in _ACCOUNT_DELETE_STEPS:
+        if tbl not in existing:
+            result[tbl] = 0
+            continue
+        try:
+            deleted = db.execute(sql_text(stmt), {"uid": uid}).rowcount
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"계정 삭제 실패 ({tbl}): {exc}",
+            ) from exc
+        result[tbl] = deleted or 0
+    db.commit()
+    return AccountDeletionResponse(deleted_user_id=uid, deleted_rows=result)
