@@ -61,7 +61,50 @@ export async function recommendTimetable(roadmapId: number, year: string, semest
   return data;
 }
 
-export type TimetableChatTurn = { role: "user" | "assistant"; content: string };
+export type TimetableChatSession = {
+  session_id: number;
+  year: string;
+  semester: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+};
+
+export type TimetableChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+/** 시간표 챗 세션. (user, year, semester) 단위로 여러 스레드가 병존한다. */
+export async function listTimetableChatSessions(year: string, semester: string) {
+  const { data } = await apiClient.get<TimetableChatSession[]>("/agent/timetable/sessions", {
+    params: { year, semester },
+  });
+  return data;
+}
+
+export async function createTimetableChatSession(year: string, semester: string, title?: string) {
+  const { data } = await apiClient.post<TimetableChatSession>("/agent/timetable/sessions", {
+    year,
+    semester,
+    title: title ?? null,
+  });
+  return data;
+}
+
+export async function getTimetableChatMessages(sessionId: number) {
+  const { data } = await apiClient.get<TimetableChatMessage[]>(
+    `/agent/timetable/sessions/${sessionId}/messages`,
+  );
+  return data;
+}
+
+export async function deleteTimetableChatSession(sessionId: number) {
+  await apiClient.delete(`/agent/timetable/sessions/${sessionId}`);
+}
 
 export type SuggestedOffering = {
   offering_id: number;
@@ -88,27 +131,25 @@ export type TimetableChatResponse = {
   schedules: TimetableChatSuggestion[];
   iterations: number;
   tool_calls: { name: string; args: unknown }[];
+  session_id: number;
 };
 
 /**
- * 시간표 전용 AI 상담. 로드맵 상담(chatWithRoadmapAgent)과 다른 엔드포인트다 —
- * 예전에는 시간표 화면도 로드맵 챗을 불러서 두 화면의 대화가 한 세션에 섞이고,
- * 시간표 화면에서 로드맵 변경안(pending change)까지 생기는 문제가 있었다.
- *
- * 서버가 대화를 저장하지 않는 스테이트리스 엔드포인트라, 히스토리는 호출부가
- * 들고 있다가 매번 넘겨준다.
+ * 시간표 전용 AI 상담. 대화는 세션 단위로 서버에 저장된다(#120에서 스테이트리스
+ * → 저장형 전환). session_id 없이 보내면 이 학기의 최근 세션을 이어 쓰거나
+ * 새로 만들고, 응답의 session_id로 어느 세션에 붙었는지 알려준다.
  */
 export async function chatWithTimetableAgent(
   year: string,
   semester: string,
   message: string,
-  history: TimetableChatTurn[] = [],
+  sessionId?: number,
 ) {
   const { data } = await apiClient.post<TimetableChatResponse>("/agent/timetable/recommend", {
     year,
     semester,
     message,
-    history,
+    session_id: sessionId ?? null,
   });
   return data;
 }
