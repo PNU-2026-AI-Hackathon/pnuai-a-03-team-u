@@ -252,6 +252,19 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
     `current_academic_term`(현재 학년도/학기)과 `next_plannable_term`(다음 배치
     가능한 학기)을 기준으로, 그 이전 학기로는 create 제안이 거부된다. 새로
     추천하는 과목은 최소한 `next_plannable_term` 이후여야 한다.
+  - **엇학기 학생 대응 — 달력 학기 ≠ 커리큘럼 학기**: `get_roadmap_items`가
+    돌려주는 `next_plannable_term`(달력)과 `next_curriculum_term`(커리큘럼 학년/학기)이
+    다를 수 있다. 예: 한 학기 휴학한 학생의 다음 달력 학기가 2026-1(1학기)이라도
+    커리큘럼 상으로는 4-2일 수 있다(재학 순번상 8번째 정규 학기). 규칙:
+    - **`search_courses`의 `semester` 필터는 `next_plannable_term.semester`(달력)를 써라.**
+      과목 개설은 달력 기준이지 커리큘럼 기준이 아니다.
+    - **"몇 학년 뭐 남았어" 같은 요건·학년 판단은 `next_curriculum_term.grade/semester`
+      (커리큘럼)를 기준으로 해라.** finish_response에서도 "너는 커리큘럼상 X학년 Y학기라
+      A/B/C 이수를 이번 학기 목표로 잡자"처럼 커리큘럼 학기로 설명해라.
+    - `propose_change`의 `planned_year`는 달력(`next_plannable_term.year`),
+      `planned_semester`는 달력(`next_plannable_term.semester`), `planned_grade`는
+      커리큘럼(`next_curriculum_term.grade`)으로 넣어라 — 화면은 planned_grade로
+      학년 슬롯에 배치하고 planned_year/semester로 정렬한다.
   - **학기당 학점 상한(term_credit_cap)을 넘기지 마라.** `get_roadmap_items`가
     `term_credit_cap`(정규 학기 최대 신청 학점)과 `planned_credits_by_term`(학기별
     이미 계획된 학점 합)을 같이 돌려준다. 새 과목을 정규 학기(1학기/2학기)에 추가하면
@@ -664,6 +677,18 @@ class _ToolContext:
         ny, ns = _next_term(cy, cs)
         credit_cap = self._term_credit_cap()
         planned = self._planned_credits_by_term()
+        # 커리큘럼 학기 매핑 — 엇학기(휴학 이력) 학생은 달력 학기와 커리큘럼 학년/학기가
+        # 어긋난다. 예: 한 학기 휴학한 학생의 커리큘럼 4-1이 실제로는 달력 2학기.
+        # 이 정보를 명시적으로 노출해서 LLM이 (a) 스케줄 필터는 next_plannable_term
+        # (달력), (b) 요건·학년 판단은 next_curriculum_term (커리큘럼) 순으로 쓸 수
+        # 있게 한다.
+        from app.domains.planning.history import project_curriculum_term
+        cur_grade, cur_sem = project_curriculum_term(
+            self.db, self.user.id, str(cy), f"{cs}학기"
+        )
+        next_grade, next_sem = project_curriculum_term(
+            self.db, self.user.id, str(ny), f"{ns}학기"
+        )
         return {
             "items": [
                 {
@@ -684,6 +709,9 @@ class _ToolContext:
             "earliest_recorded_grade": self._min_completed_grade(),
             "current_academic_term": {"year": str(cy), "semester": f"{cs}학기"},
             "next_plannable_term": {"year": str(ny), "semester": f"{ns}학기"},
+            # 엇학기 대응: 커리큘럼 상 지금·다음 학기가 달력과 어긋날 수 있음.
+            "current_curriculum_term": {"grade": cur_grade, "semester": cur_sem},
+            "next_curriculum_term": {"grade": next_grade, "semester": next_sem},
             "term_credit_cap": credit_cap,
             "planned_credits_by_term": [
                 {"planned_year": y, "planned_semester": s, "credits": c}

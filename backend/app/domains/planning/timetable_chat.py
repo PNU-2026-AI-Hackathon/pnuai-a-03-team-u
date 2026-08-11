@@ -71,6 +71,15 @@ _SYSTEM_PROMPT = """너는 부산대 학생의 이번 학기 시간표를 함께
 소수 유효 조합(예: 6~8학점) 만족해서 조기 종료하는 것은 이 원칙 위반이다 — 추가 후보를
 더 찾아 조합을 늘려라.
 
+**엇학기 대응**: 휴학 이력이 있는 학생은 `target_term`(달력)과 `target_curriculum_term`
+(커리큘럼 상 학년/학기)이 다를 수 있다. 예: 한 학기 휴학한 학생의 target_term이 2025-2
+(2학기)여도 target_curriculum_term은 4학년 1학기일 수 있다. 원칙:
+- **개설 과목 필터는 target_term(달력) 기준.** `list_offered_courses`는 이 학기에 실제로
+  열리는 과목만 반환하니 그대로 쓰면 된다.
+- **요건·학년 설명은 target_curriculum_term 기준.** finish_response에서 "너는 커리큘럼 4-1
+  진행 중이라 전공필수 우선"처럼 커리큘럼 학기로 설명하되, "이번 학기(달력 2학기) 개설"
+  이라고 스케줄은 달력으로 명시해라.
+
 **진로 반영 검색 (중요)**:
 `get_student_context.career_goal` 원문(예: "시스템 프로그래머", "게임 백엔드 개발자",
 "의료 데이터 분석가")을 그대로 사전 매칭하려 하지 마라 — 그러면 대부분 실패한다.
@@ -265,9 +274,14 @@ class _TimeTableToolContext:
 
     def get_student_context(self) -> dict:
         from app.domains.academics.graduation_progress import compute_graduation_progress
+        from app.domains.planning.history import project_curriculum_term
 
         completed = _completed_course_norms(self.db, self.user.id)
         cap = _term_credit_cap(self.db, self.user)
+        # 엇학기 대응 — target_term은 달력이고, 커리큘럼 상으로는 다른 학년/학기일 수 있다.
+        target_grade, target_curr_sem = project_curriculum_term(
+            self.db, self.user.id, self.year, self.semester
+        )
 
         # 카테고리별 남은 학점을 노출 — LLM이 "전공필수 12학점 남음, 교양필수 3학점 남음"
         # 같은 breakdown을 보고 카테고리별로 훑도록 유도한다. 없으면 mini가 career_goal
@@ -299,6 +313,10 @@ class _TimeTableToolContext:
             "term_credit_cap": cap,
             "target_credit_floor": max(1, int((cap or 15) * 0.8)),  # 상한의 80%가 목표 최소치
             "target_term": {"year": self.year, "semester": self.semester},
+            # 엇학기 학생은 target_term(달력)과 커리큘럼 학년·학기가 어긋난다.
+            # target_curriculum_term은 학생의 재학 순번 기준. list_offered_courses는
+            # 달력 학기로 필터해야 하고, 요건·학년 판단은 커리큘럼으로 해라.
+            "target_curriculum_term": {"grade": target_grade, "semester": target_curr_sem},
             "completed_course_names": sorted(completed),
             # 카테고리별 부족분. 이 목록을 훑어 각 항목별로 list_offered_courses 호출해라.
             "remaining_by_category": remaining_by_category,
