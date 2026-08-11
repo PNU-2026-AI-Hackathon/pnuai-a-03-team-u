@@ -118,6 +118,36 @@ class CourseRoadmapChatMessage(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text)
 
 
+class TimetableChatSession(TimestampMixin, Base):
+    """시간표 AI 상담의 대화 세션. (user_id, year, semester) 기준으로 그룹핑되고,
+    사용자가 "새 대화 시작"을 누르면 하나의 (user, term) 안에서 여러 세션이 병존한다.
+
+    로드맵 챗과 달리 세션 하나가 로드맵에 매이지 않는다 — 시간표 챗은 로드맵과
+    독립 아키텍처(2026-08-03 결정)라 사용자·학기만 있으면 시작 가능.
+    """
+
+    __tablename__ = "timetable_chat_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    year: Mapped[str] = mapped_column(String(10))
+    semester: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str | None] = mapped_column(String(255))
+
+
+class TimetableChatMessage(TimestampMixin, Base):
+    """시간표 AI 상담 대화 기록. session_id로 스레드 구분."""
+
+    __tablename__ = "timetable_chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("timetable_chat_sessions.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+
+
 class PendingRoadmapChange(TimestampMixin, Base):
     """Agent가 제안했지만 아직 사용자가 승인/거절하지 않은 로드맵 변경안.
 
