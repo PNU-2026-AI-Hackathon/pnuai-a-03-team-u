@@ -28,7 +28,12 @@ from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.courses.models import Course, CourseOffering, CourseTime
-from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
+from app.domains.planning.models import (
+    CourseRoadmap,
+    CourseRoadmapItem,
+    TimetableChatMessage,
+    TimetableChatSession,
+)
 from app.domains.planning.roadmap_chat import _build_llm
 from app.domains.planning.timetable import (
     _combo_is_feasible,
@@ -524,63 +529,159 @@ class _TimeTableToolContext:
         return {"error": f"unknown_tool:{name}"}
 
 
+# LLM 컨텍스트로 실을 최근 대화 턴 수. 로드맵 챗의 _LLM_HISTORY_WINDOW와 값 정합.
+# DB에는 전부 저장하지만 매 요청 시 LLM에는 최근 N턴만 넘겨서 오래된 실패 컨텍스트가
+# 후속 응답을 오염시키는 문제를 방지 (2026-08-10 관찰).
+_LLM_HISTORY_WINDOW = 6
+
+
+def create_chat_session(
+    db: Session, user: User, year: str, semester: str, title: str | None = None
+) -> TimetableChatSession:
+    session = TimetableChatSession(
+        user_id=user.id, year=year, semester=semester, title=(title or "새 대화")
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def list_chat_sessions(
+    db: Session, user: User, year: str | None = None, semester: str | None = None
+) -> list[TimetableChatSession]:
+    stmt = select(TimetableChatSession).where(TimetableChatSession.user_id == user.id)
+    if year is not None:
+        stmt = stmt.where(TimetableChatSession.year == year)
+    if semester is not None:
+        stmt = stmt.where(TimetableChatSession.semester == semester)
+    return db.scalars(stmt.order_by(TimetableChatSession.id.desc())).all()
+
+
+def delete_chat_session(db: Session, user: User, session_id: int) -> bool:
+    session = db.get(TimetableChatSession, session_id)
+    if session is None or session.user_id != user.id:
+        return False
+    db.query(TimetableChatMessage).filter(
+        TimetableChatMessage.session_id == session_id
+    ).delete(synchronize_session=False)
+    db.delete(session)
+    db.commit()
+    return True
+
+
+def load_chat_messages(
+    db: Session, user: User, session_id: int
+) -> list[TimetableChatMessage] | None:
+    """세션 소유자만 조회 가능. 오래된 것부터 순서대로. 소유자 불일치면 None."""
+    session = db.get(TimetableChatSession, session_id)
+    if session is None or session.user_id != user.id:
+        return None
+    return list(db.scalars(
+        select(TimetableChatMessage)
+        .where(TimetableChatMessage.session_id == session_id)
+        .order_by(TimetableChatMessage.id)
+    ).all())
+
+
+def _get_or_create_default_session(
+    db: Session, user: User, year: str, semester: str, first_message: str
+) -> TimetableChatSession:
+    """session_id 없이 호출된 경우: 같은 (user, year, semester)의 최근 세션이 있으면
+    이어쓰고, 없으면 첫 메시지 앞부분을 title로 새 세션 생성.
+    """
+    existing = db.scalars(
+        select(TimetableChatSession)
+        .where(
+            TimetableChatSession.user_id == user.id,
+            TimetableChatSession.year == year,
+            TimetableChatSession.semester == semester,
+        )
+        .order_by(TimetableChatSession.id.desc())
+        .limit(1)
+    ).first()
+    if existing is not None:
+        return existing
+    title = (first_message or "새 대화")[:20]
+    return create_chat_session(db, user, year, semester, title=title)
+
+
+def _load_recent_history(db: Session, session_id: int) -> list[TimetableChatMessage]:
+    """LLM 프롬프트에 실을 최근 N턴. desc + limit 후 뒤집는다."""
+    latest = db.scalars(
+        select(TimetableChatMessage)
+        .where(TimetableChatMessage.session_id == session_id)
+        .order_by(TimetableChatMessage.id.desc())
+        .limit(_LLM_HISTORY_WINDOW)
+    ).all()
+    return list(reversed(latest))
+
+
 def run_timetable_chat(
     db: Session,
     user: User,
     year: str,
     semester: str,
     message: str,
-    history: list[dict] | None = None,
+    session_id: int | None = None,
 ) -> dict:
-    """스파이크 진입점. 스테이트리스: 대화 히스토리는 클라이언트가 관리.
+    """시간표 AI 상담 실행. session_id 없으면 (user, year, semester)의 최근 세션을
+    이어 쓰거나 새로 만든다.
 
-    history: [{"role": "user"|"assistant", "content": "..."}, ...]
     반환: {"reply": str, "schedules": [{"offering_ids": [...], "rationale": "..."}, ...],
-            "iterations": int, "tool_calls": [...]}
+           "iterations": int, "tool_calls": [...], "session_id": int}
     """
-    # Langfuse trace. 시간표 챗은 스테이트리스라 session id가 없음 —
-    # 프론트가 conversation_id 헤더를 넘겨주기 전까지는 user_id로만 grouping된다.
-    from app.ai.llm.langfuse_callback import observe_agent_call
+    if session_id is not None:
+        session = db.get(TimetableChatSession, session_id)
+        if session is None or session.user_id != user.id:
+            raise ValueError(f"session_id={session_id}는 이 사용자의 세션이 아닙니다")
+        # 기존 세션의 (year, semester)와 요청이 다르면 새 세션 강제 — 다른 학기 대화가
+        # 섞이면 컨텍스트가 완전 엉망이 되므로 방어.
+        if session.year != year or session.semester != semester:
+            raise ValueError(
+                f"session {session_id}는 {session.year}-{session.semester} 세션인데 "
+                f"요청은 {year}-{semester}입니다. 새 세션을 시작해주세요."
+            )
+    else:
+        session = _get_or_create_default_session(db, user, year, semester, message)
 
-    # 시간표 챗은 스테이트리스지만 (user, year, semester) 조합이 사실상 하나의
-    # "이번 학기 시간표 짜기" 대화 세트라서, 이 조합으로 synthetic session_id를
-    # 만들어 Sessions view에서 같이 뜨게 한다. 프론트가 명시적 conversation_id를
-    # 넘겨주게 되면 그걸 우선 쓰도록 확장한다.
-    synthetic_session = f"tt-{user.id}-{year}-{semester}"
+    # 유저 메시지 저장.
+    db.add(TimetableChatMessage(session_id=session.id, role="user", content=message))
+    db.flush()
+
+    # LLM 컨텍스트용 최근 히스토리 (방금 저장한 유저 메시지 포함, 슬라이딩 윈도우).
+    recent_messages = _load_recent_history(db, session.id)
+
+    # Langfuse trace.
+    from app.ai.llm.langfuse_callback import observe_agent_call
 
     with observe_agent_call(
         agent="timetable_chat",
         user_id=user.id,
-        session_id=synthetic_session,
+        session_id=str(session.id),
         user_message=message,
         extra_metadata={"target_term": f"{year}-{semester}"},
     ) as trace:
         trace.add_metadata({
             "year": year,
             "semester": semester,
-            "history_length": len(history or []),
+            "history_length": len(recent_messages),
             "model": settings.ROADMAP_AGENT_MODEL,
+            "timetable_session_id": session.id,
         })
         # LLM 초기화·tool 바인딩도 root latency에 포함시킴.
         with trace.span("build_llm_and_context"):
             ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester)
             llm = _build_llm().bind_tools(_TOOLS, tool_choice="any")
 
-        # 프론트가 실어 보내는 히스토리는 대화가 길어질수록 오래된 실패 컨텍스트가
-        # 남아 mini/4o 모두 후속 응답을 오염시킨다(2026-08-10 관찰). 방어적으로
-        # 최근 N턴만 유지 — 참조 해석("아까 그거")은 살고 오래된 오염은 잘림.
-        # 로드맵 챗의 _LLM_HISTORY_WINDOW와 값 정합.
-        recent_history = (history or [])[-6:]
-
+        # DB에서 로드한 최근 히스토리를 langchain 메시지로. 방금 저장한 유저 메시지가
+        # 이 목록의 맨 뒤에 이미 포함돼 있어 별도 append 불필요.
         messages: list = [SystemMessage(content=_SYSTEM_PROMPT)]
-        for h in recent_history:
-            role = h.get("role")
-            content = h.get("content", "")
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                messages.append(AIMessage(content=content))
-        messages.append(HumanMessage(content=message))
+        for m in recent_messages:
+            if m.role == "user":
+                messages.append(HumanMessage(content=m.content))
+            elif m.role == "assistant":
+                messages.append(AIMessage(content=m.content))
 
         reply_text = ""
         schedules: list[dict] = []
@@ -631,6 +732,15 @@ def run_timetable_chat(
                 "(예: '전공 필수 위주로', '월수금만', '오전 몰빵')."
             )
 
+        # assistant 메시지 저장 (트레이스 안에서 페이즈로 노출).
+        with trace.span("persist_assistant_message"):
+            db.add(TimetableChatMessage(
+                session_id=session.id,
+                role="assistant",
+                content=reply_text,
+            ))
+            db.commit()
+
         trace.set_output({
             "reply": reply_text,
             "schedules_count": len(schedules),
@@ -646,9 +756,10 @@ def run_timetable_chat(
         trace.score("tool_calls", non_finish_tool_calls)
         trace.score("schedules_returned", len(schedules))
 
-        return {
-            "reply": reply_text,
-            "schedules": schedules,
-            "iterations": iteration + 1,
-            "tool_calls": tool_call_log,
-        }
+    return {
+        "reply": reply_text,
+        "schedules": schedules,
+        "iterations": iteration + 1,
+        "tool_calls": tool_call_log,
+        "session_id": session.id,
+    }

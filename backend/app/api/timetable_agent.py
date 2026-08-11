@@ -1,41 +1,145 @@
-"""시간표 LLM 에이전트 엔드포인트 (스파이크).
+"""시간표 LLM 에이전트 엔드포인트.
 
-기존 결정론적 `/me/roadmaps/{roadmap_id}/timetable/recommend`와 병존한다. 이 엔드포인트는
-로드맵과 독립적으로 동작 — `roadmap_id` 불필요, 학생 수강기록·진로만으로 이번 학기 시간표
-후보를 제안한다.
-
-세션 영속화는 아직 없다 (스파이크 단계). 대화 히스토리는 클라이언트가 `history`로 전달.
-Phase 3c에서 `CourseRoadmapChatSession.roadmap_id` nullable 마이그레이션 후 세션 저장 추가 예정.
+로드맵과 독립 아키텍처(2026-08-03 결정). 세션 영속화 도입 (2026-08-11):
+- 프론트가 매번 history 배열을 전달하던 스테이트리스 모델 → DB에 (user, year, semester)
+  스코프의 세션·메시지 저장. 새로고침·재접속 시 대화 유지.
+- 로드맵 챗 세션(course_roadmap_chat_sessions)과 별개 테이블(timetable_chat_sessions).
 """
 
 from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.courses.models import Course, CourseOffering, CourseTime
-from app.domains.planning.timetable_chat import run_timetable_chat
+from app.domains.planning.models import TimetableChatMessage, TimetableChatSession
+from app.domains.planning.timetable_chat import (
+    create_chat_session,
+    delete_chat_session,
+    list_chat_sessions,
+    load_chat_messages,
+    run_timetable_chat,
+)
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/agent/timetable", tags=["timetable-agent"])
 
 
-class HistoryTurn(BaseModel):
-    role: str = Field(..., description="'user' | 'assistant'")
+# --- 세션 CRUD ---------------------------------------------------------------
+
+
+class CreateSessionRequest(BaseModel):
+    year: str
+    semester: str
+    title: str | None = None
+
+
+class SessionResponse(BaseModel):
+    session_id: int
+    year: str
+    semester: str
+    title: str | None
+    created_at: str
+    updated_at: str
+    message_count: int
+
+    @classmethod
+    def from_model(cls, s: TimetableChatSession, message_count: int) -> "SessionResponse":
+        return cls(
+            session_id=s.id,
+            year=s.year,
+            semester=s.semester,
+            title=s.title,
+            created_at=s.created_at.isoformat() if s.created_at else "",
+            updated_at=s.updated_at.isoformat() if s.updated_at else "",
+            message_count=message_count,
+        )
+
+
+@router.post("/sessions", response_model=SessionResponse)
+def create_session(
+    payload: CreateSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SessionResponse:
+    s = create_chat_session(db, current_user, payload.year, payload.semester, title=payload.title)
+    return SessionResponse.from_model(s, message_count=0)
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+def list_sessions(
+    year: str | None = None,
+    semester: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[SessionResponse]:
+    sessions = list_chat_sessions(db, current_user, year=year, semester=semester)
+    if not sessions:
+        return []
+    counts = dict(
+        db.execute(
+            select(TimetableChatMessage.session_id, func.count(TimetableChatMessage.id))
+            .where(TimetableChatMessage.session_id.in_([s.id for s in sessions]))
+            .group_by(TimetableChatMessage.session_id)
+        ).all()
+    )
+    return [SessionResponse.from_model(s, counts.get(s.id, 0)) for s in sessions]
+
+
+class MessageResponse(BaseModel):
+    id: int
+    role: str
     content: str
+    created_at: str
+
+
+@router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
+def get_session_messages(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[MessageResponse]:
+    messages = load_chat_messages(db, current_user, session_id)
+    if messages is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    return [
+        MessageResponse(
+            id=m.id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at.isoformat() if m.created_at else "",
+        )
+        for m in messages
+    ]
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not delete_chat_session(db, current_user, session_id):
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    return {"deleted": session_id}
+
+
+# --- 추천 (기존 유지, 시그니처만 확장) --------------------------------------
 
 
 class TimetableChatRequest(BaseModel):
     year: str = Field(..., description="달력 연도 (예: '2026')")
     semester: str = Field(..., description="학기 (예: '2학기')")
     message: str
-    history: list[HistoryTurn] | None = None
+    # 신규: session_id를 넘기면 그 세션에 이어붙이고, 없으면 최근 세션 이어쓰기
+    # (또는 첫 요청이면 자동 생성).
+    session_id: int | None = None
 
 
 class OfferingTime(BaseModel):
@@ -73,6 +177,7 @@ class TimetableChatResponse(BaseModel):
     schedules: list[ScheduleSuggestion]
     iterations: int
     tool_calls: list[dict]
+    session_id: int
 
 
 def _format_time(value: datetime.time | None) -> str | None:
@@ -125,14 +230,18 @@ def recommend_timetable_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TimetableChatResponse:
-    result = run_timetable_chat(
-        db=db,
-        user=current_user,
-        year=payload.year,
-        semester=payload.semester,
-        message=payload.message,
-        history=[h.model_dump() for h in (payload.history or [])],
-    )
+    try:
+        result = run_timetable_chat(
+            db=db,
+            user=current_user,
+            year=payload.year,
+            semester=payload.semester,
+            message=payload.message,
+            session_id=payload.session_id,
+        )
+    except ValueError as e:
+        # session_id 소유자·학기 불일치 등
+        raise HTTPException(status_code=400, detail=str(e))
 
     all_ids = [oid for s in result["schedules"] for oid in s.get("offering_ids", [])]
     detail_by_id = _load_offerings(db, list(dict.fromkeys(all_ids)))
@@ -155,4 +264,5 @@ def recommend_timetable_agent(
         schedules=schedules,
         iterations=result["iterations"],
         tool_calls=result["tool_calls"],
+        session_id=result["session_id"],
     )
