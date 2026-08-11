@@ -8222,7 +8222,15 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 전공 갈래 안의 이수구분 칩(전공기초/전공필수/전공선택). 상위 갈래보다 한 급 작게. */
+.timetable-filters.is-sub button {
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .timetable-filters button {
