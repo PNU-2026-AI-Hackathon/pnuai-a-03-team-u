@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
+from app.core.config import settings
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
@@ -50,14 +51,25 @@ _SYSTEM_PROMPT = """너는 부산대 학생의 이번 학기 시간표를 함께
 
 **너는 시간표를 직접 만들지 않는다.** 시간이 겹치는 시간표를 내놓으면 수강신청이
 막힌다. 대신:
-1. `get_student_context`로 학생 수강기록·진로·학과·학점상한을 먼저 본다.
-2. `list_offered_courses`로 이번 학기 실제 개설 과목을 찾는다 (아래 "진로 반영 검색"
-   참고). `search_by_career`는 사전 기반 fallback이라 진로 문구에 사전 키워드가 명확히
-   없으면 유의미한 결과가 안 나온다.
-3. 후보 과목 조합을 골라 `validate_timetable`에 넘긴다 — 규칙 코드가 시간 충돌·학점
+1. `get_student_context`로 학생 수강기록·진로·학과·학점상한·**카테고리별 남은 학점
+   (`remaining_by_category`)** 을 먼저 본다.
+2. **`remaining_by_category`가 비어있지 않으면 각 카테고리별로 `list_offered_courses`를
+   반드시 호출해라.** 예: `remaining_by_category=[{전공필수: 12}, {교양필수: 3}]` 이면
+   `list_offered_courses(category="전공필수")` 와 `list_offered_courses(category="교양필수")`
+   두 번은 최소로 호출한다. 이렇게 안 하면 career 관련 소수 과목만 뽑고 부족한 요건은
+   못 채운다.
+3. 진로 관련 심화 후보가 필요하면 그 다음에 `list_offered_courses(query=...)` 로 토픽
+   검색을 병행한다 (아래 "진로 반영 검색" 참고). career 검색은 카테고리 훑기의 보조지
+   대체가 아니다.
+4. 후보 과목 조합을 골라 `validate_timetable`에 넘긴다 — 규칙 코드가 시간 충돌·학점
    상한을 검증해 유효한 조합만 되돌려준다.
-4. 유효 조합을 얻으면 `finish_response`에 후보 시간표(offering_ids 배열들)와 사용자에게
+5. 유효 조합을 얻으면 `finish_response`에 후보 시간표(offering_ids 배열들)와 사용자에게
    보여줄 설명 메시지를 담아 넘긴다.
+
+**학점 목표**: `get_student_context.target_credit_floor` (상한의 80%) 학점 **이상** 채우는
+조합을 만들어라. 사용자가 "가볍게 듣고 싶다"고 명시한 경우에만 이 하한을 무시한다.
+소수 유효 조합(예: 6~8학점) 만족해서 조기 종료하는 것은 이 원칙 위반이다 — 추가 후보를
+더 찾아 조합을 늘려라.
 
 **진로 반영 검색 (중요)**:
 `get_student_context.career_goal` 원문(예: "시스템 프로그래머", "게임 백엔드 개발자",
@@ -126,7 +138,12 @@ _TOOLS = [
                     "query": {"type": "string", "description": "과목명·토픽 키워드. 비워두면 필터로만 훑는다."},
                     "category": {
                         "type": "string",
-                        "description": "이수구분 필터 ('전공필수', '전공선택', '교양선택' 등). 로드맵 채팅과 같은 어휘.",
+                        "description": (
+                            "이수구분 필터. 학생이 말한 자연어를 그대로 넘기면 백엔드가 매핑한다 "
+                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양+기초교양). "
+                            "빈 결과가 오면 응답의 `available_categories`를 보고 다른 값으로 재시도해라 — "
+                            "같은 인수로 재호출하지 마라."
+                        ),
                     },
                     "limit": {"type": "integer", "description": "결과 상한 (기본 10)"},
                 },
@@ -247,15 +264,44 @@ class _TimeTableToolContext:
     # ------------ 도구 구현 ------------
 
     def get_student_context(self) -> dict:
+        from app.domains.academics.graduation_progress import compute_graduation_progress
+
         completed = _completed_course_norms(self.db, self.user.id)
+        cap = _term_credit_cap(self.db, self.user)
+
+        # 카테고리별 남은 학점을 노출 — LLM이 "전공필수 12학점 남음, 교양필수 3학점 남음"
+        # 같은 breakdown을 보고 카테고리별로 훑도록 유도한다. 없으면 mini가 career_goal
+        # 하나만 보고 좁게 검색해서 결국 소수 과목만 확정하는 문제가 있음(2026-08-10 관찰).
+        remaining_by_category: list[dict] = []
+        try:
+            progresses = compute_graduation_progress(
+                self.db, self.user.id, program_types={"primary"}
+            )
+            if progresses:
+                p = progresses[0]  # 주전공만 노출 (시간표는 로드맵 독립이라 부전공까진 안 봄)
+                for c in p.categories:
+                    if c.remaining_credits is None or c.remaining_credits <= 0:
+                        continue
+                    remaining_by_category.append({
+                        "category": c.category_name,
+                        "remaining_credits": float(c.remaining_credits),
+                    })
+        except Exception:  # noqa: BLE001 - 판정 실패 시 시간표 챗 자체가 죽으면 안 됨
+            pass
+
         return {
-            "student_id": self.user.id,
+            # user_id는 학번이 아니라 내부 PK다. 필드명을 "student_id"로 두면 LLM이
+            # 실제 학번으로 오해해서 응답 문자열에 그대로 노출할 수 있어 이름을 바꿨다.
+            "user_id": self.user.id,
             "department_id": self.user.department_id,
             "major_id": self.user.major_id,
             "career_goal": self.user.career_goal,
-            "term_credit_cap": _term_credit_cap(self.db, self.user),
+            "term_credit_cap": cap,
+            "target_credit_floor": max(1, int((cap or 15) * 0.8)),  # 상한의 80%가 목표 최소치
             "target_term": {"year": self.year, "semester": self.semester},
             "completed_course_names": sorted(completed),
+            # 카테고리별 부족분. 이 목록을 훑어 각 항목별로 list_offered_courses 호출해라.
+            "remaining_by_category": remaining_by_category,
         }
 
     def list_offered_courses(
@@ -270,7 +316,28 @@ class _TimeTableToolContext:
             filters={"semester": self.semester, "category": category},
         )
         cap = max(1, min(limit or 10, 30))
-        return {"results": [self._attach_offerings(r) for r in results[:cap]]}
+        payload: dict = {"results": [self._attach_offerings(r) for r in results[:cap]]}
+        # 빈 결과에는 hint 부착 — LLM이 같은 인수로 반복 호출하지 않도록.
+        if not payload["results"]:
+            from app.ai.rag.curriculum_retriever import available_categories_for_scope
+            cats = available_categories_for_scope(
+                self.db,
+                department_id=self.user.department_id,
+                major_id=self.user.major_id,
+                semester=self.semester,
+            )
+            payload["available_categories"] = cats
+            reason_parts = []
+            if category and category not in cats:
+                reason_parts.append(f"category={category!r}는 이번 학기 개설 목록에 없음")
+            if query:
+                reason_parts.append(f"query={query!r}로 매치 없음")
+            payload["note"] = (
+                (" · ".join(reason_parts) or "결과 없음")
+                + ". available_categories 참고해서 다른 값으로 재시도하거나, "
+                  "매치되는 과목이 정말 없으면 finish_response로 사용자에게 알려라."
+            )
+        return payload
 
     def search_by_career(self, career_hint: str | None = None, limit: int | None = None) -> dict:
         hint = career_hint or self.user.career_goal
@@ -471,57 +538,117 @@ def run_timetable_chat(
     반환: {"reply": str, "schedules": [{"offering_ids": [...], "rationale": "..."}, ...],
             "iterations": int, "tool_calls": [...]}
     """
-    ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester)
-    llm = _build_llm().bind_tools(_TOOLS, tool_choice="any")
+    # Langfuse trace. 시간표 챗은 스테이트리스라 session id가 없음 —
+    # 프론트가 conversation_id 헤더를 넘겨주기 전까지는 user_id로만 grouping된다.
+    from app.ai.llm.langfuse_callback import observe_agent_call
 
-    messages: list = [SystemMessage(content=_SYSTEM_PROMPT)]
-    for h in history or []:
-        role = h.get("role")
-        content = h.get("content", "")
-        if role == "user":
-            messages.append(HumanMessage(content=content))
-        elif role == "assistant":
-            messages.append(AIMessage(content=content))
-    messages.append(HumanMessage(content=message))
+    # 시간표 챗은 스테이트리스지만 (user, year, semester) 조합이 사실상 하나의
+    # "이번 학기 시간표 짜기" 대화 세트라서, 이 조합으로 synthetic session_id를
+    # 만들어 Sessions view에서 같이 뜨게 한다. 프론트가 명시적 conversation_id를
+    # 넘겨주게 되면 그걸 우선 쓰도록 확장한다.
+    synthetic_session = f"tt-{user.id}-{year}-{semester}"
 
-    reply_text = ""
-    schedules: list[dict] = []
-    tool_call_log: list[dict] = []
+    with observe_agent_call(
+        agent="timetable_chat",
+        user_id=user.id,
+        session_id=synthetic_session,
+        user_message=message,
+        extra_metadata={"target_term": f"{year}-{semester}"},
+    ) as trace:
+        trace.add_metadata({
+            "year": year,
+            "semester": semester,
+            "history_length": len(history or []),
+            "model": settings.ROADMAP_AGENT_MODEL,
+        })
+        # LLM 초기화·tool 바인딩도 root latency에 포함시킴.
+        with trace.span("build_llm_and_context"):
+            ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester)
+            llm = _build_llm().bind_tools(_TOOLS, tool_choice="any")
 
-    for iteration in range(MAX_TOOL_ITERATIONS):
-        ai_msg = llm.invoke(messages)
-        messages.append(ai_msg)
-        tool_calls = getattr(ai_msg, "tool_calls", None) or []
-        if not tool_calls:
-            reply_text = ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
-            break
+        # 프론트가 실어 보내는 히스토리는 대화가 길어질수록 오래된 실패 컨텍스트가
+        # 남아 mini/4o 모두 후속 응답을 오염시킨다(2026-08-10 관찰). 방어적으로
+        # 최근 N턴만 유지 — 참조 해석("아까 그거")은 살고 오래된 오염은 잘림.
+        # 로드맵 챗의 _LLM_HISTORY_WINDOW와 값 정합.
+        recent_history = (history or [])[-6:]
+
+        messages: list = [SystemMessage(content=_SYSTEM_PROMPT)]
+        for h in recent_history:
+            role = h.get("role")
+            content = h.get("content", "")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+        messages.append(HumanMessage(content=message))
+
+        reply_text = ""
+        schedules: list[dict] = []
+        tool_call_log: list[dict] = []
         finished = False
-        for call in tool_calls:
-            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
-            args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
-            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", "")
-            tool_call_log.append({"name": name, "args": args})
-            if name == "finish_response":
-                reply_text = args.get("message", "")
-                schedules = args.get("schedules", []) or []
-                messages.append(
-                    ToolMessage(content=json.dumps({"ok": True}), tool_call_id=call_id or "")
-                )
-                finished = True
-                break
-            result = ctx.dispatch(name, args or {})
-            messages.append(
-                ToolMessage(
-                    content=json.dumps(result, ensure_ascii=False, default=str),
-                    tool_call_id=call_id or "",
-                )
-            )
-        if finished:
-            break
+        non_finish_tool_calls = 0
 
-    return {
-        "reply": reply_text,
-        "schedules": schedules,
-        "iterations": iteration + 1,
-        "tool_calls": tool_call_log,
-    }
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            ai_msg = llm.invoke(messages, config=trace.config)
+            messages.append(ai_msg)
+            tool_calls = getattr(ai_msg, "tool_calls", None) or []
+            if not tool_calls:
+                reply_text = ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
+                break
+            for call in tool_calls:
+                name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+                args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
+                call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", "")
+                tool_call_log.append({"name": name, "args": args})
+                if name == "finish_response":
+                    reply_text = args.get("message", "")
+                    schedules = args.get("schedules", []) or []
+                    messages.append(
+                        ToolMessage(content=json.dumps({"ok": True}), tool_call_id=call_id or "")
+                    )
+                    finished = True
+                    break
+                non_finish_tool_calls += 1
+                with trace.span(f"tool:{name}", as_type="tool", input=args) as tool_span:
+                    result = ctx.dispatch(name, args or {})
+                    if tool_span is not None:
+                        tool_span.update(output=result)
+                messages.append(
+                    ToolMessage(
+                        content=json.dumps(result, ensure_ascii=False, default=str),
+                        tool_call_id=call_id or "",
+                    )
+                )
+            if finished:
+                break
+
+        # 빈 응답 폴백. mini가 finish_response를 안 부르거나 message="" 로 부르면
+        # 유저 화면에 아무것도 안 뜬다 — 최소한 무슨 상황인지 알려주는 문구로 대체.
+        if not reply_text or not reply_text.strip():
+            reply_text = (
+                "죄송해요, 이번엔 시간표 후보를 정리하지 못했어요. "
+                "요청을 조금 더 구체적으로 다시 말씀해 주세요 "
+                "(예: '전공 필수 위주로', '월수금만', '오전 몰빵')."
+            )
+
+        trace.set_output({
+            "reply": reply_text,
+            "schedules_count": len(schedules),
+            "iterations": iteration + 1,
+        })
+        # 대시보드용 정량 스코어.
+        trace.score("finished_with_tool", finished)
+        trace.score("iterations_used", iteration + 1)
+        trace.score(
+            "iteration_efficiency",
+            round(1 - iteration / max(MAX_TOOL_ITERATIONS - 1, 1), 3),
+        )
+        trace.score("tool_calls", non_finish_tool_calls)
+        trace.score("schedules_returned", len(schedules))
+
+        return {
+            "reply": reply_text,
+            "schedules": schedules,
+            "iterations": iteration + 1,
+            "tool_calls": tool_call_log,
+        }

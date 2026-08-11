@@ -68,5 +68,15 @@ class Settings(BaseSettings):
         r"^https://pnuai-a-03-team-u(?:-[a-z0-9-]+)?\.vercel\.app$"
     )
 
+    # --- Langfuse (LLM 관측/평가) ---
+    # 셋 다 값이 있어야 실제 trace 전송된다. 하나라도 비면 콜백은 no-op.
+    # 개인 Cloud 프로젝트 `planu-backend` API 키를 팀 채널에서 공유.
+    LANGFUSE_PUBLIC_KEY: str | None = None
+    LANGFUSE_SECRET_KEY: str | None = None
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+    # user_id 해시용 salt. .env에 각자 로컬로 두고, 유출 시 재발급.
+    # 없으면 hash가 salt="" 로 만들어져 rainbow 공격에 취약해지므로 반드시 설정.
+    LANGFUSE_USER_ID_SALT: str | None = None
+
 
 settings = Settings()

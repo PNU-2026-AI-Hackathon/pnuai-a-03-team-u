@@ -16,6 +16,7 @@ from app.api.roadmaps import router as roadmaps_router
 from app.api.timetables import router as timetables_router
 from app.api.timetable import router as timetable_router
 from app.api.timetable_agent import router as timetable_agent_router
+from app.ai.llm.langfuse_callback import flush as langfuse_flush, startup_log as langfuse_startup_log
 from app.core.config import settings
 from app.core.scheduler import scheduler
 
@@ -23,8 +24,11 @@ from app.core.scheduler import scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.start()
+    langfuse_startup_log()
     yield
     scheduler.shutdown()
+    # 아직 안 보낸 trace를 배출한다. Langfuse가 꺼져 있으면 no-op.
+    langfuse_flush()
 
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

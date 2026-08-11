@@ -25,6 +25,9 @@ langchain-postgres
 anthropic
 openai
 
+# LLM 관측(트레이싱/평가). Langfuse Cloud로 전송. 4.x는 OpenTelemetry 기반.
+langfuse>=4.0,<5.0
+
 # 크롤러
 apscheduler
 beautifulsoup4

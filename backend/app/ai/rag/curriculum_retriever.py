@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import and_, or_, select, true
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.ai.embeddings.openai_client import embed_text
@@ -78,6 +78,12 @@ def _semester_for_display(value: str | None) -> str | None:
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "교양필수": ("효원핵심교양", "기초교양"),
     "교양선택": ("효원균형교양", "효원창의교양"),
+    # LLM이 종종 접두사("효원") 없는 축약형으로 필터를 부른다 — 2026-08-10 gpt-4o-mini가
+    # `category="핵심교양"` 으로 8번 반복 호출하다 소진(빈 응답)한 사건. 실제 DB 값과의
+    # 매칭 실패로 빈 결과가 나오면 LLM이 회복을 못 한다. 축약형도 alias로 흡수한다.
+    "핵심교양": ("효원핵심교양",),
+    "균형교양": ("효원균형교양",),
+    "창의교양": ("효원창의교양",),
 }
 
 
@@ -89,6 +95,32 @@ def _category_condition(category: str):
     if not aliases:
         return Course.category == category
     return Course.category.in_((category, *aliases))
+
+
+def available_categories_for_scope(
+    db,
+    department_id: int | None,
+    major_id: int | None,
+    year: int | None = None,
+    semester: str | None = None,
+) -> list[str]:
+    """이 검색 스코프에서 실제로 존재하는 이수구분 목록.
+    빈 결과에 hint를 붙일 때 LLM이 다음 시도로 뭘 골라야 하는지 알려주기 위해 쓴다.
+    exact match 실패 시 이 목록에서 유사값을 골라 재시도하라고 프롬프트에서 안내한다.
+    """
+    conditions = [Course.department_id == department_id] if department_id is not None else []
+    conditions.append(_major_scope_filter(Course, major_id))
+    if year is not None:
+        conditions.append(Course.year == year)
+    if semester:
+        conditions.append(Course.semester.in_((semester, "전학기", "1,2")))
+    stmt = (
+        select(Course.category)
+        .where(*conditions)
+        .group_by(Course.category)
+        .order_by(func.count().desc())
+    )
+    return [c for c in db.scalars(stmt).all() if c]
 
 
 def _major_scope_filter(model: type[Course] | type[GraduationRequirement], major_id: int | None):
