@@ -455,6 +455,51 @@ _TOOLS = [
 ]
 
 
+def _safe_call(handler, tool_input: dict) -> dict:
+    """`handler(**tool_input)` 방어 래퍼.
+
+    LLM(gpt-4o-mini 관측)이 종종 잘못된 kwarg 이름을 낸다 — 예: `{"query=": "..."}`
+    처럼 등호가 붙거나, 스키마에 없는 필드를 추가한다. 기본 `handler(**tool_input)`은
+    `TypeError`로 죽고, 그 위를 감싼 langfuse span context가 `generator didn't stop
+    after throw()`로 재폭발해서 대화 전체가 크래시된다.
+
+    대응: handler 시그니처에 없는 키는 조용히 드롭하되, 응답에 `_dropped_args`로 실어
+    LLM이 다음 턴에 올바른 이름으로 재호출할 수 있게 한다. 알 수 없는 예외는 문자열로
+    감싸 error 필드로 돌려준다 — 도구 하나 실패로 전체 세션이 죽지 않도록.
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(handler)
+    except (TypeError, ValueError):
+        sig = None
+
+    dropped: list[str] = []
+    if sig is not None and tool_input:
+        allowed = {
+            n for n, p in sig.parameters.items()
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        }
+        has_var_keyword = any(
+            p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not has_var_keyword:
+            filtered = {k: v for k, v in tool_input.items() if k in allowed}
+            dropped = [k for k in tool_input if k not in allowed]
+            tool_input = filtered
+
+    try:
+        result = handler(**tool_input)
+    except TypeError as e:
+        return {"error": f"도구 호출 실패(잘못된 인자): {e}", "_dropped_args": dropped}
+    except Exception as e:  # noqa: BLE001 - 도구 하나 실패로 세션 전체를 죽이지 않는다
+        return {"error": f"도구 실행 오류: {type(e).__name__}: {e}"}
+
+    if dropped and isinstance(result, dict):
+        result.setdefault("_dropped_args", dropped)
+    return result
+
+
 def _build_llm() -> BaseChatModel:
     """ROADMAP_AGENT_MODEL("provider:model")로 langchain ChatModel을 만든다.
 
@@ -1089,7 +1134,7 @@ class _ToolContext:
         handler = getattr(self, name, None)
         if handler is None:
             return {"error": f"알 수 없는 도구: {name}"}
-        return handler(**tool_input)
+        return _safe_call(handler, tool_input)
 
 
 # LLM 컨텍스트로 실을 최근 대화 턴 수. DB에는 전부 저장하고 유저는 UI에서 다 볼
