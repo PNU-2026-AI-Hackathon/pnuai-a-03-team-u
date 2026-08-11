@@ -211,6 +211,9 @@ export function TimetablePage() {
         semester: TARGET_SEMESTER,
         departmentId: isMajor ? selectedDepartment?.id ?? null : null,
         major: isMajor ? selectedMajor || null : null,
+        // 학부만 고르고 전공을 안 골랐으면 학부 공통(전공 미지정) 과목만 보여준다.
+        // 모든 전공 과목이 한꺼번에 섞여 나오면 목록이 의미를 잃는다.
+        majorUnassigned: isMajor && selectedDepartment !== null && !selectedMajor,
         categories: group ? [...group.categories] : undefined,
         q: search.trim(),
         limit: 60,
@@ -728,7 +731,7 @@ export function TimetablePage() {
                 >
                   <option value="">
                     {selectedDepartment && selectedDepartment.majors.length > 0
-                      ? "전공 전체"
+                      ? "학부 공통 (전공 미지정)"
                       : "세부전공 없음"}
                   </option>
                   {(selectedDepartment?.majors ?? []).map((major) => (

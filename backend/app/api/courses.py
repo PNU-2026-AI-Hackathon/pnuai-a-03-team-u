@@ -98,6 +98,9 @@ def search_offerings(
     # 전공은 이름으로 받는다. 학부 자동완성(/departments/search)이 전공을 이름
     # 목록으로만 주기 때문에, id를 요구하면 프론트가 한 번 더 조회해야 한다.
     major: str | None = None,
+    # true면 전공이 지정되지 않은(학부 공통) 과목만. 화면에서 학부만 고르고
+    # 전공을 안 골랐을 때 모든 전공 과목이 섞여 나오는 대신 공통 과목을 보여준다.
+    major_unassigned: bool = False,
     # 여러 번 넘길 수 있다. "효원(균형·창의)교양"처럼 화면의 한 갈래가 DB에서는
     # 두 개 이상의 이수구분으로 나뉘어 있기 때문이다.
     category: list[str] | None = Query(None),
@@ -131,6 +134,8 @@ def search_offerings(
         # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한
         # 전공 과목까지 섞여 나온다.
         query = query.where(Course.major_id.in_(matched_major_ids))
+    elif major_unassigned:
+        query = query.where(Course.major_id.is_(None))
     wanted = [value.strip() for value in (category or []) if value.strip()]
     if wanted:
         # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
