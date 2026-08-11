@@ -158,6 +158,8 @@ export type OfferingSearchParams = {
   semester: string;
   departmentId?: number | null;
   major?: string | null;
+  /** true면 전공이 지정되지 않은(학부 공통) 과목만. */
+  majorUnassigned?: boolean;
   /** 화면의 한 갈래가 DB 이수구분 여러 개일 수 있어 배열로 받는다. */
   categories?: string[];
   q?: string;
@@ -175,6 +177,7 @@ export async function searchOfferings({
   semester,
   departmentId,
   major,
+  majorUnassigned,
   categories,
   q = "",
   limit = 50,
@@ -185,6 +188,7 @@ export async function searchOfferings({
       semester,
       department_id: departmentId ?? undefined,
       major: major || undefined,
+      major_unassigned: majorUnassigned || undefined,
       category: categories?.length ? categories : undefined,
       q,
       limit,

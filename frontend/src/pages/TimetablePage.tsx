@@ -61,6 +61,9 @@ const COURSE_GROUPS = [
 
 type CourseGroupKey = (typeof COURSE_GROUPS)[number]["key"];
 
+/** 전공 갈래 안에서 한 번 더 좁히는 이수구분. 비우면 전공 전체(기초+필수+선택). */
+const MAJOR_CATEGORIES = ["전공기초", "전공필수", "전공선택"] as const;
+
 const LEGEND = [
   { label: "전공 기초", tone: "base" },
   { label: "전공 필수", tone: "required" },
@@ -145,6 +148,7 @@ export function TimetablePage() {
   const [selectedCollege, setSelectedCollege] = useState<string>("");
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSearchResult | null>(null);
   const [selectedMajor, setSelectedMajor] = useState<string>("");
+  const [majorCategory, setMajorCategory] = useState<string>("");
   const [offerings, setOfferings] = useState<SuggestedOffering[]>([]);
   const [isSearchingOfferings, setIsSearchingOfferings] = useState(false);
 
@@ -211,7 +215,11 @@ export function TimetablePage() {
         semester: TARGET_SEMESTER,
         departmentId: isMajor ? selectedDepartment?.id ?? null : null,
         major: isMajor ? selectedMajor || null : null,
-        categories: group ? [...group.categories] : undefined,
+        // 학부만 고르고 전공을 안 골랐으면 학부 공통(전공 미지정) 과목만 보여준다.
+        // 모든 전공 과목이 한꺼번에 섞여 나오면 목록이 의미를 잃는다.
+        majorUnassigned: isMajor && selectedDepartment !== null && !selectedMajor,
+        categories:
+          isMajor && majorCategory ? [majorCategory] : group ? [...group.categories] : undefined,
         q: search.trim(),
         limit: 60,
       })
@@ -230,7 +238,7 @@ export function TimetablePage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [groupKey, selectedDepartment, selectedMajor, search]);
+  }, [groupKey, selectedDepartment, selectedMajor, majorCategory, search]);
 
   /** 학부를 가진 단과대만. "미지정"은 잘못 생성된 껍데기라 서버가 이미 걸러준다. */
   const colleges = [...new Set(departments.map((item) => item.college))].sort();
@@ -728,7 +736,7 @@ export function TimetablePage() {
                 >
                   <option value="">
                     {selectedDepartment && selectedDepartment.majors.length > 0
-                      ? "전공 전체"
+                      ? "학부 공통 (전공 미지정)"
                       : "세부전공 없음"}
                   </option>
                   {(selectedDepartment?.majors ?? []).map((major) => (
@@ -738,6 +746,24 @@ export function TimetablePage() {
                   ))}
                 </select>
               </label>
+            </div>
+          ) : null}
+
+          {groupKey === "major" ? (
+            <div className="timetable-filters is-sub">
+              {MAJOR_CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  className={majorCategory === category ? "selected" : ""}
+                  onClick={() =>
+                    // 켜진 칩을 다시 누르면 해제 → 전공 전체
+                    setMajorCategory((current) => (current === category ? "" : category))
+                  }
+                >
+                  {category}
+                </button>
+              ))}
             </div>
           ) : null}
 
