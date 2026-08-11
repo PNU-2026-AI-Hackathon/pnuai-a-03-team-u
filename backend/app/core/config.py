@@ -19,7 +19,12 @@ class Settings(BaseSettings):
     # 해당 프로바이더의 API 키(OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_API_KEY)와
     # langchain 통합 패키지(langchain-openai / langchain-anthropic /
     # langchain-google-genai)가 함께 있어야 한다.
-    ROADMAP_AGENT_MODEL: str = "openai:gpt-4o"
+    #
+    # 2026-08 golden dataset N=3 벤치 결과 gpt-5.4-nano(Luna)를 기본으로 채택:
+    # gpt-4o-mini 대비 pass율 55%→79% (+24%p), median latency 10.2s→7.2s (-30%),
+    # 총 비용은 1.2배로 소폭 상승만. 특히 부전공 필수과목 판정 회귀(case 08)가
+    # 모델 업그레이드로 자동 해결됨. 상세: backend/tests/eval/.
+    ROADMAP_AGENT_MODEL: str = "openai:gpt-5.4-nano"
 
     PNU_LOGIN_ID: str | None = None
     PNU_LOGIN_PW: str | None = None
