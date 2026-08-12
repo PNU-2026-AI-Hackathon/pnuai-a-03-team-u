@@ -6,6 +6,10 @@ import {
   applyTimetableToRoadmap,
   chatWithTimetableAgent,
   createTimetable,
+  createTimetableChatSession,
+  deleteTimetableChatSession,
+  getTimetableChatMessages,
+  listTimetableChatSessions,
   deleteTimetable,
   getTimetable,
   listTimetables,
@@ -15,7 +19,7 @@ import {
   type SuggestedOffering,
   type TimetableApplyResult,
   type TimetableChatSuggestion,
-  type TimetableChatTurn,
+  type TimetableChatSession,
   type TimetableDetail,
   type TimetableSummary,
 } from "../api/timetable";
@@ -126,6 +130,15 @@ export function TimetablePage() {
   const [isSending, setIsSending] = useState(false);
 
   /**
+   * 시간표 챗 세션. #120에서 대화가 서버에 저장되기 시작해, 새로고침해도
+   * 대화가 유지되고 스레드를 나눠 관리할 수 있다.
+   */
+  const [chatSessions, setChatSessions] = useState<TimetableChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isConfirmingChatDelete, setIsConfirmingChatDelete] = useState(false);
+
+  /**
    * AI가 마지막으로 제안한 시간표와 사용자가 체크한 분반.
    *
    * 에이전트는 DB를 쓰지 않는다 — 여기서 사용자가 고르고 승인 버튼을 눌러야
@@ -181,6 +194,84 @@ export function TimetablePage() {
       cancelled = true;
     };
   }, []);
+
+  // 대화 세션 목록을 불러오고, 최근 세션의 대화를 복원한다.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const sessions = await listTimetableChatSessions(TARGET_YEAR, TARGET_SEMESTER);
+        if (cancelled) return;
+        setChatSessions(sessions);
+        if (sessions.length > 0) {
+          const latest = sessions[0]; // 서버가 최신순으로 준다
+          setActiveChatId(latest.session_id);
+          const messages = await getTimetableChatMessages(latest.session_id);
+          if (cancelled) return;
+          setChat(
+            messages.map((m) => ({ key: `m-${m.id}`, role: m.role, content: m.content })),
+          );
+        }
+      } catch {
+        // 대화 복원 실패는 화면을 막지 않는다 — 새 대화로 시작하면 된다.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSelectChatSession(sessionId: number) {
+    if (sessionId === activeChatId || isSending) return;
+    setIsConfirmingChatDelete(false);
+    setActiveChatId(sessionId);
+    setIsChatLoading(true);
+    setChat([]);
+    try {
+      const messages = await getTimetableChatMessages(sessionId);
+      setChat(messages.map((m) => ({ key: `m-${m.id}`, role: m.role, content: m.content })));
+    } catch {
+      setChat([]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  }
+
+  async function handleCreateChatSession() {
+    if (isSending) return;
+    setIsConfirmingChatDelete(false);
+    try {
+      const created = await createTimetableChatSession(TARGET_YEAR, TARGET_SEMESTER);
+      setChatSessions((current) => [created, ...current]);
+      setActiveChatId(created.session_id);
+      setChat([]);
+      setSuggestion(null);
+      setSelectedOfferingIds(new Set());
+    } catch {
+      // 생성 실패 시 기존 세션 유지
+    }
+  }
+
+  /** 서버에서 세션·메시지를 실제로 지운다(복구 불가). 화면 안 확인 바를 거친다. */
+  async function handleDeleteChatSession() {
+    if (activeChatId === null) return;
+    setIsConfirmingChatDelete(false);
+    try {
+      await deleteTimetableChatSession(activeChatId);
+      const remaining = chatSessions.filter((s) => s.session_id !== activeChatId);
+      setChatSessions(remaining);
+      const next = remaining[0] ?? null;
+      setActiveChatId(next?.session_id ?? null);
+      if (next) {
+        const messages = await getTimetableChatMessages(next.session_id);
+        setChat(messages.map((m) => ({ key: `m-${m.id}`, role: m.role, content: m.content })));
+      } else {
+        setChat([]);
+      }
+    } catch {
+      // 삭제 실패 시 그대로 둔다
+    }
+  }
 
   // 학부 목록은 한 번만 통째로 받아 드롭다운에 채운다(정식 편제 110여 개).
   // 다른 학부 과목도 담을 수 있어야 해서 내 학적으로 좁히지 않는다.
@@ -351,22 +442,23 @@ export function TimetablePage() {
     const message = text.trim();
     if (!message || isSending) return;
 
-    // 서버가 대화를 저장하지 않으므로 지금까지의 대화를 그대로 넘겨준다.
-    const history: TimetableChatTurn[] = chat.map((entry) => ({
-      role: entry.role,
-      content: entry.content,
-    }));
-
     setPrompt("");
     setIsSending(true);
     setChat((current) => [...current, { key: `u-${current.length}`, role: "user", content: message }]);
     try {
+      // 대화는 서버 세션에 저장된다. session_id 없이 보내면 서버가 최근 세션을
+      // 이어 쓰거나 새로 만들고, 응답으로 알려준다.
       const response = await chatWithTimetableAgent(
         TARGET_YEAR,
         TARGET_SEMESTER,
         message,
-        history,
+        activeChatId ?? undefined,
       );
+      setActiveChatId(response.session_id);
+      // 새 세션이 생겼으면 목록 요약을 갱신한다.
+      void listTimetableChatSessions(TARGET_YEAR, TARGET_SEMESTER)
+        .then(setChatSessions)
+        .catch(() => undefined);
       setChat((current) => [
         ...current,
         { key: `a-${current.length}`, role: "assistant", content: response.reply },
@@ -891,8 +983,73 @@ export function TimetablePage() {
             </div>
           </header>
 
+          {/* 대화 스레드 전환. 로드맵 AI 레일과 같은 구성이라 스타일을 공유한다. */}
+          <div className="ai-session-bar">
+            <select
+              className="ai-session-select"
+              aria-label="대화 스레드 선택"
+              value={activeChatId ?? ""}
+              disabled={isSending || isChatLoading || chatSessions.length === 0}
+              onChange={(event) => void handleSelectChatSession(Number(event.target.value))}
+            >
+              {chatSessions.length === 0 ? <option value="">새 대화</option> : null}
+              {chatSessions.map((session) => (
+                <option key={session.session_id} value={session.session_id}>
+                  {(session.title?.trim() || "제목 없는 대화")} · {session.message_count}개
+                </option>
+              ))}
+            </select>
+            <button
+              className="ai-session-new"
+              type="button"
+              aria-label="새 대화 시작"
+              title="새 대화 시작"
+              disabled={isSending}
+              onClick={() => void handleCreateChatSession()}
+            >
+              <Plus size={15} aria-hidden="true" />
+            </button>
+            <button
+              className="ai-session-delete"
+              type="button"
+              aria-label="이 대화 삭제"
+              title="이 대화 삭제"
+              disabled={isSending || activeChatId === null}
+              onClick={() => setIsConfirmingChatDelete(true)}
+            >
+              <Trash2 size={15} aria-hidden="true" />
+            </button>
+          </div>
+
+          {isConfirmingChatDelete && activeChatId !== null ? (
+            <div className="ai-session-confirm" role="alertdialog" aria-label="대화 삭제 확인">
+              <p>
+                이 대화를 삭제할까요?
+                {(() => {
+                  const target = chatSessions.find((s) => s.session_id === activeChatId);
+                  return target && target.message_count > 0
+                    ? ` 메시지 ${target.message_count}개가 함께 지워집니다.`
+                    : null;
+                })()}
+                <span> 되돌릴 수 없습니다.</span>
+              </p>
+              <div className="ai-session-confirm-actions">
+                <button type="button" onClick={() => setIsConfirmingChatDelete(false)}>취소</button>
+                <button
+                  className="ai-session-confirm-delete"
+                  type="button"
+                  autoFocus
+                  onClick={() => void handleDeleteChatSession()}
+                >
+                  <Trash2 size={13} aria-hidden="true" /> 삭제
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="timetable-chat" aria-live="polite">
-            {chat.length === 0 ? (
+            {isChatLoading ? <p className="timetable-empty">지난 대화를 불러오는 중입니다…</p> : null}
+            {!isChatLoading && chat.length === 0 ? (
               <p className="timetable-empty">
                 남은 요건이나 원하는 조건을 말하면 로드맵 기준으로 답해드립니다.
               </p>
