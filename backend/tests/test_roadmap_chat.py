@@ -1117,6 +1117,99 @@ class RetakeCandidatesTest(unittest.TestCase):
         self.assertEqual(["B", "A", "C"], [c["course_name"] for c in result])
 
 
+class ConditionalPromptAssemblyTest(unittest.TestCase):
+    """프롬프트 fatigue 대응 — 학생 상태에 맞는 조건부 규칙만 시스템 프롬프트에 포함.
+    무관한 규칙이 매 대화턴 노출돼 LLM 규칙 준수도가 떨어지는 걸 완화 (case 08 관측)."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_baseline_user(self, db, career_goal=None, admission_type="freshman"):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20, career_goal=career_goal,
+                    admission_type=admission_type)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(CourseRoadmap(id=1, user_id=1))
+        db.flush()
+        return user
+
+    def test_baseline_freshman_gets_minimal_rules(self):
+        """부·복수전공 없고 진로 없는 신입은 조건부 규칙 거의 없음."""
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertNotIn("non_primary_programs", rules)
+        self.assertNotIn("career_dept_mismatch", rules)
+        self.assertNotIn("transfer_student", rules)
+        self.assertNotIn("retake_candidates", rules)
+
+    def test_non_primary_activates_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.add(UserAcademicProgram(user_id=1, program_type="minor",
+                                    department_id=40, curriculum_year=2024))
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("non_primary_programs", rules)
+        # non-primary가 있으면 mismatch 규칙은 배제 (이미 부·복수로 대응)
+        self.assertNotIn("career_dept_mismatch", rules)
+
+    def test_career_without_non_primary_triggers_mismatch(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db, career_goal="백엔드 개발자")
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("career_dept_mismatch", rules)
+
+    def test_transfer_admission_triggers_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db, admission_type="transfer")
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("transfer_student", rules)
+
+    def test_low_gpa_triggers_retake_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("retake_candidates", rules)
+
+    def test_build_system_prompt_shorter_for_baseline(self):
+        """baseline 학생의 프롬프트가 non-primary+mismatch+... 학생보다 짧다."""
+        from app.domains.planning.roadmap_chat import _build_system_prompt
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.commit()
+        baseline_prompt, _ = _build_system_prompt(db, user)
+
+        # 복잡한 학생: 진로 + non-primary + 편입 + 저성적
+        db2 = self.make_db()
+        user2 = self.make_baseline_user(db2, career_goal="AI",
+                                        admission_type="transfer")
+        db2.add(UserAcademicProgram(user_id=1, program_type="minor",
+                                     department_id=40, curriculum_year=2024))
+        db2.add(StudentCourseRecord(user_id=1, raw_course_name="X",
+                                      grade="D+", grade_point=1.5, year="2024"))
+        db2.commit()
+        complex_prompt, _ = _build_system_prompt(db2, user2)
+
+        self.assertLess(len(baseline_prompt), len(complex_prompt))
+
+
 class StripMarkdownFenceTest(unittest.TestCase):
     """`_llm_judge`가 gpt-4o-mini의 ```json ... ``` 감싼 응답에서 fence만 제거하고
     본문을 온전히 반환하는지. 이전 문자셋 기반(lstrip("json\\n"))의 왜곡 가능성 회피."""
