@@ -1009,6 +1009,114 @@ class CriticalMissingRequiredTest(unittest.TestCase):
         self.assertIn("자료구조", names)
 
 
+class RetakeCandidatesTest(unittest.TestCase):
+    """재수강 권유 후보 감지: SCR grade_point가 C+(2.5) 이하인 과목만 flag.
+    이름 정규화 후 최고 grade_point 기준(재수강 후 개선된 성적 반영)."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_user(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.flush()
+        return user
+
+    def test_flags_low_gpa_course(self):
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        # D+ (1.5) — 재수강 대상
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(1, len(result))
+        self.assertEqual("이산수학", result[0]["course_name"])
+        self.assertEqual(1.5, result[0]["current_grade_point"])
+
+    def test_skips_high_gpa_course(self):
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        # A0 (4.0) — 재수강 불필요
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3,
+                                     grade="A0", grade_point=4.0, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_boundary_at_c_plus(self):
+        """C+ (2.5) 정확히 경계 — 규정상 재수강 가능이라 pass (<=)."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="알고리즘",
+                                     category="전공필수", credits=3,
+                                     grade="C+", grade_point=2.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(1, len(result))
+
+    def test_uses_best_grade_across_retakes(self):
+        """같은 과목의 두 기록(원 성적 D0, 재수강 B0)이면 최고 B0(3.0) 기준 → 재수강 불필요."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     category="전공필수", credits=3,
+                                     grade="D0", grade_point=1.0, year="2024", is_retake=False))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     category="전공필수", credits=3,
+                                     grade="B0", grade_point=3.0, year="2025", is_retake=True))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_skips_records_without_grade_point(self):
+        """grade_point가 None(포털 미동기화 등)이면 판단 불가로 제외."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="교양A",
+                                     category="교양선택", credits=2,
+                                     grade=None, grade_point=None, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_normalizes_roman_variants(self):
+        """'컴퓨터프로그래밍 Ⅰ' 원 성적 F + '컴퓨터프로그래밍(I)' 재수강 A0 → 정규화 후 A0."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3,
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍(I)",
+                                     category="전공기초", credits=3,
+                                     grade="A0", grade_point=4.0, year="2025", is_retake=True))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_sort_by_grade_ascending(self):
+        """성적 낮은 순 정렬 — LLM이 우선순위 짐작에 도움."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="A",
+                                     grade="C0", grade_point=2.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="B",
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="C",
+                                     grade="C+", grade_point=2.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(["B", "A", "C"], [c["course_name"] for c in result])
+
+
 class SafeCallDispatchGuardTest(unittest.TestCase):
     """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
     스키마에 없는 필드 추가. 예전엔 handler(**tool_input)가 TypeError로 죽고, langfuse
