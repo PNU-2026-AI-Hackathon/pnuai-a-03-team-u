@@ -20,7 +20,11 @@ from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.models import Department, Major
 from app.domains.courses.models import Course, CourseOffering
-from app.domains.planning.history import project_curriculum_term, sync_completed_courses_to_roadmap
+from app.domains.planning.history import (
+    project_calendar_term,
+    project_curriculum_term,
+    sync_completed_courses_to_roadmap,
+)
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
 from app.domains.users.models import User
 
@@ -49,6 +53,8 @@ class RoadmapItemResponse(BaseModel):
     planned_grade: int | None
     planned_year: str | None
     planned_semester: str | None
+    # 화면이 학년 슬롯에 배치할 때 쓰는 커리큘럼 학기. 달력 학기와 다를 수 있다.
+    curriculum_semester: str | None
     course_name: str | None
     department_name: str | None
     major_name: str | None
@@ -98,6 +104,7 @@ def _item_to_response(db: Session, item: CourseRoadmapItem) -> RoadmapItemRespon
         planned_grade=item.planned_grade,
         planned_year=item.planned_year,
         planned_semester=item.planned_semester,
+        curriculum_semester=item.curriculum_semester,
         course_name=item.course_name,
         department_name=department_name,
         major_name=major_name,
@@ -224,6 +231,9 @@ class RoadmapItemCreateRequest(BaseModel):
     planned_grade: int | None = None
     planned_year: str | None = None
     planned_semester: str | None = None
+    # 화면은 "4학년 1학기" 같은 커리큘럼 슬롯만 보여주므로 프론트가 아는 건 이쪽이다.
+    # 달력 학기(planned_year/planned_semester)는 서버가 이수 기록에서 환산한다.
+    curriculum_semester: str | None = None
     reason: str | None = None
 
 
@@ -232,9 +242,36 @@ class RoadmapItemUpdateRequest(BaseModel):
     planned_grade: int | None = None
     planned_year: str | None = None
     planned_semester: str | None = None
+    curriculum_semester: str | None = None
     status: str | None = None
     is_confirmed: bool | None = None
     reason: str | None = None
+
+
+def _fill_missing_term_axis(db: Session, user_id: int, item: CourseRoadmapItem) -> None:
+    """달력 축과 커리큘럼 축 중 비어 있는 쪽을 이수 기록으로 환산해 채운다.
+
+    프론트는 로드맵 화면에서 커리큘럼 슬롯("4학년 1학기")만, 시간표 화면에서는
+    달력 학기("2026년 2학기")만 안다. 둘 중 아는 쪽만 보내게 두고 나머지는
+    여기서 맞춘다 — 한쪽만 저장되면 다른 화면에서 항목이 통째로 사라진다.
+    """
+    if item.planned_grade is not None and item.curriculum_semester and not item.planned_semester:
+        year, semester = project_calendar_term(
+            db, user_id, item.planned_grade, item.curriculum_semester
+        )
+        if semester is not None:
+            item.planned_semester = semester
+            if not item.planned_year:
+                item.planned_year = year
+        return
+
+    if item.planned_year and item.planned_semester and not item.curriculum_semester:
+        grade, semester = project_curriculum_term(
+            db, user_id, item.planned_year, item.planned_semester
+        )
+        item.curriculum_semester = semester
+        if item.planned_grade is None:
+            item.planned_grade = grade
 
 
 def _set_course(db: Session, item: CourseRoadmapItem, course_id: int) -> None:
@@ -265,9 +302,11 @@ def create_roadmap_item(
         planned_grade=payload.planned_grade,
         planned_year=payload.planned_year,
         planned_semester=payload.planned_semester,
+        curriculum_semester=payload.curriculum_semester,
         reason=payload.reason,
         source="manual",
     )
+    _fill_missing_term_axis(db, current_user.id, item)
     _set_course(db, item, payload.course_id)
     db.add(item)
     db.commit()
@@ -293,8 +332,15 @@ def update_roadmap_item(
 ):
     item = _get_owned_item(db, current_user.id, roadmap_id, item_id)
     data = payload.model_dump(exclude_unset=True, exclude={"course_id"})
+    # 학기를 옮기면 반대쪽 축은 낡은 값이 된다. 넘어오지 않은 쪽을 비워
+    # _fill_missing_term_axis가 다시 환산하게 한다.
+    if "curriculum_semester" in data and "planned_semester" not in data:
+        item.planned_semester = None
+    if "planned_semester" in data and "curriculum_semester" not in data:
+        item.curriculum_semester = None
     for field, value in data.items():
         setattr(item, field, value)
+    _fill_missing_term_axis(db, current_user.id, item)
     if payload.course_id is not None:
         _set_course(db, item, payload.course_id)
     db.commit()
@@ -389,15 +435,11 @@ def apply_timetable_to_roadmap(
 
     # planned_grade가 비면 로드맵 화면이 이 항목을 학년 슬롯에 넣지 못하고
     # "2026년 2학기" 같은 기타 칸으로 떨어뜨린다. 프론트가 안 넘겨주면
-    # 이수 기록에서 커리큘럼 학년을 직접 계산한다.
-    planned_grade = payload.planned_grade
-    curriculum_semester = payload.semester
-    if planned_grade is None:
-        planned_grade, projected_semester = project_curriculum_term(
-            db, current_user.id, payload.year, payload.semester
-        )
-        if planned_grade is not None and projected_semester is not None:
-            curriculum_semester = projected_semester
+    # 이수 기록에서 커리큘럼 학년/학기를 직접 계산한다.
+    projected_grade, curriculum_semester = project_curriculum_term(
+        db, current_user.id, payload.year, payload.semester
+    )
+    planned_grade = payload.planned_grade if payload.planned_grade is not None else projected_grade
 
     applied: list[CourseRoadmapItem] = []
     skipped: list[TimetableApplySkipped] = []
@@ -430,14 +472,14 @@ def apply_timetable_to_roadmap(
             continue
 
         # 같은 학기·같은 과목 중복 → 조용히 스킵 (LLM이 upstream에서 이미 안내한 전제)
-        # 저장하는 값(curriculum_semester)과 같은 기준으로 찾아야 한다. 달력 학기로
-        # 찾으면 방금 저장한 항목을 다음 호출에서 못 찾아 중복이 쌓인다.
+        # 저장하는 값(달력 학기)과 같은 기준으로 찾아야 방금 저장한 항목을 다음
+        # 호출에서 다시 찾아내 중복이 쌓이지 않는다.
         existing = db.scalar(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap.id,
                 CourseRoadmapItem.course_id == course.id,
                 CourseRoadmapItem.planned_year == payload.year,
-                CourseRoadmapItem.planned_semester == curriculum_semester,
+                CourseRoadmapItem.planned_semester == payload.semester,
             )
         )
         if existing is not None:
@@ -475,11 +517,11 @@ def apply_timetable_to_roadmap(
             category=course.category,
             credits=course.credits,
             planned_grade=planned_grade,
+            # 달력 축은 요청 그대로, 커리큘럼 축은 이수 기록에서 환산한 값.
+            # 휴학으로 둘이 어긋나도 로드맵의 학년 슬롯에 정확히 들어간다.
             planned_year=payload.year,
-            # planned_year는 달력 연도, planned_semester는 커리큘럼 학기다
-            # (history.py가 이수 기록을 옮길 때 쓰는 것과 같은 규약). 휴학으로
-            # 달력과 커리큘럼이 어긋나도 로드맵의 학년 슬롯에 정확히 들어간다.
-            planned_semester=curriculum_semester,
+            planned_semester=payload.semester,
+            curriculum_semester=curriculum_semester,
             source="ai",  # AI(시간표 에이전트)가 후보를 제시
             is_confirmed=True,  # 사용자가 UI에서 명시적으로 저장 눌러서 확정
             status="planned",

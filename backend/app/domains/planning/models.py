@@ -60,9 +60,20 @@ class CourseRoadmapItem(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     roadmap_id: Mapped[int] = mapped_column(ForeignKey("course_roadmaps.id"), index=True)
     course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
+    # 학기는 두 개의 축을 따로 들고 있다. 하나에 섞으면 어느 쪽도 신뢰할 수 없다.
+    #   달력  : planned_year + planned_semester — "2026년 1학기". 과목 개설/시간표
+    #           조회, 학기별 학점 상한, 시간 순 정렬이 모두 이 축을 쓴다.
+    #   커리큘럼: planned_grade + curriculum_semester — "3학년 2학기". 로드맵 화면의
+    #           학년 슬롯과 요건 판단이 이 축을 쓴다.
+    # 휴학·편입이 있으면 둘은 어긋난다(2026년 1학기가 커리큘럼상 3학년 2학기).
+    # 예전에는 planned_semester에 커리큘럼 학기를 넣었는데, 그러면 planned_year와
+    # 짝지어 읽을 때 존재한 적 없는 학기("2026년 2학기")가 되어 버렸다.
     planned_grade: Mapped[int | None] = mapped_column()
     planned_year: Mapped[str | None] = mapped_column(String(10))
     planned_semester: Mapped[str | None] = mapped_column(String(20))
+    # 정규 학기(1/2학기)일 때만 채운다. 계절수업·입학전성적은 커리큘럼 학년에
+    # 속하지 않아 null이고, 화면이 planned_semester 원본으로 따로 그린다.
+    curriculum_semester: Mapped[str | None] = mapped_column(String(20))
     # course_id가 null이거나 모호한 경우(동명 과목이 여러 학과에 개설된 경우가 흔해서
     # 실제로 자주 발생함)에도 항상 보여줘야 해서 스냅샷으로 저장한다.
     # course_name/category/credits는 "쓰는 시점"에 확정된 값(과거 이력은
