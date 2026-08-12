@@ -89,8 +89,13 @@ class RoadmapItemSpec:
 
     course_name: str
     planned_grade: int | None = None
+    # 달력 축. 휴학·편입이 없는 페르소나는 커리큘럼 축과 같다.
     planned_year: str | None = None
     planned_semester: str | None = None
+    # 커리큘럼 축. 생략하면 시드가 planned_semester를 그대로 쓴다 — 두 축이 같은
+    # 페르소나(대다수)를 매번 두 번 적지 않기 위한 기본값이다. 엇학기 페르소나는
+    # 반드시 명시해야 실제 데이터와 같은 모양이 된다.
+    curriculum_semester: str | None = None
     credits: float | None = None
     course_id: int | None = None
     category: str | None = None

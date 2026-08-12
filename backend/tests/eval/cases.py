@@ -257,8 +257,13 @@ def case_staggered_semester() -> EvalCase:
                                        required_total_credits=133)],
         courses=_cs_catalog(),
         records=completed,
+        # 이수분은 휴학(2024-2) 이전이라 달력 축과 커리큘럼 축이 아직 일치한다.
+        # 두 축이 갈라지는 건 복학 이후 계획분부터다 — 그건 도구 계층 단위 테스트
+        # (test_roadmap_chat.RoadmapItemTermAxisTest)가 결정적으로 검증한다.
         roadmap_items=[
             RoadmapItemSpec(course_name=r.raw_course_name, planned_grade=int(r.year) - 2021,
+                            planned_year=r.year, planned_semester=r.semester,
+                            curriculum_semester=r.semester,
                             status="completed")
             for r in completed
         ],

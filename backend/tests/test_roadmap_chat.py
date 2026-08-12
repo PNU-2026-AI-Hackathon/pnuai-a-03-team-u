@@ -115,6 +115,67 @@ class ProposeChangeGradeGuardTest(unittest.TestCase):
         self.assertEqual(result["next_plannable_term"], {"year": "2027", "semester": "1학기"})
 
 
+class RoadmapItemTermAxisTest(unittest.TestCase):
+    """`get_roadmap_items`의 items[]가 커리큘럼 축을 그대로 실어 보내는지.
+
+    학기 축 분리 이후 `planned_semester`는 달력 학기다. LLM이 학생에게 "언제 듣는
+    과목"인지 말할 때 쓰는 커리큘럼 학기는 `curriculum_semester`에만 있다. 이 필드가
+    payload에서 빠지면 LLM은 `planned_grade`를 달력 `planned_semester`와 짝지어
+    읽을 수밖에 없고, 휴학·편입 학생에게 존재한 적 없는 학기를 말하게 된다.
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db, items):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트")
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        for kwargs in items:
+            db.add(CourseRoadmapItem(roadmap_id=roadmap.id, **kwargs))
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_items_carry_curriculum_semester_separate_from_calendar(self):
+        """휴학으로 두 축이 어긋난 항목. 달력 2026-1학기 = 커리큘럼 3학년 2학기."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, [dict(
+            course_name="운영체제",
+            planned_year="2026", planned_semester="1학기",
+            planned_grade=3, curriculum_semester="2학기",
+        )])
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            item = ctx.get_roadmap_items()["items"][0]
+
+        # 달력 축은 달력 그대로.
+        self.assertEqual(item["planned_year"], "2026")
+        self.assertEqual(item["planned_semester"], "1학기")
+        # 커리큘럼 축이 별도로 실려야 한다. planned_grade와 짝지어 "3학년 2학기".
+        self.assertEqual(item["planned_grade"], 3)
+        self.assertEqual(item["curriculum_semester"], "2학기")
+
+    def test_curriculum_semester_is_null_for_summer_session(self):
+        """계절수업은 커리큘럼 학년에 속하지 않는다 — null을 그대로 넘겨야 LLM이
+        학년을 지어내지 않는다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, [dict(
+            course_name="교양세미나",
+            planned_year="2026", planned_semester="여름계절",
+            planned_grade=None, curriculum_semester=None,
+        )])
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            item = ctx.get_roadmap_items()["items"][0]
+
+        self.assertEqual(item["planned_semester"], "여름계절")
+        self.assertIsNone(item["curriculum_semester"])
+
+
 class SearchCoursesBrowsingTest(unittest.TestCase):
     """search_courses가 빈 query + semester/category 필터만으로도 학기별 후보를
     돌려줘야 한다. 예전엔 빈 query면 무조건 빈 결과였고 필터도 노출 안 됐다 —

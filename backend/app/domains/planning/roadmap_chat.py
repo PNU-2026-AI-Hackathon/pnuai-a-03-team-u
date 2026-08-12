@@ -294,7 +294,12 @@ _CONDITIONAL_RULES: dict[str, str] = {
   - **`search_courses`의 `semester` 필터는 `next_plannable_term.semester`(달력)를 써라.**
   - **요건·학년 판단은 `next_curriculum_term.grade/semester`(커리큘럼)를 기준으로.**
   - `propose_change`의 `planned_year`는 달력, `planned_semester`는 달력, `planned_grade`
-    는 커리큘럼으로 넣어라.""",
+    는 커리큘럼으로 넣어라.
+  - **이미 담긴 항목의 학기를 학생에게 말할 때**: `items[]`의 `planned_grade`는
+    `curriculum_semester`와 짝지어 "3학년 2학기"로 읽어라. `planned_semester`는 달력
+    학기여서 `planned_grade`와 짝지으면 학생이 다닌 적 없는 학기가 된다.
+    `curriculum_semester`가 null이면(계절수업·입학전성적) 학년 없이 달력 학기로만
+    말해라.""",
 
     "critical_missing": """
 - **필수 미이수 + 개설학기 어긋남 = 졸업 위험, 반드시 경고**: `get_roadmap_items` 응답의
@@ -1218,9 +1223,16 @@ class _ToolContext:
                     "course_name": item.course_name,
                     "category": item.category,
                     "credits": item.credits,
+                    # 항목의 학기도 두 축이다(CourseRoadmapItem 주석 참고).
+                    #   달력   : planned_year + planned_semester — "2026년 1학기"
+                    #   커리큘럼: planned_grade + curriculum_semester — "3학년 2학기"
+                    # planned_grade를 planned_semester와 짝지어 읽으면 안 된다. 휴학·편입
+                    # 학생은 둘이 어긋나서 "3학년 1학기"처럼 존재한 적 없는 학기가 된다.
                     "planned_year": item.planned_year,
                     "planned_semester": item.planned_semester,
                     "planned_grade": item.planned_grade,
+                    # 계절수업·입학전성적은 커리큘럼 학년에 속하지 않아 null이다.
+                    "curriculum_semester": item.curriculum_semester,
                     "status": item.status,
                     "source": item.source,
                     "is_confirmed": item.is_confirmed,

@@ -147,6 +147,7 @@ def build_persona_db(spec: PersonaSpec) -> tuple[Session, User, CourseRoadmap]:
             planned_grade=it.planned_grade,
             planned_year=it.planned_year,
             planned_semester=it.planned_semester,
+            curriculum_semester=it.curriculum_semester or it.planned_semester,
             credits=it.credits,
             category=it.category,
             status=it.status,
