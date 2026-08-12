@@ -528,6 +528,88 @@ def _safe_call(handler, tool_input: dict) -> dict:
     return result
 
 
+def _compute_critical_missing_required(
+    db: Session,
+    user: User,
+    roadmap_id: int | None,
+    reference_semester: str,
+) -> list[dict]:
+    """학과 필수·기초 과목 중 (a) 미이수 (b) courses.semester가 단일 학기 전용
+    ('1' 또는 '2') (c) 그 개설 학기가 `reference_semester`와 다름 — 조건을 모두
+    만족하는 과목 목록.
+
+    졸업 위험 감지용. 예: 4학년 2학기 학생이 컴퓨터구조(전공필수, 2학기 전용)를
+    미이수면, 다음 학기(1학기)엔 못 듣는다는 사실을 LLM이 도구 결과로 즉시 인지해서
+    finish_response에 위험 경고를 붙일 수 있게 한다. 이 정보 없이는 LLM이
+    courses.semester를 스스로 크로스체크하지 않고 무해한 추천만 나열해 사용자가
+    졸업 실패 위험을 모른 채로 넘어간다 (case 13 관측).
+
+    - **roadmap 챗**: `reference_semester = next_plannable_term.semester` (다음 학기)
+      → "다음 학기에 못 듣는 필수" 목록
+    - **timetable 챗**: `reference_semester = target_term.semester` (이번 학기)
+      → "이번 학기 시간표에 넣을 수 없는 필수" 목록
+
+    `1,2` / `전학기` / 계절수업 개설 과목은 어느 학기든 미룰 수 있어 제외.
+    `roadmap_id=None`이면 status='completed' 로드맵 항목은 이수 세트에서 빠지고
+    student_course_records만 본다 (timetable 챗은 로드맵 없이도 호출 가능).
+    """
+    if user.department_id is None:
+        return []
+
+    def _norm(n: str | None) -> str:
+        """propose_change의 _norm과 동일 규칙: 유니코드 로마자 정규화 + 괄호·공백 제거."""
+        if not n:
+            return ""
+        roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+        s = "".join(roman.get(ch, ch) for ch in n)
+        return s.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+    # 이수 완료 세트: student_course_records + 로드맵의 status='completed' (있으면)
+    completed_norms: set[str] = set()
+    for r in db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
+    ).all():
+        completed_norms.add(_norm(r.raw_course_name))
+    if roadmap_id is not None:
+        for it in db.scalars(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == roadmap_id,
+                CourseRoadmapItem.status == "completed",
+            )
+        ).all():
+            completed_norms.add(_norm(it.course_name))
+
+    ref_char = str(reference_semester).replace("학기", "").strip()
+    if ref_char not in ("1", "2"):
+        return []  # 계절수업 등 정규 학기 아니면 위험 판정 불가
+
+    q = select(Course).where(
+        Course.department_id == user.department_id,
+        Course.category.in_(["전공필수", "전공기초"]),
+        Course.semester.in_(["1", "2"]),  # 단일 학기 전용만 (전학기·1,2·계절수업은 미룰 수 있음)
+    )
+    if user.major_id is not None:
+        q = q.where(or_(Course.major_id == user.major_id, Course.major_id.is_(None)))
+
+    critical: list[dict] = []
+    for c in db.scalars(q).all():
+        if _norm(c.course_name) in completed_norms:
+            continue
+        if c.semester == ref_char:
+            continue  # 그 학기에 개설 — 위험 아님
+        critical.append({
+            "course_id": c.id,
+            "course_name": c.course_name,
+            "category": c.category,
+            "offered_semester": c.semester,
+            "reason": (
+                f"학과 필수인데 {c.semester}학기 전용 개설이라 대상 학기"
+                f"({reference_semester})에는 수강 불가"
+            ),
+        })
+    return critical
+
+
 def _build_llm() -> BaseChatModel:
     """ROADMAP_AGENT_MODEL("provider:model")로 langchain ChatModel을 만든다.
 
@@ -723,74 +805,12 @@ class _ToolContext:
         return out
 
     def _critical_missing_required(self, next_planned_semester: str) -> list[dict]:
-        """학과 필수·기초 과목 중 (a) 미이수 (b) courses.semester가 단일 학기 전용
-        ('1' 또는 '2') (c) 그 개설 학기가 다음 배치 가능 학기와 다름 — 조건을 모두
-        만족하는 과목 목록.
-
-        졸업 위험 감지용. 예: 4학년 2학기 학생이 자료구조(전공필수, 1학기 전용)를
-        미이수면, 이번(2학기)엔 못 듣는다는 사실을 LLM이 도구 결과로 즉시 인지해서
-        finish_response에 위험 경고를 붙일 수 있게 한다. 이 정보 없이는 LLM이
-        courses.semester를 스스로 크로스체크하지 않고 무해한 추천만 나열해 사용자가
-        졸업 실패 위험을 모른 채로 넘어간다 (case 13 관측).
-
-        `1,2` / `전학기` / 계절수업 개설 과목은 어느 학기든 미룰 수 있어 제외.
+        """`_compute_critical_missing_required` 얇은 wrapper. 로드맵 챗이 self.roadmap.id를
+        자동으로 넘긴다. 실제 로직·시맨틱은 module-level 함수 docstring 참고.
         """
-        if self.user.department_id is None:
-            return []
-
-        def _norm(n: str | None) -> str:
-            """propose_change의 _norm과 동일 규칙: 유니코드 로마자 정규화 + 괄호·공백 제거."""
-            if not n:
-                return ""
-            roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
-            s = "".join(roman.get(ch, ch) for ch in n)
-            return s.replace("(", "").replace(")", "").replace(" ", "").strip()
-
-        # 이수 완료 세트: student_course_records + 로드맵의 status='completed'
-        completed_norms: set[str] = set()
-        for r in self.db.scalars(
-            select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
-        ).all():
-            completed_norms.add(_norm(r.raw_course_name))
-        for it in self.db.scalars(
-            select(CourseRoadmapItem).where(
-                CourseRoadmapItem.roadmap_id == self.roadmap.id,
-                CourseRoadmapItem.status == "completed",
-            )
-        ).all():
-            completed_norms.add(_norm(it.course_name))
-
-        # next_plannable_term은 "1학기"/"2학기" 문자열, courses.semester는 "1"/"2"라 정렬 필요.
-        next_sem_char = str(next_planned_semester).replace("학기", "").strip()
-        if next_sem_char not in ("1", "2"):
-            return []  # 계절수업 등 정규 학기 아니면 위험 판정 불가
-
-        q = select(Course).where(
-            Course.department_id == self.user.department_id,
-            Course.category.in_(["전공필수", "전공기초"]),
-            Course.semester.in_(["1", "2"]),  # 단일 학기 전용만 (전학기·1,2·계절수업은 미룰 수 있음)
+        return _compute_critical_missing_required(
+            self.db, self.user, self.roadmap.id, next_planned_semester
         )
-        if self.user.major_id is not None:
-            # 학과 안에서 특정 major 대상 or major 무관 공통 과목
-            q = q.where(or_(Course.major_id == self.user.major_id, Course.major_id.is_(None)))
-
-        critical: list[dict] = []
-        for c in self.db.scalars(q).all():
-            if _norm(c.course_name) in completed_norms:
-                continue
-            if c.semester == next_sem_char:
-                continue  # 이번 학기에 개설 — 위험 아님
-            critical.append({
-                "course_id": c.id,
-                "course_name": c.course_name,
-                "category": c.category,
-                "offered_semester": c.semester,
-                "reason": (
-                    f"학과 필수인데 {c.semester}학기 전용 개설이라 다음 학기"
-                    f"({next_planned_semester})에는 수강 불가"
-                ),
-            })
-        return critical
 
     def _completed_courses(self) -> list[dict]:
         """학생 성적표에서 매핑된 이수기록. course_id는 대부분 None(성적표 파싱이 이름만

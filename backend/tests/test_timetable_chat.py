@@ -150,6 +150,47 @@ class StudentContextTest(unittest.TestCase):
         self.assertIn("자료구조", result["completed_course_names"])
         self.assertIn("운영체제", result["completed_course_names"])
         self.assertIn("term_credit_cap", result)
+        # roadmap 챗과 동일한 critical_missing_required 필드가 timetable에도 노출됨
+        self.assertIn("critical_missing_required", result)
+
+    def test_critical_missing_flags_required_not_open_this_semester(self):
+        """target_term=2학기인데 필수과목이 1학기 전용 개설이고 미이수면 critical.
+        roadmap 챗의 동일 헬퍼를 재사용하므로 로직 자체는 roadmap 테스트가 커버 —
+        여기선 timetable 파이프라인이 값을 실제로 노출하는지만 확인."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        # 1학기 전용 전공필수, 학생 미이수 → target_term=2학기와 어긋남 → critical
+        db.add(Course(
+            id=901, course_name="자료구조", department_id=100,
+            category="전공필수", credits=3.0, year="2", semester="1",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertIn("자료구조", names)
+
+    def test_critical_missing_skips_course_open_this_semester(self):
+        """2학기 전용 필수 미이수 + target_term=2학기면 이번에 들 수 있어 critical 아님."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        db.add(Course(
+            id=902, course_name="컴퓨터구조", department_id=100,
+            category="전공필수", credits=3.0, year="2", semester="2",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertNotIn("컴퓨터구조", names)
 
 
 class RunTimetableChatIntegrationTest(unittest.TestCase):
