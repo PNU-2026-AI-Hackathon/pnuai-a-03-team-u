@@ -1,0 +1,57 @@
+name: golden-eval-dry
+
+# 챗 에이전트 골든 데이터셋 하니스가 PR/push마다 정상 구동하는지 확인.
+# LLM 안 부름 (dry-run) — 30초 이내 완료, 비용 0. 시드·프롬프트 빌드·도구 스모크만.
+# 실제 LLM 회귀는 별개 workflow(golden-eval-weekly)가 관측.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/tests/eval/**"
+      - "backend/app/domains/planning/**"
+      - "backend/app/domains/academics/**"
+      - ".github/workflows/golden-eval-dry.yml"
+  pull_request:
+    paths:
+      - "backend/tests/eval/**"
+      - "backend/app/domains/planning/**"
+      - "backend/app/domains/academics/**"
+      - ".github/workflows/golden-eval-dry.yml"
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # pytest는 프로덕션 의존 아니라서 requirements.txt에 없음. CI에서만 필요.
+          pip install pytest
+
+      - name: Dry-run golden dataset (no LLM)
+        working-directory: backend
+        run: python -m tests.eval.run_eval
+
+      - name: Unit tests for eval + chat modules
+        working-directory: backend
+        run: |
+          python -m pytest tests/test_roadmap_chat.py tests/test_timetable_chat.py -q
