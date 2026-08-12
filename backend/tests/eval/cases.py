@@ -538,6 +538,15 @@ def case_tt_time_constraint() -> EvalCase:
         )],
         courses=_cs_catalog(), offerings=offerings,
     )
+    def _no_tuesday_offering(r):
+        """LLM이 화요일 offering(6003)을 스케줄에 포함했으면 fail.
+        답변 텍스트에 '화'가 등장하는 건 제외 이유 설명일 수 있으니 반응 텍스트가 아닌
+        실제 반환된 스케줄 offering_ids로만 판정."""
+        for sched in r.schedules:
+            if 6003 in (sched.get("offering_ids") or []):
+                return "schedule에 화/목 offering(6003) 포함됨 — 사용자 '월수 오전만' 제약 위반"
+        return None
+
     return EvalCase(
         slug="18-tt-time-constraint", persona=persona, agent="timetable",
         prompt="이번 학기 시간표 짜주세요. 조건 있어요 — 월수 오전에만 수업 넣어주세요.",
@@ -545,8 +554,8 @@ def case_tt_time_constraint() -> EvalCase:
         expectations=[
             ExpectedBehavior("tool_called", "validate_timetable",
                              reason="후보 조합 검증 없이 답변하면 안 됨"),
-            ExpectedBehavior("response_absent", "화",
-                             reason="화요일 오후 offering(6003)이 답변에 나오면 사용자 제약 무시"),
+            ExpectedBehavior("custom", _no_tuesday_offering,
+                             reason="반환된 스케줄의 offering_ids에 화요일 6003이 있는지 확인"),
         ],
     )
 

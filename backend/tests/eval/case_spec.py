@@ -183,3 +183,4 @@ class EvalResult:
     iterations_used: int
     pending_changes_count: int = 0
     schedules_count: int = 0
+    schedules: list[dict] = field(default_factory=list)  # 시간표 챗: [{"offering_ids": [...], ...}]

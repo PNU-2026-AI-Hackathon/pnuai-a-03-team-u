@@ -24,6 +24,7 @@ from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
     CourseRoadmap, CourseRoadmapChatMessage, CourseRoadmapChatSession,
     CourseRoadmapItem, PendingRoadmapChange,
+    TimetableChatMessage, TimetableChatSession,
 )
 from app.domains.users.models import User
 
@@ -36,6 +37,7 @@ _TABLES = [
     CourseOffering.__table__, CourseTime.__table__,
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
     CourseRoadmapChatSession.__table__, CourseRoadmapChatMessage.__table__,
+    TimetableChatSession.__table__, TimetableChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__, ProgramCourse.__table__,
 ]

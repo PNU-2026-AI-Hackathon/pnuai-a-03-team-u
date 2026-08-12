@@ -251,11 +251,13 @@ def run_live(case: EvalCase) -> CaseOutcome:
                     message=case.prompt,
                 )
                 iterations = int(out.get("iterations", 0) or 0)
+                schedules_list = list(out.get("schedules", []) or [])
                 result = EvalResult(
                     reply=out.get("reply", ""),
                     tool_calls=list(out.get("tool_calls", []) or []),
                     iterations_used=iterations,
-                    schedules_count=len(out.get("schedules", []) or []),
+                    schedules_count=len(schedules_list),
+                    schedules=schedules_list,
                 )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
