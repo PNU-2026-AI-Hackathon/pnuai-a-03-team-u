@@ -71,9 +71,12 @@ _TIMETABLE_CORE_PROMPT = """너는 부산대 학생의 이번 학기 시간표�
 3. 진로 관련 심화 후보가 필요하면 `list_offered_courses(query=...)` 로 토픽 검색 병행.
    career 검색은 카테고리 훑기의 보조지 대체가 아니다.
 4. 후보 과목 조합을 골라 `validate_timetable`에 넘긴다 — 규칙 코드가 시간 충돌·학점
-   상한을 검증해 유효한 조합만 되돌려준다.
+   상한을 검증해 유효한 조합만 되돌려준다. **매 대화 턴에서 finish_response 전에
+   validate_timetable을 최소 1회 반드시 호출**해라. validate 없이 finish_response로
+   가면 사용자에게 검증 안 된 조합이 노출된다.
 5. 유효 조합을 얻으면 `finish_response`에 후보 시간표(offering_ids 배열들)와 사용자에게
-   보여줄 설명 메시지를 담아 넘긴다.
+   보여줄 설명 메시지를 담아 넘긴다. validate_timetable에서 나온 유효 조합만 schedules
+   에 담을 것 — 검증 안 된 offering_ids는 절대 schedules에 넣지 마라.
 
 **학점 목표**: `get_student_context.target_credit_floor` (상한의 80%) 학점 **이상** 채우는
 조합을 만들어라. 사용자가 "가볍게 듣고 싶다"고 명시한 경우에만 이 하한을 무시한다.
