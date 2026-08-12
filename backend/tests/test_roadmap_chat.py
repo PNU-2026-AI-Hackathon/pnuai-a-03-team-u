@@ -1210,6 +1210,108 @@ class ConditionalPromptAssemblyTest(unittest.TestCase):
         self.assertLess(len(baseline_prompt), len(complex_prompt))
 
 
+class RetakePropseBypassTest(unittest.TestCase):
+    """propose_change의 is_retake 플래그로 이수 완료 재추천 가드를 우회. 단 실제
+    재수강 자격(grade_point <= 2.5)이 있는 과목만 통과."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                      curriculum_year="2024", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_default_blocks_completed_course_recreate(self):
+        """is_retake 기본 False — 이수 완료 과목 create 시도는 여전히 거절."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=200, course_name="이산수학", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="test", course_id=200,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+            )
+        self.assertIn("error", result)
+        self.assertIn("이미 이수한 과목", result["error"])
+
+    def test_retake_flag_bypasses_when_grade_below_threshold(self):
+        """is_retake=True + grade_point <= 2.5 → 정상 통과."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=201, course_name="이산수학", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="사용자 재수강 요청", course_id=201,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertNotIn("error", result)
+        # reason에 [재수강] 태그 자동 부착
+        self.assertEqual(1, len(ctx.pending_changes))
+        self.assertIn("[재수강]", ctx.pending_changes[0].reason)
+
+    def test_retake_flag_rejects_when_grade_above_threshold(self):
+        """is_retake=True 넘겨도 grade_point > 2.5 (B- 이상)면 거절."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=202, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3,
+                                     grade="B0", grade_point=3.0, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="재수강 요청", course_id=202,
+                planned_year="2026", planned_semester="1학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertIn("error", result)
+        self.assertIn("재수강 대상이 아닙니다", result["error"])
+
+    def test_retake_uses_best_grade_across_multiple_records(self):
+        """같은 과목 두 record: 원 성적 F(0.0) + 재수강 B0(3.0). 최고치=3.0이라 재수강 불가."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=203, course_name="컴퓨터구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     grade="B0", grade_point=3.0, year="2025",
+                                     is_retake=True))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="다시 재수강", course_id=203,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertIn("error", result)
+        self.assertIn("재수강 대상이 아닙니다", result["error"])
+
+
 class StripMarkdownFenceTest(unittest.TestCase):
     """`_llm_judge`가 gpt-4o-mini의 ```json ... ``` 감싼 응답에서 fence만 제거하고
     본문을 온전히 반환하는지. 이전 문자셋 기반(lstrip("json\\n"))의 왜곡 가능성 회피."""

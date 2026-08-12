@@ -295,11 +295,15 @@ _CONDITIONAL_RULES: dict[str, str] = {
   "선수 이미 들었어" 반박하면 그대로 받아들이고 진행해라.""",
 
     "retake_candidates": """
-- **재수강 안내는 권유만, 강요하지 마라**: `get_roadmap_items`의 `retake_candidates`에
-  C+ 이하 성적 이수 과목이 있다. 사용자가 (a) GPA 개선을 명시적으로 언급하거나
-  (b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면 그때만 후보를 제시해라. **매 대화마다
-  "재수강 어때?"라고 들이대지 마라** — 사용자 침해. 실제 재수강 등록은 별도 UI 흐름이니
-  "재수강 신청은 프로필/시간표에서 직접 선택하세요"처럼 안내하고 create는 하지 마라.""",
+- **재수강 안내는 권유만, 명시 요청 시 create 가능**: `get_roadmap_items`의
+  `retake_candidates`에 C+ 이하 성적 이수 과목이 있다. 사용자가 (a) GPA 개선을
+  명시적으로 언급하거나 (b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면 그때만 후보를
+  제시해라. **매 대화마다 "재수강 어때?"라고 들이대지 마라** — 사용자 침해.
+  **사용자가 특정 과목을 콕 집어 "이거 재수강 넣어줘"라고 명시 요청**하면 그 과목이
+  retake_candidates에 있는지 확인 후 `propose_change(action="create", course_id=...,
+  is_retake=True, reason="사용자 재수강 요청")` 로 로드맵에 넣어라. is_retake=True
+  없이는 도구가 이수 완료 재추천으로 거절한다. 자격 없는 과목(retake_candidates에
+  없음 = B- 이상)에 억지로 is_retake 넘기면 도구가 거절.""",
 
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
@@ -553,6 +557,16 @@ _TOOLS = [
                             "그 항목을 부전공 이수 항목으로 취급한다."
                         ),
                     },
+                    "is_retake": {
+                        "type": "boolean",
+                        "description": (
+                            "재수강 create 우회 플래그. 기본 false. **사용자가 명시적으로 "
+                            "'이 과목을 재수강하고 싶다'고 요청했고 그 과목이 "
+                            "get_roadmap_items의 retake_candidates에 올라 있는 (=성적 C+ 이하) "
+                            "경우에만 true**로 넘겨라. true여야 이수 완료 재추천 가드를 "
+                            "우회한다. 자격 없는 과목(B- 이상)에 true 넘기면 도구가 거절."
+                        ),
+                    },
                 },
                 "required": ["action", "reason"],
             },
@@ -711,6 +725,27 @@ def _compute_critical_missing_required(
 # 부산대 재수강 규정 상 C+(2.5) 이하만 재수강 가능. 학사 규정이 바뀌면 이 값만 수정.
 # 실제 규정 근거: 학사관리규정 재수강 조항 (기준은 대학·연도별 조금씩 다를 수 있음).
 _RETAKE_GRADE_POINT_THRESHOLD = 2.5
+
+
+def _best_grade_point_for_norm(db: Session, user_id: int, norm_key: str, norm_fn) -> float | None:
+    """정규화된 이름 키로 학생의 그 과목 최고 grade_point 조회. None이면 판단 불가.
+
+    propose_change의 재수강 가드 우회 검증에 사용. `_compute_retake_candidates`와 같은
+    "최고치 유지" 규칙 (재수강해서 이미 개선된 성적을 반영)을 재사용한다.
+    """
+    records = db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
+    ).all()
+    best: float | None = None
+    for r in records:
+        if r.grade_point is None:
+            continue
+        if norm_fn(r.raw_course_name) != norm_key:
+            continue
+        gp = float(r.grade_point)
+        if best is None or gp > best:
+            best = gp
+    return best
 
 
 def _compute_retake_candidates(db: Session, user: User) -> list[dict]:
@@ -1337,6 +1372,7 @@ class _ToolContext:
         planned_semester: str | None = None,
         planned_grade: int | None = None,
         program_type: str | None = None,
+        is_retake: bool = False,
     ) -> dict:
         if action not in ("create", "update", "delete"):
             return {"error": f"알 수 없는 action: {action}"}
@@ -1418,13 +1454,31 @@ class _ToolContext:
                 ).all()
                 match = next((r for r in completed if _norm(r.raw_course_name) == new_norm), None)
                 if match is not None:
-                    return {
-                        "error": (
-                            f"{course_obj.course_name!r}은(는) 이미 이수한 과목입니다"
-                            f"(성적표 원문 '{match.raw_course_name}', {match.year} {match.semester}). "
-                            f"이미 이수한 과목은 로드맵에 다시 넣지 마세요."
-                        )
-                    }
+                    # is_retake=True + 재수강 자격(=최고 grade_point ≤ 2.5) 확인되면 가드 우회.
+                    # LLM이 사용자 명시적 재수강 요청 시에만 이 플래그를 걸도록 프롬프트에서 지시.
+                    # 자격 없는 과목(B- 이상) 재수강 시도는 통과 안 함 — 부산대 규정 C+ 이하만 가능.
+                    if is_retake:
+                        best_gp = _best_grade_point_for_norm(self.db, self.user.id, new_norm, _norm)
+                        if best_gp is not None and best_gp <= _RETAKE_GRADE_POINT_THRESHOLD:
+                            # 재수강으로 정당하게 통과 — pending change 생성 시 reason에 자동 표기.
+                            reason = f"[재수강] {reason}"
+                        else:
+                            return {
+                                "error": (
+                                    f"{course_obj.course_name!r}은(는) 재수강 대상이 아닙니다 "
+                                    f"(현재 최고 성적 GP={best_gp}). 부산대 규정상 C+(2.5) 이하만 "
+                                    f"재수강 가능합니다. is_retake=True 사용은 retake_candidates에 "
+                                    f"올라온 과목에 한합니다."
+                                )
+                            }
+                    else:
+                        return {
+                            "error": (
+                                f"{course_obj.course_name!r}은(는) 이미 이수한 과목입니다"
+                                f"(성적표 원문 '{match.raw_course_name}', {match.year} {match.semester}). "
+                                f"재수강이면 is_retake=True를 넘겨주세요. 아니면 로드맵에 다시 넣지 마세요."
+                            )
+                        }
 
         if action == "create" and course_id is not None:
             # 이미 로드맵에 같은 course_id 항목이 있으면 create 거절.
