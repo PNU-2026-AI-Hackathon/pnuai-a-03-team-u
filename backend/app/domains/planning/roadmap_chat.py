@@ -602,6 +602,9 @@ def _compute_critical_missing_required(
 
     q = select(Course).where(
         Course.department_id == user.department_id,
+        # 부산대 AIS 시드 표준 표기. 카테고리 값이 학과별로 다르게 도입되면
+        # (예: "학과기초", "기초선택") 이 리스트에 추가해야 한다. 향후 스키마에
+        # `category_kind` enum이 생기면 그걸 우선 사용.
         Course.category.in_(["전공필수", "전공기초"]),
         Course.semester.in_(["1", "2"]),  # 단일 학기 전용만 (전학기·1,2·계절수업은 미룰 수 있음)
     )
@@ -715,13 +718,41 @@ def _extract_prereqs_from_description(desc: str | None) -> list[str]:
 
     라벨 없는 자유서술("자료구조를 미리 이수한 학생 대상") 같은 것은 잡지 않는다 —
     false positive 방지가 우선. 이런 경우엔 LLM의 check_prereqs 도구가 대안.
+
+    **파싱 한계**: 라벨이 문장 중간에 있고 뒤에 서술이 이어지는 경우
+    ("선수과목: 자료구조 를 요구한다") false positive 위험. 조사·서술어 꼬리를
+    스트립으로 완화하지만 완벽하진 않음. 실사용 관측되면 구조적 prereq 스키마
+    도입으로 근본 해결 (별도 스코프).
     """
     if not desc:
         return []
     import re
 
     label_re = "|".join(re.escape(lbl) for lbl in _PREREQ_LABELS)
+    # 라벨 뒤 문장 끝까지 greedy 캡처 → 아래에서 구분자로 split + 서술어 tail trim.
+    # greedy 유지 이유: `선수과목: A, B, C` 를 한 번에 잡아야 comma split이 성립.
     pattern = re.compile(rf"(?:{label_re})\s*[:：]\s*([^.。\n]+)")
+
+    # 과목명 뒤에 붙는 조사·서술어 시작 마커. 이 단어들이 whitespace 뒤 별개 토큰으로
+    # 나타나면 그 위치에서 잘라낸다 ("자료구조 를 요구한다" → "자료구조").
+    _PARTICLE_OR_VERB_MARKERS = frozenset({
+        "은", "는", "이", "가", "을", "를", "과", "와", "에", "로",
+        "은데", "인데", "인", "이며", "이수", "필요", "요구", "권장",
+        "및",  # 이미 splitter가 처리하지만 여기서도 안전장치
+    })
+
+    def _trim_tail(name: str) -> str:
+        """공백으로 토큰화 후 첫 조사·서술어 마커 이전까지만 유지 (multi-word 과목명 보존)."""
+        tokens = name.split()
+        keep: list[str] = []
+        for tok in tokens:
+            if tok in _PARTICLE_OR_VERB_MARKERS:
+                break
+            # 어절이 "을...", "를...", "이수...", 같이 시작하면 서술 시작으로 간주
+            if any(tok.startswith(m) for m in ("을", "를", "이수", "필요", "요구", "권장")):
+                break
+            keep.append(tok)
+        return " ".join(keep)
 
     names: list[str] = []
     seen: set[str] = set()
@@ -729,9 +760,9 @@ def _extract_prereqs_from_description(desc: str | None) -> list[str]:
         # 구분자 splitter (콤마, 세미콜론, 중점, ' 및 ', ' 또는 ', ' 그리고 ')
         parts = re.split(r"[,;·、]|\s*(?:및|또는|그리고)\s*", m)
         for p in parts:
-            p = p.strip()
-            # 조사·불용어 꼬리 제거 (은/는/이/가/을/를/등)
-            while p and p[-1] in "은는이가을를 등,.":
+            p = _trim_tail(p.strip())
+            # 남은 미세 잔여물 (구두점·조사 단글자) 제거
+            while p and p[-1] in "은는이가을를와과 등,.":
                 p = p[:-1].rstrip()
             if p and p not in seen:
                 seen.add(p)

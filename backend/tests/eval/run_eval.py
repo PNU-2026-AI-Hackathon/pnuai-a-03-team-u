@@ -124,15 +124,31 @@ def _llm_judge(reply: str, criterion: str, tool_calls: list[dict]) -> tuple[bool
         llm = init_chat_model(_JUDGE_MODEL, temperature=0)
         r = llm.invoke(prompt)
         content = r.content if isinstance(r.content, str) else str(r.content)
-        # gpt-4o-mini가 종종 ```json ... ``` 로 감싸서 낸다 — 스트립.
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1].lstrip("json\n").rstrip("`\n ")
         import json
-        data = json.loads(text)
+        data = json.loads(_strip_markdown_fence(content))
         return bool(data["pass"]), str(data.get("reason", ""))
     except Exception as e:  # noqa: BLE001 - 판정 실패는 fail로 처리하되 이유 노출
         return False, f"judge_error: {type(e).__name__}: {e}"
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """LLM이 ```json ... ``` 로 감싸서 낸 응답에서 fence만 제거하고 본문 반환.
+
+    이전 구현은 `text.lstrip("json\\n")` 문자셋 기반이라 "javascript"로 시작하는
+    응답을 "avascript"로 왜곡할 수 있었다 (실제 발생 확률 낮지만 명시적 오류).
+    라인 단위 제거로 안전화.
+    """
+    s = text.strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.split("\n")
+    # 첫 줄이 ```json 또는 ``` 이면 제거
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    # 마지막 줄이 ``` 이면 제거
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 # --- 실행 -----------------------------------------------------------------
