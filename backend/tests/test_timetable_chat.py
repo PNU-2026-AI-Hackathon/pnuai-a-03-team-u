@@ -192,6 +192,21 @@ class StudentContextTest(unittest.TestCase):
         names = [c["course_name"] for c in result["critical_missing_required"]]
         self.assertNotIn("컴퓨터구조", names)
 
+    def test_retake_candidates_exposed(self):
+        """retake_candidates 필드가 로드맵 챗과 동일 스키마로 노출된다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="이산수학",
+            credits=3.0, year="2024", grade="D+", grade_point=1.5,
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        self.assertIn("retake_candidates", result)
+        names = [c["course_name"] for c in result["retake_candidates"]]
+        self.assertIn("이산수학", names)
+
 
 class RunTimetableChatIntegrationTest(unittest.TestCase):
     """LLM을 스크립트된 tool_calls로 mock해 전체 루프가 도구를 실제로 호출하고

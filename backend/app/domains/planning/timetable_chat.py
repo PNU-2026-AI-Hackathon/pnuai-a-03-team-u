@@ -35,7 +35,8 @@ from app.domains.planning.models import (
     TimetableChatSession,
 )
 from app.domains.planning.roadmap_chat import (
-    _build_llm, _compute_critical_missing_required, _safe_call,
+    _build_llm, _compute_critical_missing_required, _compute_retake_candidates,
+    _safe_call,
 )
 from app.domains.planning.timetable import (
     _combo_is_feasible,
@@ -129,6 +130,13 @@ finish_response 앞부분에서 사용자에게 "이 필수 과목(예: '컴퓨�
 졸업 가능합니다"처럼 지연·위험 + 대안을 명시해라. 시간표 후보에는 넣지 마라
 (이번 학기에 개설 안 됨). 로드맵 챗의 동일 필드와 시맨틱 공유.
 
+**재수강 안내는 권유만, 강요하지 마라**: `get_student_context.retake_candidates`는
+C+(2.5) 이하 성적 이수 과목 목록이다. 학생이 (a) GPA 개선을 명시적으로 언급하거나
+(b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면 그때만 이 목록에서 후보를 제시하되
+이번 학기 시간표에 자동으로 넣지는 마라 — 재수강은 별도 신청 절차라 사용자가 UI에서
+직접 선택해야 한다. 매 답변마다 "재수강 어때?" 라고 들이대지 마라 (사용자 침해).
+질문이 없는 상태에서는 이 목록을 언급도 하지 마라.
+
 **사용자 시간·요일 제약을 반드시 존중해라 (매우 중요)**:
 사용자가 "월수금만", "화목 빼고", "오전만", "오후 3시 이후 안 됨" 같은 시간/요일
 제약을 명시하면, **위반하는 offering은 조합에 절대 넣지 마라**. `validate_timetable`은
@@ -158,7 +166,8 @@ _TOOLS = [
             "description": (
                 "학생의 학과·진로·이수기록·이번 학기 학점 상한과 함께 "
                 "**critical_missing_required**(이번 학기에 개설 안 되는 미이수 학과 필수 "
-                "목록 = 이번엔 못 담고 다음 학년도 대기 위험)를 조회한다. "
+                "목록 = 이번엔 못 담고 다음 학년도 대기 위험), "
+                "**retake_candidates**(C+ 이하 성적 이수 과목 = 재수강 권유 후보)를 조회한다. "
                 "새 후보를 뽑기 전에 반드시 먼저 호출해라."
             ),
             "parameters": {"type": "object", "properties": {}},
@@ -362,6 +371,9 @@ class _TimeTableToolContext:
                 self.db, self.user, roadmap_id=None,
                 reference_semester=self.semester,
             ),
+            # 재수강 권유 후보 (성적 낮은 이수 과목). 사용자가 명시적으로 GPA 개선
+            # 관심 표하거나 재수강 물을 때만 제시. 매번 강권 X. 로드맵 챗과 동일 로직.
+            "retake_candidates": _compute_retake_candidates(self.db, self.user),
         }
 
     def list_offered_courses(

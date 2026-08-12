@@ -307,6 +307,14 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   미이수인데 다음 학기가 Y학기라 이번엔 못 듣습니다, 다음 학년도 X학기에 반드시
   들어야 졸업 가능합니다"처럼 위험 + 대안(같은 학기의 다음 연도)을 함께. 이걸
   놓치고 다른 과목만 추천하면 사용자가 졸업 실패 위험을 모른 채로 넘어간다.
+- **재수강 안내는 권유만, 강요하지 마라**: `get_roadmap_items`의 `retake_candidates`
+  는 성적이 C+(2.5) 이하인 이수 과목 목록이다. 사용자가 (a) GPA/평점 개선을 명시적으로
+  언급하거나 (b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면, 그때만 이 목록에서
+  진로·필수 우선순위를 고려해 후보를 제시해라. **매 대화마다 "재수강 어때?"라고
+  들이대지 마라** — 그건 학생이 자기 성적을 알고 이미 판단한 영역이라 침해로 느낀다.
+  실제 재수강 등록은 별도 UI/도구 흐름으로 진행되니 "재수강 신청은 프로필/시간표에서
+  직접 선택하세요"처럼 안내하고 propose_change로 create는 하지 마라 (도구 단에서
+  이미 이수한 과목 재추천은 거절된다).
 - **사용자가 요청한 범위를 벗어나 제안을 남발하지 마라.** 사용자가 "이 과목을
   몇 학기로 옮겨줘"처럼 기존 항목 하나를 콕 집어 요청했으면 그 항목에 대한
   propose_change 하나만 호출하고 끝내라 — 물어보지도 않은 다른 과목을 추가로
@@ -351,8 +359,9 @@ _TOOLS = [
                 "현재 학년도/학기(current_academic_term), 다음 배치 가능한 학기"
                 "(next_plannable_term), 학기당 학점 상한(term_credit_cap), "
                 "학기별 이미 계획된 학점 합(planned_credits_by_term), "
-                "성적표 기반 이수기록(completed_courses), 그리고 **critical_missing_required**"
-                "(학과 필수인데 미이수 + 개설 학기가 다음 학기와 어긋난 목록 = 졸업 위험)"
+                "성적표 기반 이수기록(completed_courses), **critical_missing_required**"
+                "(학과 필수인데 미이수 + 개설 학기가 다음 학기와 어긋난 목록 = 졸업 위험), "
+                "**retake_candidates**(C+ 이하 성적 이수 과목 목록 = 재수강 권유 후보)"
                 "를 돌려준다. 새 항목 제안 전에 반드시 이걸 확인해라 — 특히 학점 상한 "
                 "초과 여부, 이미 이수한 과목 중복 여부, 졸업 위험 필수 미이수."
             ),
@@ -608,6 +617,75 @@ def _compute_critical_missing_required(
             ),
         })
     return critical
+
+
+# 부산대 재수강 규정 상 C+(2.5) 이하만 재수강 가능. 학사 규정이 바뀌면 이 값만 수정.
+# 실제 규정 근거: 학사관리규정 재수강 조항 (기준은 대학·연도별 조금씩 다를 수 있음).
+_RETAKE_GRADE_POINT_THRESHOLD = 2.5
+
+
+def _compute_retake_candidates(db: Session, user: User) -> list[dict]:
+    """성적표(SCR)에서 성적이 낮아 재수강 후보가 되는 과목 목록.
+
+    로직:
+    - 이름 정규화 후 최고 grade_point만 유지 (재수강해서 이미 개선했으면 최신치가 반영됨)
+    - 최고 grade_point가 `_RETAKE_GRADE_POINT_THRESHOLD`(C+ = 2.5) 이하면 후보
+    - grade_point가 없는 rows(=포털 동기화 전, 학점 미매핑)는 판단 불가로 제외
+    - is_retake 플래그는 참조만 하고 필터에 쓰지 않음 — 정규화 후 최고치 기준이 더 안정적
+
+    LLM에게는 **권유 후보**로 노출한다. 학생이 명시적으로 GPA 개선/재수강 관심을
+    표할 때만 이 목록에서 후보를 제시하고, 그렇지 않으면 매번 강권하지 마라.
+    실제 재수강 등록은 별도 UI 흐름 (지금 propose_change로 create하면 도구 단
+    completed_courses_guard가 막는다 — 재수강 propose는 후속 이슈).
+    """
+
+    def _norm(n: str | None) -> str:
+        if not n:
+            return ""
+        roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+        s = "".join(roman.get(ch, ch) for ch in n)
+        return s.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+    records = db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
+    ).all()
+
+    # 이름별 최고 grade_point 집계 (재수강 후 개선된 성적을 반영하기 위해).
+    # grade_point가 None인 row는 집계 제외.
+    best_by_name: dict[str, tuple[float, StudentCourseRecord]] = {}
+    for r in records:
+        if r.grade_point is None:
+            continue
+        key = _norm(r.raw_course_name)
+        if not key:
+            continue
+        gp = float(r.grade_point)
+        cur = best_by_name.get(key)
+        if cur is None or gp > cur[0]:
+            best_by_name[key] = (gp, r)
+
+    candidates: list[dict] = []
+    for key, (gp, r) in best_by_name.items():
+        if gp > _RETAKE_GRADE_POINT_THRESHOLD:
+            continue
+        candidates.append({
+            "course_name": r.raw_course_name,
+            "category": r.category,
+            "credits": float(r.credits) if r.credits is not None else None,
+            "current_grade": r.grade,
+            "current_grade_point": gp,
+            "year_taken": r.year,
+            "semester_taken": r.semester,
+            "reason": (
+                f"현재 최고 성적 {r.grade or f'GPA {gp:.1f}'} — "
+                f"재수강 가능 (기준: 최고 {_RETAKE_GRADE_POINT_THRESHOLD:.1f} 이하)"
+            ),
+        })
+    # 성적 낮은 순 정렬 — LLM이 우선순위 짐작에 도움.
+    # `0.0 or 999`는 999로 falsy 처리되니 명시적 None 체크.
+    candidates.sort(key=lambda c: (999 if c["current_grade_point"] is None
+                                    else c["current_grade_point"]))
+    return candidates
 
 
 def _build_llm() -> BaseChatModel:
@@ -884,6 +962,10 @@ class _ToolContext:
             # 졸업 위험 감지: 학과 필수인데 미이수 + 개설학기가 다음 학기와 어긋난 목록.
             # 비어있지 않으면 LLM이 finish_response에서 사용자에게 위험을 반드시 알려야 한다.
             "critical_missing_required": self._critical_missing_required(f"{ns}학기"),
+            # 재수강 후보 (성적 낮은 이수 과목). **권유 정보**로 노출 — 학생이 GPA 개선
+            # 관심 표하거나 명시적으로 재수강 물을 때만 제시. 물어보지 않았는데 매번
+            # 강권하지 마라.
+            "retake_candidates": _compute_retake_candidates(self.db, self.user),
         }
 
     def search_courses(
