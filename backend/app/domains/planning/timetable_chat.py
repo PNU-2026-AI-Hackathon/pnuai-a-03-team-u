@@ -35,8 +35,8 @@ from app.domains.planning.models import (
     TimetableChatSession,
 )
 from app.domains.planning.roadmap_chat import (
-    _build_llm, _compute_critical_missing_required, _compute_retake_candidates,
-    _safe_call,
+    _build_llm, _compute_critical_missing_required, _compute_prereq_blocked,
+    _compute_retake_candidates, _safe_call,
 )
 from app.domains.planning.timetable import (
     _combo_is_feasible,
@@ -130,6 +130,13 @@ finish_response 앞부분에서 사용자에게 "이 필수 과목(예: '컴퓨�
 졸업 가능합니다"처럼 지연·위험 + 대안을 명시해라. 시간표 후보에는 넣지 마라
 (이번 학기에 개설 안 됨). 로드맵 챗의 동일 필드와 시맨틱 공유.
 
+**선수과목 부족 과목은 이번 시간표에서 제외**: `get_student_context.prereq_blocked`
+는 선수과목 미이수라 이번 학기 시간표에 담기 부적절한 학과 과목 목록이다. 이 목록의
+course_id는 시간표 조합(validate_timetable)에 넘기지 마라. list_offered_courses 결과에
+있어도 걸러라. description 파싱 기반이라 오탐 가능성 있으니 학생이 "그거 선수 이미
+들었어" 반박하면 그대로 수용해라. 학생이 명시적으로 그 과목 담고 싶다고 하면 "선수
+과목 X가 아직 미이수라 어렵고, X부터 이수 권장"이라고 안내해라.
+
 **재수강 안내는 권유만, 강요하지 마라**: `get_student_context.retake_candidates`는
 C+(2.5) 이하 성적 이수 과목 목록이다. 학생이 (a) GPA 개선을 명시적으로 언급하거나
 (b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면 그때만 이 목록에서 후보를 제시하되
@@ -165,10 +172,10 @@ _TOOLS = [
             "name": "get_student_context",
             "description": (
                 "학생의 학과·진로·이수기록·이번 학기 학점 상한과 함께 "
-                "**critical_missing_required**(이번 학기에 개설 안 되는 미이수 학과 필수 "
-                "목록 = 이번엔 못 담고 다음 학년도 대기 위험), "
-                "**retake_candidates**(C+ 이하 성적 이수 과목 = 재수강 권유 후보)를 조회한다. "
-                "새 후보를 뽑기 전에 반드시 먼저 호출해라."
+                "**critical_missing_required**(이번 학기 개설 X 미이수 필수 = 지연 위험), "
+                "**retake_candidates**(C+ 이하 성적 이수 = 재수강 권유 후보), "
+                "**prereq_blocked**(선수과목 미이수라 담기 부적절한 학과 과목 목록)"
+                "를 조회한다. 새 후보를 뽑기 전에 반드시 먼저 호출해라."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -374,6 +381,9 @@ class _TimeTableToolContext:
             # 재수강 권유 후보 (성적 낮은 이수 과목). 사용자가 명시적으로 GPA 개선
             # 관심 표하거나 재수강 물을 때만 제시. 매번 강권 X. 로드맵 챗과 동일 로직.
             "retake_candidates": _compute_retake_candidates(self.db, self.user),
+            # 선수과목 미이수라 이번 학기 시간표에 담기 부적절한 학과 과목. best-effort
+            # description 파싱 기반. 이 목록의 course_id는 조합에 넣지 마라.
+            "prereq_blocked": _compute_prereq_blocked(self.db, self.user, roadmap_id=None),
         }
 
     def list_offered_courses(

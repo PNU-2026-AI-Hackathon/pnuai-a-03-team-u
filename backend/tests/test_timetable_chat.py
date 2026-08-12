@@ -207,6 +207,24 @@ class StudentContextTest(unittest.TestCase):
         names = [c["course_name"] for c in result["retake_candidates"]]
         self.assertIn("이산수학", names)
 
+    def test_prereq_blocked_exposed(self):
+        """prereq_blocked 필드로 선수 미이수 과목이 노출된다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(Course(
+            id=910, course_name="운영체제", department_id=100,
+            category="전공선택", credits=3.0, year="3", semester="2",
+            description="선수과목: 자료구조",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        self.assertIn("prereq_blocked", result)
+        blocked = {b["course_name"]: b["missing_prerequisites"]
+                    for b in result["prereq_blocked"]}
+        self.assertIn("운영체제", blocked)
+        self.assertEqual(["자료구조"], blocked["운영체제"])
+
 
 class RunTimetableChatIntegrationTest(unittest.TestCase):
     """LLM을 스크립트된 tool_calls로 mock해 전체 루프가 도구를 실제로 호출하고
