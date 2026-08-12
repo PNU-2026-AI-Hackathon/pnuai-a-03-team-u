@@ -34,7 +34,9 @@ from app.domains.planning.models import (
     TimetableChatMessage,
     TimetableChatSession,
 )
-from app.domains.planning.roadmap_chat import _build_llm, _safe_call
+from app.domains.planning.roadmap_chat import (
+    _build_llm, _compute_critical_missing_required, _safe_call,
+)
 from app.domains.planning.timetable import (
     _combo_is_feasible,
     _completed_course_norms,
@@ -120,6 +122,13 @@ _SYSTEM_PROMPT = """너는 부산대 학생의 이번 학기 시간표를 함께
 **선수과목 확인**: `check_prereqs`로 학생이 필요한 사전 이수를 마쳤는지 확인한다. 선수과목
 정보가 없으면 그냥 이수기록에 이름으로 대조한다.
 
+**필수 미이수 + 이번 학기 개설 X → 반드시 안내**: `get_student_context.critical_missing_required`
+가 비어있지 않으면 이번 학기 시간표에 넣을 수 없는 학과 필수 과목 목록이다.
+finish_response 앞부분에서 사용자에게 "이 필수 과목(예: '컴퓨터구조')은 X학기 전용
+개설이라 이번 학기(Y학기)엔 못 담습니다. 다음 학년도 X학기에 반드시 들어야
+졸업 가능합니다"처럼 지연·위험 + 대안을 명시해라. 시간표 후보에는 넣지 마라
+(이번 학기에 개설 안 됨). 로드맵 챗의 동일 필드와 시맨틱 공유.
+
 **사용자 시간·요일 제약을 반드시 존중해라 (매우 중요)**:
 사용자가 "월수금만", "화목 빼고", "오전만", "오후 3시 이후 안 됨" 같은 시간/요일
 제약을 명시하면, **위반하는 offering은 조합에 절대 넣지 마라**. `validate_timetable`은
@@ -147,7 +156,9 @@ _TOOLS = [
         "function": {
             "name": "get_student_context",
             "description": (
-                "학생의 학과·진로·이수기록·이번 학기 학점 상한을 조회한다. "
+                "학생의 학과·진로·이수기록·이번 학기 학점 상한과 함께 "
+                "**critical_missing_required**(이번 학기에 개설 안 되는 미이수 학과 필수 "
+                "목록 = 이번엔 못 담고 다음 학년도 대기 위험)를 조회한다. "
                 "새 후보를 뽑기 전에 반드시 먼저 호출해라."
             ),
             "parameters": {"type": "object", "properties": {}},
@@ -342,6 +353,15 @@ class _TimeTableToolContext:
             "completed_course_names": sorted(completed),
             # 카테고리별 부족분. 이 목록을 훑어 각 항목별로 list_offered_courses 호출해라.
             "remaining_by_category": remaining_by_category,
+            # 이번 학기(target_term)에 개설 안 되는 미이수 필수 과목 목록. 비어있지
+            # 않으면 finish_response에서 사용자에게 "이 필수 과목은 X학기 전용이라
+            # 이번엔 못 담는다, 다음 학년도 X학기에 반드시" 라고 안내해라. 이 시간표
+            # 조합에는 넣지 마라 (개설 안 됨). roadmap 챗의 동일 기능(critical_missing_
+            # required)과 로직 공유. 로드맵이 없어도 SCR 기반으로 판정 가능.
+            "critical_missing_required": _compute_critical_missing_required(
+                self.db, self.user, roadmap_id=None,
+                reference_semester=self.semester,
+            ),
         }
 
     def list_offered_courses(
