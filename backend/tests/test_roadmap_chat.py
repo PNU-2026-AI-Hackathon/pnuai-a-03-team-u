@@ -1117,6 +1117,32 @@ class RetakeCandidatesTest(unittest.TestCase):
         self.assertEqual(["B", "A", "C"], [c["course_name"] for c in result])
 
 
+class StripMarkdownFenceTest(unittest.TestCase):
+    """`_llm_judge`가 gpt-4o-mini의 ```json ... ``` 감싼 응답에서 fence만 제거하고
+    본문을 온전히 반환하는지. 이전 문자셋 기반(lstrip("json\\n"))의 왜곡 가능성 회피."""
+
+    def test_plain_json_passthrough(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '{"pass": true}'
+        self.assertEqual(s, _strip_markdown_fence(s))
+
+    def test_strips_json_fence(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '```json\n{"pass": true, "reason": "OK"}\n```'
+        self.assertEqual('{"pass": true, "reason": "OK"}', _strip_markdown_fence(s))
+
+    def test_strips_bare_fence(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '```\n{"pass": false}\n```'
+        self.assertEqual('{"pass": false}', _strip_markdown_fence(s))
+
+    def test_does_not_mangle_content_starting_with_j_or_s(self):
+        """이전 lstrip("json\\n")은 첫 글자가 j/s/o/n이면 왜곡. 지금은 line 단위라 안전."""
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '{"json_key": "sample string with json in it"}'
+        self.assertEqual(s, _strip_markdown_fence(s))
+
+
 class PrereqExtractTest(unittest.TestCase):
     """description 텍스트에서 선수과목명 추출 — 라벨 있는 경우만 잡고 자유서술은 무시."""
 
@@ -1145,6 +1171,21 @@ class PrereqExtractTest(unittest.TestCase):
         from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
         self.assertEqual([], _extract_prereqs_from_description(None))
         self.assertEqual([], _extract_prereqs_from_description(""))
+
+    def test_stops_at_descriptive_verb(self):
+        """라벨이 문장 중간에 있고 뒤에 서술어가 이어져도 과목명만 추출."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        # "선수과목: 자료구조 를 요구한다" → 개선 전엔 "자료구조 를 요구한다" 로 실패
+        result = _extract_prereqs_from_description("본 과목은 선수과목: 자료구조 를 요구한다.")
+        self.assertEqual(["자료구조"], result)
+
+    def test_stops_at_period_before_next_sentence(self):
+        """마침표 뒤에 다른 서술이 이어져도 앞 절만."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description(
+            "선수과목: 자료구조. 이 과목은 심화 내용을 다룬다."
+        )
+        self.assertEqual(["자료구조"], result)
 
 
 class PrereqBlockedTest(unittest.TestCase):
