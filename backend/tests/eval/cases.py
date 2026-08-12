@@ -907,7 +907,14 @@ def case_missing_foundation() -> EvalCase:
             required_major_foundation=15, required_major_required=30,
             required_major_elective=27,
         )],
-        courses=_cs_catalog(),
+        # _cs_catalog의 이산수학은 semester="2" (2학기 전용) 이라 next term=1학기와 어긋난다.
+        # 이 시나리오("전공기초 우선 배치")를 정합하려면 이산수학이 next term에 개설돼야
+        # 하므로 catalog에서 이산수학만 semester="1,2"로 override한다 (실제로도 여러 학기
+        # 개설되는 경우 흔함).
+        courses=[c for c in _cs_catalog() if c.course_name != "이산수학"] + [
+            CourseSpec(id=1003, course_name="이산수학", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공기초", credits=3, year="1", semester="1,2"),
+        ],
         # 이산수학은 없고 나머지 전공기초·필수는 완료. 3학년까지 진행.
         records=[
             RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초", year="2024"),
