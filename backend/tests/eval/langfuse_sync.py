@@ -125,3 +125,54 @@ def sync_cases_to_langfuse(cases: list[EvalCase] | None = None,
 
     lf.flush()  # background HTTP client 대기 후 종료
     return len(items)
+
+
+def _ensure_langfuse_env() -> None:
+    """settings에서 Langfuse 키를 os.environ으로 옮겨 SDK가 픽업 가능하게. 없으면 RuntimeError."""
+    for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        v = getattr(settings, key, None)
+        if not v:
+            raise RuntimeError(f"{key}가 없어서 Langfuse 사용 불가 (.env 확인)")
+        os.environ.setdefault(key, v)
+    if getattr(settings, "LANGFUSE_BASE_URL", None):
+        os.environ.setdefault("LANGFUSE_HOST", settings.LANGFUSE_BASE_URL)
+
+
+def run_experiment_for_model(
+    run_name: str,
+    model_override: str | None,
+    task_fn,
+    evaluators: list,
+    dataset_name: str = DATASET_NAME,
+    description: str | None = None,
+) -> dict:
+    """dataset.run_experiment()로 dataset run을 만든다. 하나의 모델(또는 설정) = 하나의 run.
+
+    task_fn은 signature `task(*, item, **kwargs) -> dict` — DatasetItem을 받아 실행 결과 dict 반환.
+    실행 중 observe_agent_call이 만든 OTel trace는 이 dataset run에 자동 링크된다 (v4 SDK).
+
+    반환: {"run_name": ..., "url": ...} — Langfuse UI로 바로 갈 수 있는 링크 포함.
+    """
+    _ensure_langfuse_env()
+    from langfuse import Langfuse
+
+    lf = Langfuse()
+    ds = lf.get_dataset(dataset_name)
+    label = model_override or "env-default"
+    # run_name은 모델·시각으로 유일화 (같은 시각 여러 번 돌려도 이름 충돌 없게)
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    exact_name = f"{run_name}-{label.replace(':', '_').replace('/', '_')}-{stamp}"
+
+    result = ds.run_experiment(
+        name=f"{run_name} ({label})",
+        run_name=exact_name,
+        description=description or f"model={label}",
+        task=task_fn,
+        evaluators=evaluators,
+        max_concurrency=1,   # rate limit 회피 (Luna TPM 200k) + 결과 재현성
+        metadata={"model": label, "run_group": run_name},
+    )
+    lf.flush()
+    url = getattr(result, "dataset_run_url", None) or getattr(result, "url", None)
+    return {"run_name": exact_name, "url": url}
