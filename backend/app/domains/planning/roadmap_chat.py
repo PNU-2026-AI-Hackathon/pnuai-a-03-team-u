@@ -307,6 +307,13 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   미이수인데 다음 학기가 Y학기라 이번엔 못 듣습니다, 다음 학년도 X학기에 반드시
   들어야 졸업 가능합니다"처럼 위험 + 대안(같은 학기의 다음 연도)을 함께. 이걸
   놓치고 다른 과목만 추천하면 사용자가 졸업 실패 위험을 모른 채로 넘어간다.
+- **선수과목 부족 과목은 후보에서 제외**: `get_roadmap_items`의 `prereq_blocked`
+  는 학과 개설 과목 중 (a) 아직 이수 안 함 (b) description상 선수과목 하나 이상 미이수인
+  목록이다. 이 목록의 course_id는 **propose_change로 create하지 마라** — 학생이 선수과목
+  없이 이 과목을 들으면 이해가 무너진다. 학생이 명시적으로 "이거 이번에 담고 싶다"고
+  물으면 "선수과목인 X가 아직 미이수라 이번 학기보다는 X를 먼저 들으시고 다음 학기에"
+  라고 안내해라. description 파싱 기반이라 100% 정확하진 않으니 학생이 "선수 이미
+  들었어" 반박하면 그대로 받아들이고 진행해라.
 - **재수강 안내는 권유만, 강요하지 마라**: `get_roadmap_items`의 `retake_candidates`
   는 성적이 C+(2.5) 이하인 이수 과목 목록이다. 사용자가 (a) GPA/평점 개선을 명시적으로
   언급하거나 (b) "재수강 뭐 하는 게 좋아?"처럼 직접 물으면, 그때만 이 목록에서
@@ -361,9 +368,10 @@ _TOOLS = [
                 "학기별 이미 계획된 학점 합(planned_credits_by_term), "
                 "성적표 기반 이수기록(completed_courses), **critical_missing_required**"
                 "(학과 필수인데 미이수 + 개설 학기가 다음 학기와 어긋난 목록 = 졸업 위험), "
-                "**retake_candidates**(C+ 이하 성적 이수 과목 목록 = 재수강 권유 후보)"
+                "**retake_candidates**(C+ 이하 성적 이수 과목 목록 = 재수강 권유 후보), "
+                "**prereq_blocked**(선수과목 미이수라 지금 담기 부적절한 학과 과목 목록)"
                 "를 돌려준다. 새 항목 제안 전에 반드시 이걸 확인해라 — 특히 학점 상한 "
-                "초과 여부, 이미 이수한 과목 중복 여부, 졸업 위험 필수 미이수."
+                "초과, 이미 이수한 과목 중복, 졸업 위험 필수 미이수, 선수과목 부족."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -688,6 +696,118 @@ def _compute_retake_candidates(db: Session, user: User) -> list[dict]:
     return candidates
 
 
+# 선수과목을 courses.description 본문에서 추출할 때 인식하는 라벨. 부산대
+# 학과별로 표기가 조금씩 다르지만 이 세 개면 대부분 커버 (관측 기준).
+_PREREQ_LABELS = (
+    "선수과목", "선이수과목", "선이수 과목", "선수 과목", "선수",
+)
+
+
+def _extract_prereqs_from_description(desc: str | None) -> list[str]:
+    """courses.description 텍스트에서 선수과목명을 최선노력(best-effort)으로 추출.
+
+    지원 패턴 (모두 라벨 뒤 콜론/전각콜론 필요):
+    - "선수과목: 자료구조, 알고리즘"
+    - "선이수 과목: 컴퓨터프로그래밍(I)"
+    - "선수: X 및 Y"
+
+    구분자: `,` `;` `·` `、` ` 및 ` ` 또는 ` ` 그리고 `
+
+    라벨 없는 자유서술("자료구조를 미리 이수한 학생 대상") 같은 것은 잡지 않는다 —
+    false positive 방지가 우선. 이런 경우엔 LLM의 check_prereqs 도구가 대안.
+    """
+    if not desc:
+        return []
+    import re
+
+    label_re = "|".join(re.escape(lbl) for lbl in _PREREQ_LABELS)
+    pattern = re.compile(rf"(?:{label_re})\s*[:：]\s*([^.。\n]+)")
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for m in pattern.findall(desc):
+        # 구분자 splitter (콤마, 세미콜론, 중점, ' 및 ', ' 또는 ', ' 그리고 ')
+        parts = re.split(r"[,;·、]|\s*(?:및|또는|그리고)\s*", m)
+        for p in parts:
+            p = p.strip()
+            # 조사·불용어 꼬리 제거 (은/는/이/가/을/를/등)
+            while p and p[-1] in "은는이가을를 등,.":
+                p = p[:-1].rstrip()
+            if p and p not in seen:
+                seen.add(p)
+                names.append(p)
+    return names
+
+
+def _compute_prereq_blocked(
+    db: Session,
+    user: User,
+    roadmap_id: int | None,
+) -> list[dict]:
+    """학과 개설 과목 중 (a) 아직 이수 안 함 (b) description에서 뽑아낸 선수과목 중
+    하나 이상이 이수 완료 세트에 없음 — 조건을 만족하는 과목 목록.
+
+    이 리스트에 있는 과목은 이번 학기든 다음 학기든 **선수과목 부족으로 지금 담기
+    부적절**. LLM이 자동 추천에서 제외하거나, 학생이 문의 시 "선수과목 X부터 들어야
+    한다"고 안내해야 한다. courses.description 파싱 기반이라 best-effort — 학과 문서
+    라벨링이 애매하면 false positive/negative 있을 수 있다 (LLM check_prereqs로 보완).
+
+    `roadmap_id=None`이면 이수 세트는 SCR만 참조 (timetable 챗).
+    """
+    if user.department_id is None:
+        return []
+
+    def _norm(n: str | None) -> str:
+        if not n:
+            return ""
+        roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+        s = "".join(roman.get(ch, ch) for ch in n)
+        return s.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+    completed_norms: set[str] = set()
+    for r in db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
+    ).all():
+        completed_norms.add(_norm(r.raw_course_name))
+    if roadmap_id is not None:
+        for it in db.scalars(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == roadmap_id,
+                CourseRoadmapItem.status == "completed",
+            )
+        ).all():
+            completed_norms.add(_norm(it.course_name))
+
+    q = select(Course).where(
+        Course.department_id == user.department_id,
+        Course.description.is_not(None),
+    )
+    if user.major_id is not None:
+        q = q.where(or_(Course.major_id == user.major_id, Course.major_id.is_(None)))
+
+    blocked: list[dict] = []
+    for c in db.scalars(q).all():
+        if _norm(c.course_name) in completed_norms:
+            continue  # 이미 이수 — 판단 대상 아님
+        prereq_names = _extract_prereqs_from_description(c.description)
+        if not prereq_names:
+            continue  # 선수과목 라벨 없음
+        missing = [p for p in prereq_names if _norm(p) not in completed_norms]
+        if not missing:
+            continue  # 다 이수했으니 blocked 아님
+        blocked.append({
+            "course_id": c.id,
+            "course_name": c.course_name,
+            "category": c.category,
+            "missing_prerequisites": missing,
+            "reason": (
+                f"description상 선수과목 '{', '.join(missing)}' 미이수 — "
+                f"지금 이 과목 담기 전에 선수부터 이수 권장"
+            ),
+        })
+    return blocked
+
+
 def _build_llm() -> BaseChatModel:
     """ROADMAP_AGENT_MODEL("provider:model")로 langchain ChatModel을 만든다.
 
@@ -966,6 +1086,12 @@ class _ToolContext:
             # 관심 표하거나 명시적으로 재수강 물을 때만 제시. 물어보지 않았는데 매번
             # 강권하지 마라.
             "retake_candidates": _compute_retake_candidates(self.db, self.user),
+            # 선수과목 부족으로 담기 부적절한 학과 개설 과목. courses.description 파싱
+            # 기반이라 best-effort — LLM이 이 목록에 있는 course_id는 propose_change
+            # (create) 하지 말고, 학생이 물어보면 "선수과목 X부터 들어야" 안내해라.
+            "prereq_blocked": _compute_prereq_blocked(
+                self.db, self.user, roadmap_id=self.roadmap.id,
+            ),
         }
 
     def search_courses(

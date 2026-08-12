@@ -1117,6 +1117,147 @@ class RetakeCandidatesTest(unittest.TestCase):
         self.assertEqual(["B", "A", "C"], [c["course_name"] for c in result])
 
 
+class PrereqExtractTest(unittest.TestCase):
+    """description 텍스트에서 선수과목명 추출 — 라벨 있는 경우만 잡고 자유서술은 무시."""
+
+    def test_extracts_after_label_with_comma(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선수과목: 자료구조, 알고리즘")
+        self.assertEqual(["자료구조", "알고리즘"], result)
+
+    def test_extracts_with_fullwidth_colon(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선이수 과목: 컴퓨터프로그래밍(I)")
+        self.assertEqual(["컴퓨터프로그래밍(I)"], result)
+
+    def test_splits_on_conjunctions(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선수과목: A 및 B 또는 C")
+        self.assertEqual(["A", "B", "C"], result)
+
+    def test_ignores_free_prose_without_label(self):
+        """'X를 미리 이수한 학생 대상' 같은 서술문은 잡지 않는다 (false positive 방지)."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("자료구조를 미리 이수한 학생 대상")
+        self.assertEqual([], result)
+
+    def test_returns_empty_on_none_and_empty(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        self.assertEqual([], _extract_prereqs_from_description(None))
+        self.assertEqual([], _extract_prereqs_from_description(""))
+
+
+class PrereqBlockedTest(unittest.TestCase):
+    """선수과목 미이수 감지: 학과 개설 과목 중 description에서 뽑은 선수가 이수 세트에
+    없으면 blocked. 로드맵/시간표 챗 자매 노출은 각 챗 유닛에서 커버."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_setup(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return user, roadmap
+
+    def test_flags_course_with_missing_prereq(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=100, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual(1, len(result))
+        self.assertEqual("운영체제", result[0]["course_name"])
+        self.assertEqual(["자료구조"], result[0]["missing_prerequisites"])
+
+    def test_skips_when_prereq_completed(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=101, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3, year="2024"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual([], result)
+
+    def test_skips_course_without_description(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=102, course_name="X", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description=None))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_skips_course_already_completed(self):
+        """이미 이수한 과목은 판단 대상 아님 (다른 가드가 재추천 막음)."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=103, course_name="컴파일러", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1",
+                      description="선수과목: 자료구조"))
+        # 컴파일러는 이수, 자료구조는 미이수
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴파일러",
+                                     category="전공선택", credits=3, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_partial_prereq_completion_still_blocks(self):
+        """선수 여러 개 중 하나라도 미이수면 blocked."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=104, course_name="네트워크보안", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="2",
+                      description="선수과목: 컴퓨터네트워크, 시스템프로그래밍"))
+        # 컴퓨터네트워크만 이수
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터네트워크",
+                                     category="전공선택", credits=3, year="2024"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual(1, len(result))
+        self.assertEqual(["시스템프로그래밍"], result[0]["missing_prerequisites"])
+
+    def test_uses_roadmap_completed_when_roadmap_id_given(self):
+        """로드맵 status='completed' 항목도 이수 세트에 포함."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=105, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(CourseRoadmapItem(roadmap_id=rm.id, course_name="자료구조",
+                                  planned_grade=2, status="completed"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_normalizes_roman_variants_in_matching(self):
+        """이수기록 '컴퓨터프로그래밍 Ⅰ' vs 선수 라벨 '컴퓨터프로그래밍(I)' 매칭."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=106, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1",
+                      description="선수과목: 컴퓨터프로그래밍(I)"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+
 class SafeCallDispatchGuardTest(unittest.TestCase):
     """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
     스키마에 없는 필드 추가. 예전엔 handler(**tool_input)가 TypeError로 죽고, langfuse
