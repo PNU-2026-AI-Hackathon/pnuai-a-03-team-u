@@ -207,6 +207,34 @@ class StudentContextTest(unittest.TestCase):
         names = [c["course_name"] for c in result["retake_candidates"]]
         self.assertIn("이산수학", names)
 
+    def test_conditional_prompt_baseline_shorter_than_complex(self):
+        """조건부 규칙 assembly — 상태 없는 학생은 CORE만, 복잡한 학생은 규칙 추가로 길어짐."""
+        from app.domains.planning.timetable_chat import _build_timetable_system_prompt
+        # Baseline: 성적 없고 필수 미이수 없음
+        db = _make_db()
+        user = _make_student(db)
+        db.commit()
+        baseline_prompt, baseline_rules = _build_timetable_system_prompt(db, user, "2학기")
+        self.assertEqual([], baseline_rules)
+
+        # 복잡한 학생: 저성적 SCR + 미이수 필수 (1학기 전용, target=2학기)
+        db2 = _make_db()
+        user2 = _make_student(db2)
+        db2.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        db2.add(StudentCourseRecord(user_id=user2.id, raw_course_name="이산수학",
+                                     credits=3.0, grade="D+", grade_point=1.5, year="2024"))
+        db2.add(Course(id=990, course_name="자료구조", department_id=100,
+                       category="전공필수", credits=3.0, year="2", semester="1"))
+        db2.commit()
+        complex_prompt, complex_rules = _build_timetable_system_prompt(db2, user2, "2학기")
+
+        self.assertIn("retake_candidates", complex_rules)
+        self.assertIn("critical_missing", complex_rules)
+        self.assertLess(len(baseline_prompt), len(complex_prompt))
+
     def test_prereq_blocked_exposed(self):
         """prereq_blocked 필드로 선수 미이수 과목이 노출된다."""
         db = _make_db()
