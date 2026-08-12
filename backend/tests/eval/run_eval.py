@@ -465,6 +465,11 @@ def main() -> int:
         help="케이스 실행 대신 Langfuse Datasets에 sync만 하고 종료. "
              "LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY env 필요.",
     )
+    ap.add_argument(
+        "--langfuse-run", metavar="NAME",
+        help="--live 실행 결과를 Langfuse dataset run으로 링크한다. NAME이 그룹 이름 "
+             "(모델·시각이 뒤에 붙어 유일화). 모델별로 별도 run이 만들어져 UI에서 A/B 비교 가능.",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -492,6 +497,55 @@ def main() -> int:
     models: list[str | None] = args.model if args.model else [None]  # None = env 기본값
     runs = max(1, args.runs)
     by_model: dict[str, list[CaseOutcome]] = {}
+
+    if args.langfuse_run:
+        # Langfuse experiment 모드 — dataset.run_experiment로 실행. observe_agent_call이
+        # 만든 trace가 dataset run에 자동 링크된다. --runs > 1이면 하나의 케이스가 N번
+        # 반복되며, 각 반복이 별개 trace(같은 dataset item)로 기록된다.
+        from .langfuse_sync import run_experiment_for_model
+        slug_to_case = {c.slug: c for c in cases}
+        for m in models:
+            label = m if m is not None else "(env default)"
+            print(f"\n=== Langfuse experiment: {args.langfuse_run} / model: {label} (N={runs}) ===")
+
+            def _task(*, item, **_kw):
+                case = slug_to_case.get(item.id)
+                if case is None:
+                    return {"skipped": f"no local case for slug {item.id}"}
+                # runs>1이면 dataset item당 여러 실행이지만 SDK는 task 한 번만 호출.
+                # 확률성 분산은 하니스 --runs가 아니라 experiment를 여러 번 돌려서 처리.
+                outcome = run_live(case)
+                return {
+                    "reply": outcome.reply_preview,
+                    "passed": outcome.ok,
+                    "failures": outcome.failures,
+                    "elapsed_ms": outcome.elapsed_ms,
+                    "iterations": outcome.iterations,
+                    "input_tokens": outcome.input_tokens,
+                    "output_tokens": outcome.output_tokens,
+                    "reasoning_tokens": outcome.reasoning_tokens,
+                }
+
+            def _ev_passed(*, output, **_kw):
+                return {"name": "passed", "value": 1.0 if output.get("passed") else 0.0}
+
+            def _ev_latency(*, output, **_kw):
+                return {"name": "latency_ms", "value": float(output.get("elapsed_ms") or 0)}
+
+            def _ev_iterations(*, output, **_kw):
+                return {"name": "iterations", "value": float(output.get("iterations") or 0)}
+
+            with _override_model(m):
+                info = run_experiment_for_model(
+                    run_name=args.langfuse_run, model_override=m,
+                    task_fn=_task,
+                    evaluators=[_ev_passed, _ev_latency, _ev_iterations],
+                )
+            print(f"→ Langfuse run: {info['run_name']}")
+            if info.get("url"):
+                print(f"→ URL: {info['url']}")
+        return 0
+
     for m in models:
         label = m if m is not None else "(env default)"
         print(f"\n=== model: {label} (N={runs}) ===")
