@@ -44,6 +44,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          # pytest는 프로덕션 의존 아니라서 requirements.txt에 없음. CI에서만 필요.
+          pip install pytest
 
       - name: Dry-run golden dataset (no LLM)
         working-directory: backend
