@@ -34,7 +34,7 @@ from app.domains.planning.models import (
     TimetableChatMessage,
     TimetableChatSession,
 )
-from app.domains.planning.roadmap_chat import _build_llm
+from app.domains.planning.roadmap_chat import _build_llm, _safe_call
 from app.domains.planning.timetable import (
     _combo_is_feasible,
     _completed_course_norms,
@@ -532,19 +532,17 @@ class _TimeTableToolContext:
     # ------------ 디스패치 ------------
 
     def dispatch(self, name: str, tool_input: dict) -> dict:
-        if name == "get_student_context":
-            return self.get_student_context()
-        if name == "list_offered_courses":
-            return self.list_offered_courses(**tool_input)
-        if name == "search_by_career":
-            return self.search_by_career(**tool_input)
-        if name == "check_prereqs":
-            return self.check_prereqs(**tool_input)
-        if name == "validate_timetable":
-            return self.validate_timetable(**tool_input)
-        if name == "get_roadmap_hint":
-            return self.get_roadmap_hint()
-        return {"error": f"unknown_tool:{name}"}
+        handler = {
+            "get_student_context": self.get_student_context,
+            "list_offered_courses": self.list_offered_courses,
+            "search_by_career": self.search_by_career,
+            "check_prereqs": self.check_prereqs,
+            "validate_timetable": self.validate_timetable,
+            "get_roadmap_hint": self.get_roadmap_hint,
+        }.get(name)
+        if handler is None:
+            return {"error": f"unknown_tool:{name}"}
+        return _safe_call(handler, tool_input)
 
 
 # LLM 컨텍스트로 실을 최근 대화 턴 수. 로드맵 챗의 _LLM_HISTORY_WINDOW와 값 정합.

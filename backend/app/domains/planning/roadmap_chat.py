@@ -280,6 +280,16 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
     옮기라고 제안하는 것은 실제로는 그 학기에 열리지 않는 자리에 넣자는 얘기라 잘못이다.
     학기 전용 과목을 미뤄야 하면 **같은 학기의 다음 연도**(예: 3-2 → 4-2)로 제안해라.
     계절수업/도약수업은 정규 상한과 별개라 이 가드가 적용되지 않는다.
+- **finish_response 메시지 첫 문장에 커리큘럼상 학년·학기를 자연스러운 한국어로
+  명시해라.** "다음 학기"라고만 두루뭉술 말하지 말고, `get_roadmap_items`의
+  `next_plannable_term`을 근거로 그 학기가 **"N학년 M학기"** 형태로 어디에 해당하는지
+  밝혀라 (예: "다음 학기는 3학년 2학기입니다. 이 학기 추천은..."). 편입생·엇학기
+  (휴학·조기이수)처럼 달력 학기와 커리큘럼 학기가 어긋나는 학생은 특히 이 명시가
+  없으면 사용자가 헷갈린다. `earliest_recorded_grade`가 있는 편입생에게는 "편입생은
+  3학년부터 시작합니다"처럼 최저 학년을 함께 안내해라. **주의**: 프롬프트에 나오는
+  변수명(`next_plannable_term`, `earliest_recorded_grade` 등)을 답변에 그대로 노출하지
+  말고 자연어로 풀어써라. "커리큘럼 좌표:" 같은 기술 라벨도 쓰지 마라 — 그냥
+  본문의 첫 문장으로 학년/학기를 언급하면 된다.
 - **사용자가 요청한 범위를 벗어나 제안을 남발하지 마라.** 사용자가 "이 과목을
   몇 학기로 옮겨줘"처럼 기존 항목 하나를 콕 집어 요청했으면 그 항목에 대한
   propose_change 하나만 호출하고 끝내라 — 물어보지도 않은 다른 과목을 추가로
@@ -453,6 +463,51 @@ _TOOLS = [
         },
     },
 ]
+
+
+def _safe_call(handler, tool_input: dict) -> dict:
+    """`handler(**tool_input)` 방어 래퍼.
+
+    LLM(gpt-4o-mini 관측)이 종종 잘못된 kwarg 이름을 낸다 — 예: `{"query=": "..."}`
+    처럼 등호가 붙거나, 스키마에 없는 필드를 추가한다. 기본 `handler(**tool_input)`은
+    `TypeError`로 죽고, 그 위를 감싼 langfuse span context가 `generator didn't stop
+    after throw()`로 재폭발해서 대화 전체가 크래시된다.
+
+    대응: handler 시그니처에 없는 키는 조용히 드롭하되, 응답에 `_dropped_args`로 실어
+    LLM이 다음 턴에 올바른 이름으로 재호출할 수 있게 한다. 알 수 없는 예외는 문자열로
+    감싸 error 필드로 돌려준다 — 도구 하나 실패로 전체 세션이 죽지 않도록.
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(handler)
+    except (TypeError, ValueError):
+        sig = None
+
+    dropped: list[str] = []
+    if sig is not None and tool_input:
+        allowed = {
+            n for n, p in sig.parameters.items()
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        }
+        has_var_keyword = any(
+            p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not has_var_keyword:
+            filtered = {k: v for k, v in tool_input.items() if k in allowed}
+            dropped = [k for k in tool_input if k not in allowed]
+            tool_input = filtered
+
+    try:
+        result = handler(**tool_input)
+    except TypeError as e:
+        return {"error": f"도구 호출 실패(잘못된 인자): {e}", "_dropped_args": dropped}
+    except Exception as e:  # noqa: BLE001 - 도구 하나 실패로 세션 전체를 죽이지 않는다
+        return {"error": f"도구 실행 오류: {type(e).__name__}: {e}"}
+
+    if dropped and isinstance(result, dict):
+        result.setdefault("_dropped_args", dropped)
+    return result
 
 
 def _build_llm() -> BaseChatModel:
@@ -1089,7 +1144,7 @@ class _ToolContext:
         handler = getattr(self, name, None)
         if handler is None:
             return {"error": f"알 수 없는 도구: {name}"}
-        return handler(**tool_input)
+        return _safe_call(handler, tool_input)
 
 
 # LLM 컨텍스트로 실을 최근 대화 턴 수. DB에는 전부 저장하고 유저는 UI에서 다 볼

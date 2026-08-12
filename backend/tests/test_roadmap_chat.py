@@ -902,5 +902,53 @@ class ProposeChangeDuplicateGuardTest(unittest.TestCase):
         self.assertEqual(200, result["items"][0]["course_id"])
 
 
+class SafeCallDispatchGuardTest(unittest.TestCase):
+    """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
+    스키마에 없는 필드 추가. 예전엔 handler(**tool_input)가 TypeError로 죽고, langfuse
+    span context가 그 위에서 `generator didn't stop after throw()`로 재폭발해 세션
+    전체가 크래시됐다. _safe_call은 알 수 없는 키를 드롭하고 error dict으로 돌린다.
+    """
+
+    def test_unknown_kwarg_is_dropped_and_reported(self):
+        from app.domains.planning.roadmap_chat import _safe_call
+
+        def handler(query: str = ""):
+            return {"ok": True, "got": query}
+
+        result = _safe_call(handler, {"query": "abc", "query=": "junk", "extra": 1})
+        self.assertTrue(result["ok"])
+        self.assertEqual("abc", result["got"])
+        self.assertEqual(sorted(["query=", "extra"]), sorted(result["_dropped_args"]))
+
+    def test_type_error_inside_handler_returns_error_not_raises(self):
+        from app.domains.planning.roadmap_chat import _safe_call
+
+        def handler(x: int):
+            raise TypeError("boom")
+
+        result = _safe_call(handler, {"x": 1})
+        self.assertIn("error", result)
+        # 세션 크래시 대신 dict으로 돌려주기만 하면 목표 달성
+
+    def test_var_keyword_handler_receives_extras(self):
+        from app.domains.planning.roadmap_chat import _safe_call
+
+        def handler(**kwargs):
+            return {"echo": kwargs}
+
+        result = _safe_call(handler, {"a": 1, "weird=key": 2})
+        self.assertEqual({"a": 1, "weird=key": 2}, result["echo"])
+        self.assertNotIn("_dropped_args", result)
+
+    def test_clean_call_passes_through_unchanged(self):
+        from app.domains.planning.roadmap_chat import _safe_call
+
+        def handler(query: str = "", limit: int = 10):
+            return {"q": query, "n": limit}
+
+        result = _safe_call(handler, {"query": "x", "limit": 5})
+        self.assertEqual({"q": "x", "n": 5}, result)
+
+
 if __name__ == "__main__":
     unittest.main()
