@@ -902,6 +902,113 @@ class ProposeChangeDuplicateGuardTest(unittest.TestCase):
         self.assertEqual(200, result["items"][0]["course_id"])
 
 
+class CriticalMissingRequiredTest(unittest.TestCase):
+    """졸업 위험 감지: 학과 필수인데 미이수 + 개설 학기 어긋남을 도구가 계산해서
+    LLM에게 노출한다. LLM 혼자 courses.semester를 크로스체크 못 하는 걸 보완."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                      curriculum_year="2024", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_flags_1st_only_required_when_next_is_2nd(self):
+        """자료구조(1학기 전용, 전공필수) 미이수인 학생이 다음 학기가 2학기면 critical."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=100, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(1, len(result))
+        self.assertEqual("자료구조", result[0]["course_name"])
+        self.assertEqual("1", result[0]["offered_semester"])
+
+    def test_skips_course_offered_this_semester(self):
+        """개설 학기가 next와 같으면 이번에 들 수 있으니 critical 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        # 2학기 전용 필수 → next도 2학기면 이번 학기에 들 수 있음
+        db.add(Course(id=101, course_name="컴퓨터구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="2"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_completed_from_records(self):
+        """이수 완료 과목(성적표)은 위험 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=102, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3, year="2024"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_completed_from_roadmap_items(self):
+        """로드맵 status='completed' 항목도 이수로 취급."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=103, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=103,
+                                  course_name="자료구조", planned_grade=2,
+                                  status="completed"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_all_semester_courses(self):
+        """전학기·1,2 개설(계절수업 등)은 다음 학기든 언제든 미룰 수 있어 위험 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=104, course_name="여름캡스톤", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="3", semester="1,2"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_matches_norm_across_roman_variants(self):
+        """이수기록 '컴퓨터프로그래밍 Ⅰ' vs 카탈로그 '컴퓨터프로그래밍(I)' 정규화 매칭."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=105, course_name="컴퓨터프로그래밍(I)", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3, year="2024"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_exposed_in_get_roadmap_items(self):
+        """get_roadmap_items 응답에 critical_missing_required 키가 포함된다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=106, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            # next = 2026-2학기 → 자료구조(1학기 전용)은 critical
+            result = ctx.get_roadmap_items()
+        self.assertIn("critical_missing_required", result)
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertIn("자료구조", names)
+
+
 class SafeCallDispatchGuardTest(unittest.TestCase):
     """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
     스키마에 없는 필드 추가. 예전엔 handler(**tool_input)가 TypeError로 죽고, langfuse

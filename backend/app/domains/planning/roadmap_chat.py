@@ -28,7 +28,7 @@ import json
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
@@ -301,6 +301,12 @@ _SYSTEM_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 �
   변수명(`next_plannable_term`, `earliest_recorded_grade` 등)을 답변에 그대로 노출하지
   말고 자연어로 풀어써라. "커리큘럼 좌표:" 같은 기술 라벨도 쓰지 마라 — 그냥
   본문의 첫 문장으로 학년/학기를 언급하면 된다.
+- **필수 미이수 + 개설학기 어긋남 = 졸업 위험, 반드시 경고**: `get_roadmap_items`
+  응답의 `critical_missing_required`가 비어있지 않으면 finish_response 첫 부분에서
+  이 사실을 사용자에게 명시적으로 알려라 — "졸업 필수인 OO(X학기 전용 개설)가
+  미이수인데 다음 학기가 Y학기라 이번엔 못 듣습니다, 다음 학년도 X학기에 반드시
+  들어야 졸업 가능합니다"처럼 위험 + 대안(같은 학기의 다음 연도)을 함께. 이걸
+  놓치고 다른 과목만 추천하면 사용자가 졸업 실패 위험을 모른 채로 넘어간다.
 - **사용자가 요청한 범위를 벗어나 제안을 남발하지 마라.** 사용자가 "이 과목을
   몇 학기로 옮겨줘"처럼 기존 항목 하나를 콕 집어 요청했으면 그 항목에 대한
   propose_change 하나만 호출하고 끝내라 — 물어보지도 않은 다른 과목을 추가로
@@ -345,9 +351,10 @@ _TOOLS = [
                 "현재 학년도/학기(current_academic_term), 다음 배치 가능한 학기"
                 "(next_plannable_term), 학기당 학점 상한(term_credit_cap), "
                 "학기별 이미 계획된 학점 합(planned_credits_by_term), "
-                "성적표 기반 이수기록(completed_courses)을 돌려준다. "
-                "새 항목 제안 전에 반드시 이걸 확인해라 — 특히 학점 상한 초과 여부와 "
-                "이미 이수한 과목 중복 여부."
+                "성적표 기반 이수기록(completed_courses), 그리고 **critical_missing_required**"
+                "(학과 필수인데 미이수 + 개설 학기가 다음 학기와 어긋난 목록 = 졸업 위험)"
+                "를 돌려준다. 새 항목 제안 전에 반드시 이걸 확인해라 — 특히 학점 상한 "
+                "초과 여부, 이미 이수한 과목 중복 여부, 졸업 위험 필수 미이수."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -715,6 +722,76 @@ class _ToolContext:
             out[key] = out.get(key, 0.0) + float(it.credits or 0)
         return out
 
+    def _critical_missing_required(self, next_planned_semester: str) -> list[dict]:
+        """학과 필수·기초 과목 중 (a) 미이수 (b) courses.semester가 단일 학기 전용
+        ('1' 또는 '2') (c) 그 개설 학기가 다음 배치 가능 학기와 다름 — 조건을 모두
+        만족하는 과목 목록.
+
+        졸업 위험 감지용. 예: 4학년 2학기 학생이 자료구조(전공필수, 1학기 전용)를
+        미이수면, 이번(2학기)엔 못 듣는다는 사실을 LLM이 도구 결과로 즉시 인지해서
+        finish_response에 위험 경고를 붙일 수 있게 한다. 이 정보 없이는 LLM이
+        courses.semester를 스스로 크로스체크하지 않고 무해한 추천만 나열해 사용자가
+        졸업 실패 위험을 모른 채로 넘어간다 (case 13 관측).
+
+        `1,2` / `전학기` / 계절수업 개설 과목은 어느 학기든 미룰 수 있어 제외.
+        """
+        if self.user.department_id is None:
+            return []
+
+        def _norm(n: str | None) -> str:
+            """propose_change의 _norm과 동일 규칙: 유니코드 로마자 정규화 + 괄호·공백 제거."""
+            if not n:
+                return ""
+            roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+            s = "".join(roman.get(ch, ch) for ch in n)
+            return s.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+        # 이수 완료 세트: student_course_records + 로드맵의 status='completed'
+        completed_norms: set[str] = set()
+        for r in self.db.scalars(
+            select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
+        ).all():
+            completed_norms.add(_norm(r.raw_course_name))
+        for it in self.db.scalars(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == self.roadmap.id,
+                CourseRoadmapItem.status == "completed",
+            )
+        ).all():
+            completed_norms.add(_norm(it.course_name))
+
+        # next_plannable_term은 "1학기"/"2학기" 문자열, courses.semester는 "1"/"2"라 정렬 필요.
+        next_sem_char = str(next_planned_semester).replace("학기", "").strip()
+        if next_sem_char not in ("1", "2"):
+            return []  # 계절수업 등 정규 학기 아니면 위험 판정 불가
+
+        q = select(Course).where(
+            Course.department_id == self.user.department_id,
+            Course.category.in_(["전공필수", "전공기초"]),
+            Course.semester.in_(["1", "2"]),  # 단일 학기 전용만 (전학기·1,2·계절수업은 미룰 수 있음)
+        )
+        if self.user.major_id is not None:
+            # 학과 안에서 특정 major 대상 or major 무관 공통 과목
+            q = q.where(or_(Course.major_id == self.user.major_id, Course.major_id.is_(None)))
+
+        critical: list[dict] = []
+        for c in self.db.scalars(q).all():
+            if _norm(c.course_name) in completed_norms:
+                continue
+            if c.semester == next_sem_char:
+                continue  # 이번 학기에 개설 — 위험 아님
+            critical.append({
+                "course_id": c.id,
+                "course_name": c.course_name,
+                "category": c.category,
+                "offered_semester": c.semester,
+                "reason": (
+                    f"학과 필수인데 {c.semester}학기 전용 개설이라 다음 학기"
+                    f"({next_planned_semester})에는 수강 불가"
+                ),
+            })
+        return critical
+
     def _completed_courses(self) -> list[dict]:
         """학생 성적표에서 매핑된 이수기록. course_id는 대부분 None(성적표 파싱이 이름만
         가진 경우가 많음)이라 name/category만으로 LLM에게 노출한다 — LLM이 새 추천을
@@ -784,6 +861,9 @@ class _ToolContext:
                 for (y, s), c in sorted(planned.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
             ],
             "completed_courses": self._completed_courses(),
+            # 졸업 위험 감지: 학과 필수인데 미이수 + 개설학기가 다음 학기와 어긋난 목록.
+            # 비어있지 않으면 LLM이 finish_response에서 사용자에게 위험을 반드시 알려야 한다.
+            "critical_missing_required": self._critical_missing_required(f"{ns}학기"),
         }
 
     def search_courses(
