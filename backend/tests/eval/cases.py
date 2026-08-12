@@ -1,11 +1,17 @@
-"""Phase 3.1 골든 데이터셋.
+"""챗 골든 데이터셋 — 21 케이스 (Phase 3.1 계획 매트릭스 완성).
 
-각 케이스는 실제 관찰된 버그/설계 결정을 회귀 방지하는 assertion을 갖는다:
+각 케이스는 실제 관찰된 버그/설계 결정을 회귀 방지하는 assertion을 갖는다.
 
-- 로드맵 챗 8개: 정컴 신입/3학년, 부전공, 엇학기, 편입, AI융합트랙, 복수전공, 진로-전공 mismatch
-- 시간표 챗 3개: 정컴 3학년 기본, 시간 제약, 못 찾음(부재 검증)
+**로드맵 챗 (16)**:
+- 01 정컴 신입 · 02 정컴 3학년(AI) · 03 경영 4학년(재무)
+- 04 전자공학 3학년(반도체) · 05 기계 2학년(자동차)
+- 06 SW연계전공 임베디드 (48학점) · 07 핀테크 융합전공 (42학점)
+- 08 부전공 · 09 복수전공 · 15 부·복수 동시
+- 10 엇학기 · 11 편입 · 12 전공기초 부족 · 13 1학기 전용 미수강
+- 14 진로-전공 mismatch · 16 AI융합트랙
 
-원래 매트릭스(총 20+)에서 우선순위 높은 것만 추린 첫 배치.
+**시간표 챗 (5)**:
+- 17 정컴 3학년 · 18 시간 제약 · 19 엇학기 · 20 부전공 · 21 못 찾음
 """
 
 from __future__ import annotations
@@ -27,6 +33,10 @@ DEPT_PSY = 18          # 심리학과 (test_tracks_api와 정합)
 MAJOR_PSY_TRACK = 66   # 심리데이터사이언스(SW융합트랙)
 DEPT_MATH = 50         # 수학과
 DEPT_KOR = 60          # 국어국문학과
+DEPT_MECH = 70         # 기계공학부
+DEPT_FINTECH = 80      # 핀테크 융합전공 (dept-level program, major_id None)
+DEPT_IE = 90           # 산업공학과
+MAJOR_EMBED = 25       # 임베디드SW SW연계전공 (정컴 학과 소속)
 
 
 # --- 공통 학과 셋 -----------------------------------------------------------
@@ -621,16 +631,548 @@ def case_tt_course_not_found() -> EvalCase:
     )
 
 
+# --- 2차 배치 케이스 (매트릭스 완성) --------------------------------------
+
+
+def case_biz_senior_finance() -> EvalCase:
+    """3: 경영학과 4학년, 진로=재무분석. 마지막 학기 남은 학점 우선순위 검증."""
+    persona = PersonaSpec(
+        id="biz-senior-finance", label="경영 4학년 / 재무분석",
+        departments=[DepartmentSpec(id=DEPT_BIZ, name="경영학과", college_name="경영대학")],
+        majors=[],
+        department_id=DEPT_BIZ,
+        career_goal="재무분석가",
+        programs=[ProgramSpec(department_id=DEPT_BIZ, program_type="primary",
+                              curriculum_year="2023")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_BIZ, program_type="primary", curriculum_year="2023",
+            required_total_credits=130, required_major_required=30,
+            required_major_elective=30, required_general_required=15,
+            required_general_elective=15,
+        )],
+        courses=[
+            CourseSpec(id=3101, course_name="재무관리", department_id=DEPT_BIZ,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=3102, course_name="회계원리", department_id=DEPT_BIZ,
+                       category="전공필수", credits=3, year="1", semester="1"),
+            CourseSpec(id=3103, course_name="투자론", department_id=DEPT_BIZ,
+                       category="전공선택", credits=3, year="3", semester="2"),
+            CourseSpec(id=3104, course_name="파생상품", department_id=DEPT_BIZ,
+                       category="전공선택", credits=3, year="4", semester="1"),
+            CourseSpec(id=3105, course_name="기업재무", department_id=DEPT_BIZ,
+                       category="전공선택", credits=3, year="4", semester="1"),
+        ],
+        # 3학년까지 이수한 척
+        records=[
+            RecordSpec(raw_course_name="회계원리", category="전공필수", year="2023"),
+            RecordSpec(raw_course_name="재무관리", category="전공필수", year="2024"),
+            RecordSpec(raw_course_name="투자론", category="전공선택", year="2025"),
+        ],
+        roadmap_items=[
+            RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
+            for n, g in [("회계원리", 1), ("재무관리", 2), ("투자론", 3)]
+        ],
+    )
+    return EvalCase(
+        slug="03-biz-senior-finance", persona=persona, agent="roadmap",
+        prompt="경영학과 4학년 1학기 뭐 들어야 해요? 재무분석 쪽으로 가려고요.",
+        expectations=[
+            ExpectedBehavior("tool_called", "search_courses",
+                             reason="4학년 남은 과목 후보를 실제 카탈로그에서 뽑아야 함"),
+            ExpectedBehavior(
+                "llm_judge",
+                "재무분석 진로에 부합하는 과목(예: 파생상품, 기업재무, 투자론 계열)을 "
+                "우선순위로 추천했는가? 진로와 무관한 과목만 나열했으면 fail.",
+                reason="진로 기반 우선순위 반영 검증",
+            ),
+        ],
+    )
+
+
+def case_ee_junior_semiconductor() -> EvalCase:
+    """4: 전기전자 전자공학전공 3학년, 진로=반도체 설계."""
+    persona = PersonaSpec(
+        id="ee-junior-semi", label="전자공 3학년 / 반도체",
+        departments=[DepartmentSpec(id=DEPT_EE, name="전기전자공학부",
+                                     college_name="정보의생명공학대학")],
+        majors=[MajorSpec(id=MAJOR_EE, department_id=DEPT_EE, name="전자공학전공")],
+        department_id=DEPT_EE, major_id=MAJOR_EE,
+        career_goal="반도체 회로 설계",
+        programs=[ProgramSpec(department_id=DEPT_EE, major_id=MAJOR_EE,
+                              program_type="primary", curriculum_year="2024")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_EE, major_id=MAJOR_EE, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+        )],
+        courses=[
+            CourseSpec(id=2001, course_name="회로이론", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=2002, course_name="전자회로", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            CourseSpec(id=2011, course_name="반도체소자", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공선택", credits=3, year="3", semester="1"),
+            CourseSpec(id=2012, course_name="집적회로설계", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공선택", credits=3, year="3", semester="2"),
+            CourseSpec(id=2013, course_name="VLSI설계", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공선택", credits=3, year="4", semester="1"),
+        ],
+        records=[
+            RecordSpec(raw_course_name="회로이론", category="전공필수", year="2024"),
+            RecordSpec(raw_course_name="전자회로", category="전공필수", year="2025"),
+        ],
+        roadmap_items=[
+            RoadmapItemSpec(course_name="회로이론", planned_grade=2, status="completed"),
+            RoadmapItemSpec(course_name="전자회로", planned_grade=2, status="completed"),
+        ],
+    )
+    return EvalCase(
+        slug="04-ee-junior-semi", persona=persona, agent="roadmap",
+        prompt="전자공학전공 3학년인데 반도체 설계 쪽에 관심 있어요. 다음 학기 뭐 들으면 좋아요?",
+        expectations=[
+            ExpectedBehavior("tool_called", "search_courses"),
+            ExpectedBehavior(
+                "llm_judge",
+                "반도체 진로에 맞는 과목(반도체소자·집적회로설계·VLSI 계열)을 우선순위로 "
+                "추천했는가?",
+                reason="전자공 진로 반영",
+            ),
+        ],
+    )
+
+
+def case_mech_sophomore_auto() -> EvalCase:
+    """5: 기계공학부 2학년, 진로=자동차 엔지니어."""
+    persona = PersonaSpec(
+        id="mech-soph-auto", label="기계 2학년 / 자동차",
+        departments=[DepartmentSpec(id=DEPT_MECH, name="기계공학부",
+                                     college_name="공과대학")],
+        majors=[],
+        department_id=DEPT_MECH,
+        career_goal="자동차 엔지니어",
+        programs=[ProgramSpec(department_id=DEPT_MECH, program_type="primary",
+                              curriculum_year="2025")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_MECH, program_type="primary",
+            curriculum_year="2025", required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+            required_general_required=15,
+        )],
+        courses=[
+            CourseSpec(id=5001, course_name="공학수학", department_id=DEPT_MECH,
+                       category="전공기초", credits=3, year="1", semester="1"),
+            CourseSpec(id=5002, course_name="정역학", department_id=DEPT_MECH,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=5003, course_name="열역학", department_id=DEPT_MECH,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            CourseSpec(id=5011, course_name="자동차공학", department_id=DEPT_MECH,
+                       category="전공선택", credits=3, year="3", semester="1"),
+            CourseSpec(id=5012, course_name="내연기관", department_id=DEPT_MECH,
+                       category="전공선택", credits=3, year="3", semester="2"),
+        ],
+        records=[
+            RecordSpec(raw_course_name="공학수학", category="전공기초", year="2025"),
+            RecordSpec(raw_course_name="정역학", category="전공필수", year="2026"),
+        ],
+        roadmap_items=[
+            RoadmapItemSpec(course_name="공학수학", planned_grade=1, status="completed"),
+            RoadmapItemSpec(course_name="정역학", planned_grade=2, status="completed"),
+        ],
+    )
+    return EvalCase(
+        slug="05-mech-soph-auto", persona=persona, agent="roadmap",
+        prompt="기계공학부 2학년 2학기 뭐 들어야 해요? 나중에 자동차 관련 일 하고 싶어요.",
+        expectations=[
+            ExpectedBehavior("tool_called", "search_courses"),
+            ExpectedBehavior(
+                "llm_judge",
+                "다음 학기(2-2)에 이수할 만한 과목으로 열역학(전공필수) 같은 필수를 "
+                "우선순위로 챙기고, 자동차 진로 관련 과목(내연기관·자동차공학 등)은 "
+                "장기 계획으로 언급했는가? 필수 무시하고 진로 과목만 추천했으면 fail.",
+                reason="필수 우선 + 진로 반영 균형",
+            ),
+        ],
+    )
+
+
+def case_sw_convergence_embedded() -> EvalCase:
+    """6: 정컴 primary + SW연계전공 임베디드SW (48학점, 정식 다전공)."""
+    depts, majors = _cs_hierarchy()
+    majors = majors + [MajorSpec(id=MAJOR_EMBED, department_id=DEPT_CS,
+                                  name="임베디드SW(SW연계전공)")]
+    persona = PersonaSpec(
+        id="sw-embed", label="정컴 + SW연계전공 임베디드 (48학점)",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="임베디드 시스템 개발",
+        programs=[
+            ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                        program_type="primary", curriculum_year="2024"),
+            # 트랙(21학점)이 아니라 정식 다전공(48학점) — special_rules로 구분
+            ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_EMBED,
+                        program_type="interdisciplinary", curriculum_year="2024"),
+        ],
+        requirements=[
+            RequirementSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                            program_type="primary", curriculum_year="2024",
+                            required_total_credits=133),
+            RequirementSpec(
+                department_id=DEPT_CS, major_id=MAJOR_EMBED,
+                program_type="interdisciplinary", curriculum_year="2024",
+                required_total_credits=48,
+                special_rules={"total_credits": 48},  # 트랙과 다르게 not_graduation_requirement 없음
+            ),
+        ],
+        courses=_cs_catalog(),
+    )
+    return EvalCase(
+        slug="06-sw-embed", persona=persona, agent="roadmap",
+        prompt="SW연계전공 임베디드 하고 있어요. 지금까지 뭐 들었고 뭐가 남았어요?",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_graduation_progress",
+                             reason="주전공 + 연계전공 진도 둘 다 필요"),
+            ExpectedBehavior(
+                "llm_judge",
+                "48학점 요구 조건이 있는 연계전공에 대해 남은 학점/진도를 사용자에게 "
+                "명확히 안내했는가? 21학점 SW융합트랙으로 오인하지 않았는가?",
+                reason="트랙(21학점) vs 정식 연계전공(48학점) 구분",
+            ),
+        ],
+    )
+
+
+def case_fintech_convergence() -> EvalCase:
+    """7: 핀테크 융합전공 (42학점, dept-level 프로그램)."""
+    persona = PersonaSpec(
+        id="fintech", label="핀테크 융합전공 (42학점)",
+        departments=[
+            DepartmentSpec(id=DEPT_BIZ, name="경영학과", college_name="경영대학"),
+            DepartmentSpec(id=DEPT_FINTECH, name="핀테크융합전공",
+                           college_name="융합대학"),
+        ],
+        majors=[],
+        department_id=DEPT_BIZ,
+        career_goal="핀테크 스타트업",
+        programs=[
+            ProgramSpec(department_id=DEPT_BIZ, program_type="primary",
+                        curriculum_year="2024"),
+            # major_id=None — 학과 자체가 프로그램 단위
+            ProgramSpec(department_id=DEPT_FINTECH, program_type="interdisciplinary",
+                        curriculum_year="2024"),
+        ],
+        requirements=[
+            RequirementSpec(department_id=DEPT_BIZ, program_type="primary",
+                            curriculum_year="2024", required_total_credits=130),
+            RequirementSpec(
+                department_id=DEPT_FINTECH, program_type="interdisciplinary",
+                curriculum_year="2024", required_total_credits=42,
+                special_rules={"total_credits": 42},
+            ),
+        ],
+        courses=[
+            CourseSpec(id=8101, course_name="블록체인개론", department_id=DEPT_FINTECH,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=8102, course_name="금융공학", department_id=DEPT_FINTECH,
+                       category="전공필수", credits=3, year="2", semester="2"),
+        ],
+    )
+    return EvalCase(
+        slug="07-fintech", persona=persona, agent="roadmap",
+        prompt="핀테크 융합전공 하고 있어요. 필요한 학점 뭐 뭐 있어요?",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_graduation_progress"),
+            ExpectedBehavior(
+                "llm_judge",
+                "핀테크 융합전공 42학점 요건을 사용자에게 안내했는가? "
+                "(정확한 숫자든 '42학점 이상' 표현이든 무방)",
+                reason="42학점 융합전공 규정 정확 반영",
+            ),
+        ],
+    )
+
+
+def case_missing_foundation() -> EvalCase:
+    """12: 3학년인데 이산수학(전공기초) 안 들음 — 다음 학기 필수 우선."""
+    depts, majors = _cs_hierarchy()
+    persona = PersonaSpec(
+        id="missing-foundation", label="정컴 3학년 · 이산수학 미이수",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2024")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+            required_major_foundation=15, required_major_required=30,
+            required_major_elective=27,
+        )],
+        courses=_cs_catalog(),
+        # 이산수학은 없고 나머지 전공기초·필수는 완료. 3학년까지 진행.
+        records=[
+            RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초", year="2024"),
+            RecordSpec(raw_course_name="컴퓨터프로그래밍(II)", category="전공기초", year="2024"),
+            RecordSpec(raw_course_name="자료구조", category="전공필수", year="2025"),
+            RecordSpec(raw_course_name="알고리즘", category="전공필수", year="2025"),
+            RecordSpec(raw_course_name="운영체제", category="전공선택", year="2026"),
+        ],
+        roadmap_items=[
+            RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
+            for n, g in [("컴퓨터프로그래밍(I)", 1), ("컴퓨터프로그래밍(II)", 1),
+                          ("자료구조", 2), ("알고리즘", 2), ("운영체제", 3)]
+        ],
+    )
+    return EvalCase(
+        slug="12-missing-foundation", persona=persona, agent="roadmap",
+        prompt="다음 학기 뭐 들으면 좋아요?",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_graduation_progress"),
+            ExpectedBehavior(
+                "llm_judge",
+                "학생이 아직 이수 안 한 전공기초 과목(이산수학)을 놓치지 않고 다음 학기 "
+                "우선순위로 추천했는가? 진로 관련 전공선택만 나열하고 미이수 전공기초를 "
+                "무시했으면 fail.",
+                reason="미이수 전공기초 우선순위 검증",
+            ),
+        ],
+    )
+
+
+def case_last_semester_1st_only_gap() -> EvalCase:
+    """13: 4학년 2학기, 1학기 전용 필수과목 미이수 — 졸업 불가 위험 안내."""
+    depts, majors = _cs_hierarchy()
+    # 시나리오: 자료구조(2-1 전용)를 안 들었고 지금 4-2 학생. 다음 학기(=졸업 학기)에
+    # 못 듣게 됨.
+    persona = PersonaSpec(
+        id="last-sem-gap", label="4-2, 1학기 전용 필수 미이수",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2023")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2023", required_total_credits=133,
+        )],
+        courses=[
+            # 자료구조를 1학기 전용으로 명시 (semester='1')
+            CourseSpec(id=1010, course_name="자료구조", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=1011, course_name="알고리즘", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            CourseSpec(id=1012, course_name="운영체제", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공선택", credits=3, year="3", semester="1"),
+        ],
+        records=[
+            RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초", year="2023"),
+            # 자료구조 미이수. 알고리즘·운영체제 등은 이수.
+            RecordSpec(raw_course_name="알고리즘", category="전공필수", year="2024"),
+            RecordSpec(raw_course_name="운영체제", category="전공선택", year="2025"),
+        ],
+        roadmap_items=[
+            RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
+            for n, g in [("컴퓨터프로그래밍(I)", 1), ("알고리즘", 2), ("운영체제", 3)]
+        ],
+    )
+    return EvalCase(
+        slug="13-last-sem-gap", persona=persona, agent="roadmap",
+        prompt="4학년 2학기예요. 이번 학기 뭐 들어야 졸업할 수 있어요?",
+        expectations=[
+            ExpectedBehavior(
+                "llm_judge",
+                "학생이 이수 안 한 자료구조(전공필수, courses.semester='1'=1학기 전용)를 "
+                "'이번 4-2 학기에 개설 안 됨' 사실을 인지하고 위험을 알리거나 "
+                "대안(예: 다음 학년도 1학기 재수강, 다른 대체 필수)을 제시했는가? "
+                "그냥 다른 과목만 나열했으면 fail.",
+                reason="1학기 전용 미수강 → 졸업 불가 위험 감지",
+            ),
+        ],
+    )
+
+
+def case_minor_and_dual() -> EvalCase:
+    """15: 부·복수 동시 (경영 primary + 전자 minor + 산업 dual)."""
+    persona = PersonaSpec(
+        id="minor-and-dual", label="경영 + 전자minor + 산업dual",
+        departments=[
+            DepartmentSpec(id=DEPT_BIZ, name="경영학과", college_name="경영대학"),
+            DepartmentSpec(id=DEPT_EE, name="전기전자공학부",
+                           college_name="정보의생명공학대학"),
+            DepartmentSpec(id=DEPT_IE, name="산업공학과", college_name="공과대학"),
+        ],
+        majors=[MajorSpec(id=MAJOR_EE, department_id=DEPT_EE, name="전자공학전공")],
+        department_id=DEPT_BIZ,
+        career_goal="스타트업 창업",
+        programs=[
+            ProgramSpec(department_id=DEPT_BIZ, program_type="primary",
+                        curriculum_year="2024"),
+            ProgramSpec(department_id=DEPT_EE, major_id=MAJOR_EE, program_type="minor",
+                        curriculum_year="2024"),
+            ProgramSpec(department_id=DEPT_IE, program_type="dual",
+                        curriculum_year="2024"),
+        ],
+        requirements=[
+            RequirementSpec(department_id=DEPT_BIZ, program_type="primary",
+                            curriculum_year="2024", required_total_credits=130),
+            RequirementSpec(
+                department_id=DEPT_EE, major_id=MAJOR_EE, program_type="minor",
+                curriculum_year="2024", required_total_credits=21,
+                special_rules={"total_credits": 21, "groups": [
+                    {"label": "필수", "rule_type": "all", "courses": ["회로이론"]},
+                ]},
+            ),
+            RequirementSpec(department_id=DEPT_IE, program_type="dual",
+                            curriculum_year="2024", required_total_credits=36,
+                            required_major_required=18, required_major_elective=18),
+        ],
+        courses=[
+            CourseSpec(id=2001, course_name="회로이론", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=7001, course_name="생산공학", department_id=DEPT_IE,
+                       category="전공필수", credits=3, year="2", semester="1"),
+        ],
+    )
+    return EvalCase(
+        slug="15-minor-and-dual", persona=persona, agent="roadmap",
+        prompt="지금 부전공(전자) + 복수전공(산업) 하고 있어요. 세 개 다 정리해서 뭐 남았는지 알려주세요.",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_graduation_progress",
+                             reason="세 프로그램 진도 동시 조회"),
+            ExpectedBehavior("tool_called", "get_program_evaluations",
+                             reason="부전공 필수과목 규칙 확인"),
+            ExpectedBehavior(
+                "llm_judge",
+                "주전공(경영) + 부전공(전자) + 복수전공(산업) 세 프로그램 각각에 대해 "
+                "남은 상태를 사용자에게 구분해서 안내했는가? 하나만 챙기고 나머지를 "
+                "빠뜨렸으면 fail.",
+                reason="세 program_type 동시 처리",
+            ),
+        ],
+    )
+
+
+def case_tt_staggered() -> EvalCase:
+    """19: 엇학기 학생 시간표. 커리큘럼 학기 vs 달력 학기 반영."""
+    depts, majors = _cs_hierarchy()
+    persona = PersonaSpec(
+        id="tt-staggered", label="시간표: 엇학기",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="시스템 프로그래밍",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2022")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2022", required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+        )],
+        courses=_cs_catalog(),
+        records=[
+            RecordSpec(raw_course_name=n, category=c, year=y, semester=sem)
+            for (n, c, y, sem) in [
+                ("컴퓨터프로그래밍(I)", "전공기초", "2022", "1학기"),
+                ("컴퓨터프로그래밍(II)", "전공기초", "2022", "2학기"),
+                ("자료구조", "전공필수", "2023", "1학기"),
+                ("알고리즘", "전공필수", "2023", "2학기"),
+                ("컴퓨터구조", "전공필수", "2023", "2학기"),
+                ("운영체제", "전공선택", "2024", "1학기"),
+            ]
+        ],
+        offerings=[
+            OfferingSpec(id=5501, course_id=1022, year="2026", semester="2학기",  # 데이터베이스
+                         times=[("월", "09:00", "10:30"), ("수", "09:00", "10:30")]),
+            OfferingSpec(id=5502, course_id=1023, year="2026", semester="2학기",  # 컴퓨터네트워크
+                         times=[("화", "13:00", "14:30"), ("목", "13:00", "14:30")]),
+        ],
+    )
+    return EvalCase(
+        slug="19-tt-staggered", persona=persona, agent="timetable",
+        prompt="복학하는데 이번 학기 시간표 짜주세요.",
+        timetable_year="2026", timetable_semester="2학기",
+        expectations=[
+            ExpectedBehavior("tool_called", "list_offered_courses"),
+            ExpectedBehavior("schedules_count", (">=", 1),
+                             reason="휴학 후 복학 학생도 유효 조합 제안 가능해야 함"),
+        ],
+    )
+
+
+def case_tt_minor_student() -> EvalCase:
+    """20: 부전공(전자) 학생 시간표. 부전공 필수과목 우선 검증."""
+    persona = PersonaSpec(
+        id="tt-minor", label="시간표: 경영+전자minor",
+        departments=[
+            DepartmentSpec(id=DEPT_BIZ, name="경영학과", college_name="경영대학"),
+            DepartmentSpec(id=DEPT_EE, name="전기전자공학부",
+                           college_name="정보의생명공학대학"),
+        ],
+        majors=[MajorSpec(id=MAJOR_EE, department_id=DEPT_EE, name="전자공학전공")],
+        department_id=DEPT_BIZ,
+        career_goal="반도체 마케팅",
+        programs=[
+            ProgramSpec(department_id=DEPT_BIZ, program_type="primary",
+                        curriculum_year="2024"),
+            ProgramSpec(department_id=DEPT_EE, major_id=MAJOR_EE, program_type="minor",
+                        curriculum_year="2024"),
+        ],
+        requirements=[
+            RequirementSpec(department_id=DEPT_BIZ, program_type="primary",
+                            curriculum_year="2024", required_total_credits=130,
+                            required_major_required=30),
+            RequirementSpec(
+                department_id=DEPT_EE, major_id=MAJOR_EE, program_type="minor",
+                curriculum_year="2024", required_total_credits=21,
+                special_rules={"total_credits": 21, "groups": [
+                    {"label": "필수", "rule_type": "all", "courses": ["회로이론"]},
+                ]},
+            ),
+        ],
+        courses=[
+            CourseSpec(id=3401, course_name="마케팅원론", department_id=DEPT_BIZ,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            CourseSpec(id=2001, course_name="회로이론", department_id=DEPT_EE, major_id=MAJOR_EE,
+                       category="전공필수", credits=3, year="2", semester="2"),
+        ],
+        offerings=[
+            OfferingSpec(id=6501, course_id=3401, year="2026", semester="2학기",
+                         times=[("월", "09:00", "10:30"), ("수", "09:00", "10:30")]),
+            OfferingSpec(id=6502, course_id=2001, year="2026", semester="2학기",
+                         times=[("화", "13:00", "14:30"), ("목", "13:00", "14:30")]),
+        ],
+    )
+    return EvalCase(
+        slug="20-tt-minor", persona=persona, agent="timetable",
+        prompt="경영학과인데 전자 부전공도 하고 있어요. 이번 학기 시간표 짜주세요.",
+        timetable_year="2026", timetable_semester="2학기",
+        expectations=[
+            ExpectedBehavior("tool_called", "list_offered_courses"),
+            ExpectedBehavior("schedules_count", (">=", 1)),
+        ],
+    )
+
+
 ALL_CASES: list[EvalCase] = [
-    case_freshman_backend(),
-    case_cs_junior_ai(),
-    case_minor_biz_ee(),
-    case_dual_cs_math(),
-    case_staggered_semester(),
-    case_transfer_student(),
-    case_career_mismatch(),
-    case_ai_track(),
-    case_timetable_cs_junior(),
-    case_tt_time_constraint(),
-    case_tt_course_not_found(),
+    # 로드맵 챗
+    case_freshman_backend(),          # 01
+    case_cs_junior_ai(),              # 02
+    case_biz_senior_finance(),        # 03
+    case_ee_junior_semiconductor(),   # 04
+    case_mech_sophomore_auto(),       # 05
+    case_sw_convergence_embedded(),   # 06
+    case_fintech_convergence(),       # 07
+    case_minor_biz_ee(),              # 08
+    case_dual_cs_math(),              # 09
+    case_staggered_semester(),        # 10
+    case_transfer_student(),          # 11
+    case_missing_foundation(),        # 12
+    case_last_semester_1st_only_gap(),  # 13
+    case_career_mismatch(),           # 14
+    case_minor_and_dual(),            # 15
+    case_ai_track(),                  # 16
+    # 시간표 챗
+    case_timetable_cs_junior(),       # 17
+    case_tt_time_constraint(),        # 18
+    case_tt_staggered(),              # 19
+    case_tt_minor_student(),          # 20
+    case_tt_course_not_found(),       # 21
 ]
