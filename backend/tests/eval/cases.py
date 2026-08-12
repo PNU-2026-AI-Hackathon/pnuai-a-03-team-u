@@ -502,9 +502,15 @@ def case_career_mismatch() -> EvalCase:
         slug="14-career-mismatch", persona=persona, agent="roadmap",
         prompt="저는 국문학과인데 백엔드 개발자가 되고 싶어요. 어떻게 해야 할까요?",
         expectations=[
-            # 이 케이스는 부·복수전공 안내가 자연스러우면 통과. 정확한 도구 사용은 강제 안 함.
-            ExpectedBehavior("response_mentions", "부전공",
-                             reason="진로-전공 mismatch면 부·복수전공 옵션을 제시하는 게 정답"),
+            # 문자열 매칭("부전공")은 오탐 가능 — "부·복수전공" 처럼 조합해 쓰거나
+            # "이중전공" 이라 쓰면 fail. 의미 기반 판정으로 교체.
+            ExpectedBehavior(
+                "llm_judge",
+                "학생의 진로(백엔드 개발자)와 주전공(국문학과)이 mismatch일 때, "
+                "부전공/복수전공/이중전공 중 하나 이상을 명시적으로 옵션으로 제안했는가? "
+                "단순히 국문 전공 과목만 나열하고 mismatch 자체를 언급 안 했으면 fail.",
+                reason="진로-전공 mismatch면 부·복수전공 옵션 제시가 정답 — 의미 기반 판정",
+            ),
         ],
     )
 
@@ -599,8 +605,18 @@ def case_tt_course_not_found() -> EvalCase:
         expectations=[
             ExpectedBehavior("tool_called", "list_offered_courses",
                              reason="'공학작문' 검색을 실제로 시도해야 함"),
-            ExpectedBehavior("response_mentions", "공학작문",
-                             reason="사용자 요청 과목명을 답변에 다시 언급 (없다는 말 하려면 필연)"),
+            # 이전 문자열 매칭 assertion은 LLM이 "공학작문 포함하여 시간표를 짰습니다"
+            # 라고 거짓말해도 PASS 처리하는 오탐이 있었다 (실제 관찰). 의미 기반으로 교체.
+            ExpectedBehavior(
+                "llm_judge",
+                "다음 두 조건을 **모두** 만족하면 pass, 하나라도 어기면 fail:\n"
+                "(a) 이번 학기에 '공학작문'이 개설되지 않았음(못 찾음)을 명시적으로 알렸다.\n"
+                "(b) '공학작문을 포함해서 시간표를 만들었다'거나 실제로 공학작문이 스케줄에 "
+                "들어가 있는 것처럼 거짓 주장을 하지 않았다.\n"
+                "**참고**: 대안 과목명 제안(예: '공학글쓰기 아니세요?')이나 사용자 확인 요청은 "
+                "도움되는 문의이므로 fail 사유가 아니다 — (a)를 만족한다면 pass.",
+                reason="LLM이 '없음'을 인정하고 없는 과목을 있는 척 안 하는지 확인",
+            ),
         ],
     )
 

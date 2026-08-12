@@ -146,6 +146,7 @@ AssertionKind = Literal[
     "pending_change_count",  # target: (op, n) op ∈ {"==","<=",">="}
     "schedules_count",       # 시간표 챗 전용: (op, n)
     "custom",                # target: Callable[[EvalResult], str | None] — None이면 pass
+    "llm_judge",             # target: 자연어 판정 기준. 판정 LLM(gpt-4o-mini 기본)이 yes/no 결정
 ]
 
 
