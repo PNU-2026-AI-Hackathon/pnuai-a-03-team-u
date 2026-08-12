@@ -902,6 +902,598 @@ class ProposeChangeDuplicateGuardTest(unittest.TestCase):
         self.assertEqual(200, result["items"][0]["course_id"])
 
 
+class CriticalMissingRequiredTest(unittest.TestCase):
+    """졸업 위험 감지: 학과 필수인데 미이수 + 개설 학기 어긋남을 도구가 계산해서
+    LLM에게 노출한다. LLM 혼자 courses.semester를 크로스체크 못 하는 걸 보완."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                      curriculum_year="2024", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_flags_1st_only_required_when_next_is_2nd(self):
+        """자료구조(1학기 전용, 전공필수) 미이수인 학생이 다음 학기가 2학기면 critical."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=100, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(1, len(result))
+        self.assertEqual("자료구조", result[0]["course_name"])
+        self.assertEqual("1", result[0]["offered_semester"])
+
+    def test_skips_course_offered_this_semester(self):
+        """개설 학기가 next와 같으면 이번에 들 수 있으니 critical 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        # 2학기 전용 필수 → next도 2학기면 이번 학기에 들 수 있음
+        db.add(Course(id=101, course_name="컴퓨터구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="2"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_completed_from_records(self):
+        """이수 완료 과목(성적표)은 위험 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=102, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3, year="2024"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_completed_from_roadmap_items(self):
+        """로드맵 status='completed' 항목도 이수로 취급."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=103, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=103,
+                                  course_name="자료구조", planned_grade=2,
+                                  status="completed"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_skips_all_semester_courses(self):
+        """전학기·1,2 개설(계절수업 등)은 다음 학기든 언제든 미룰 수 있어 위험 아님."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=104, course_name="여름캡스톤", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="3", semester="1,2"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_matches_norm_across_roman_variants(self):
+        """이수기록 '컴퓨터프로그래밍 Ⅰ' vs 카탈로그 '컴퓨터프로그래밍(I)' 정규화 매칭."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=105, course_name="컴퓨터프로그래밍(I)", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3, year="2024"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_exposed_in_get_roadmap_items(self):
+        """get_roadmap_items 응답에 critical_missing_required 키가 포함된다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=106, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            # next = 2026-2학기 → 자료구조(1학기 전용)은 critical
+            result = ctx.get_roadmap_items()
+        self.assertIn("critical_missing_required", result)
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertIn("자료구조", names)
+
+
+class RetakeCandidatesTest(unittest.TestCase):
+    """재수강 권유 후보 감지: SCR grade_point가 C+(2.5) 이하인 과목만 flag.
+    이름 정규화 후 최고 grade_point 기준(재수강 후 개선된 성적 반영)."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_user(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.flush()
+        return user
+
+    def test_flags_low_gpa_course(self):
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        # D+ (1.5) — 재수강 대상
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(1, len(result))
+        self.assertEqual("이산수학", result[0]["course_name"])
+        self.assertEqual(1.5, result[0]["current_grade_point"])
+
+    def test_skips_high_gpa_course(self):
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        # A0 (4.0) — 재수강 불필요
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3,
+                                     grade="A0", grade_point=4.0, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_boundary_at_c_plus(self):
+        """C+ (2.5) 정확히 경계 — 규정상 재수강 가능이라 pass (<=)."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="알고리즘",
+                                     category="전공필수", credits=3,
+                                     grade="C+", grade_point=2.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(1, len(result))
+
+    def test_uses_best_grade_across_retakes(self):
+        """같은 과목의 두 기록(원 성적 D0, 재수강 B0)이면 최고 B0(3.0) 기준 → 재수강 불필요."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     category="전공필수", credits=3,
+                                     grade="D0", grade_point=1.0, year="2024", is_retake=False))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     category="전공필수", credits=3,
+                                     grade="B0", grade_point=3.0, year="2025", is_retake=True))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_skips_records_without_grade_point(self):
+        """grade_point가 None(포털 미동기화 등)이면 판단 불가로 제외."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="교양A",
+                                     category="교양선택", credits=2,
+                                     grade=None, grade_point=None, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_normalizes_roman_variants(self):
+        """'컴퓨터프로그래밍 Ⅰ' 원 성적 F + '컴퓨터프로그래밍(I)' 재수강 A0 → 정규화 후 A0."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3,
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍(I)",
+                                     category="전공기초", credits=3,
+                                     grade="A0", grade_point=4.0, year="2025", is_retake=True))
+        db.flush()
+        self.assertEqual([], _compute_retake_candidates(db, user))
+
+    def test_sort_by_grade_ascending(self):
+        """성적 낮은 순 정렬 — LLM이 우선순위 짐작에 도움."""
+        from app.domains.planning.roadmap_chat import _compute_retake_candidates
+        db = self.make_db()
+        user = self.make_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="A",
+                                     grade="C0", grade_point=2.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="B",
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="C",
+                                     grade="C+", grade_point=2.5, year="2024"))
+        db.flush()
+        result = _compute_retake_candidates(db, user)
+        self.assertEqual(["B", "A", "C"], [c["course_name"] for c in result])
+
+
+class ConditionalPromptAssemblyTest(unittest.TestCase):
+    """프롬프트 fatigue 대응 — 학생 상태에 맞는 조건부 규칙만 시스템 프롬프트에 포함.
+    무관한 규칙이 매 대화턴 노출돼 LLM 규칙 준수도가 떨어지는 걸 완화 (case 08 관측)."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_baseline_user(self, db, career_goal=None, admission_type="freshman"):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20, career_goal=career_goal,
+                    admission_type=admission_type)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(CourseRoadmap(id=1, user_id=1))
+        db.flush()
+        return user
+
+    def test_baseline_freshman_gets_minimal_rules(self):
+        """부·복수전공 없고 진로 없는 신입은 조건부 규칙 거의 없음."""
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertNotIn("non_primary_programs", rules)
+        self.assertNotIn("career_dept_mismatch", rules)
+        self.assertNotIn("transfer_student", rules)
+        self.assertNotIn("retake_candidates", rules)
+
+    def test_non_primary_activates_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.add(UserAcademicProgram(user_id=1, program_type="minor",
+                                    department_id=40, curriculum_year=2024))
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("non_primary_programs", rules)
+        # non-primary가 있으면 mismatch 규칙은 배제 (이미 부·복수로 대응)
+        self.assertNotIn("career_dept_mismatch", rules)
+
+    def test_career_without_non_primary_triggers_mismatch(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db, career_goal="백엔드 개발자")
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("career_dept_mismatch", rules)
+
+    def test_transfer_admission_triggers_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db, admission_type="transfer")
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("transfer_student", rules)
+
+    def test_low_gpa_triggers_retake_rule(self):
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertIn("retake_candidates", rules)
+
+    def test_build_system_prompt_shorter_for_baseline(self):
+        """baseline 학생의 프롬프트가 non-primary+mismatch+... 학생보다 짧다."""
+        from app.domains.planning.roadmap_chat import _build_system_prompt
+        db = self.make_db()
+        user = self.make_baseline_user(db)
+        db.commit()
+        baseline_prompt, _ = _build_system_prompt(db, user)
+
+        # 복잡한 학생: 진로 + non-primary + 편입 + 저성적
+        db2 = self.make_db()
+        user2 = self.make_baseline_user(db2, career_goal="AI",
+                                        admission_type="transfer")
+        db2.add(UserAcademicProgram(user_id=1, program_type="minor",
+                                     department_id=40, curriculum_year=2024))
+        db2.add(StudentCourseRecord(user_id=1, raw_course_name="X",
+                                      grade="D+", grade_point=1.5, year="2024"))
+        db2.commit()
+        complex_prompt, _ = _build_system_prompt(db2, user2)
+
+        self.assertLess(len(baseline_prompt), len(complex_prompt))
+
+
+class RetakePropseBypassTest(unittest.TestCase):
+    """propose_change의 is_retake 플래그로 이수 완료 재추천 가드를 우회. 단 실제
+    재수강 자격(grade_point <= 2.5)이 있는 과목만 통과."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2024))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                      curriculum_year="2024", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_default_blocks_completed_course_recreate(self):
+        """is_retake 기본 False — 이수 완료 과목 create 시도는 여전히 거절."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=200, course_name="이산수학", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="test", course_id=200,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+            )
+        self.assertIn("error", result)
+        self.assertIn("이미 이수한 과목", result["error"])
+
+    def test_retake_flag_bypasses_when_grade_below_threshold(self):
+        """is_retake=True + grade_point <= 2.5 → 정상 통과."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=201, course_name="이산수학", department_id=10, major_id=20,
+                      category="전공기초", credits=3.0, year="1", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
+                                     category="전공기초", credits=3,
+                                     grade="D+", grade_point=1.5, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="사용자 재수강 요청", course_id=201,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertNotIn("error", result)
+        # reason에 [재수강] 태그 자동 부착
+        self.assertEqual(1, len(ctx.pending_changes))
+        self.assertIn("[재수강]", ctx.pending_changes[0].reason)
+
+    def test_retake_flag_rejects_when_grade_above_threshold(self):
+        """is_retake=True 넘겨도 grade_point > 2.5 (B- 이상)면 거절."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=202, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3,
+                                     grade="B0", grade_point=3.0, year="2024"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="재수강 요청", course_id=202,
+                planned_year="2026", planned_semester="1학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertIn("error", result)
+        self.assertIn("재수강 대상이 아닙니다", result["error"])
+
+    def test_retake_uses_best_grade_across_multiple_records(self):
+        """같은 과목 두 record: 원 성적 F(0.0) + 재수강 B0(3.0). 최고치=3.0이라 재수강 불가."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=203, course_name="컴퓨터구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="2"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     grade="F", grade_point=0.0, year="2024"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터구조",
+                                     grade="B0", grade_point=3.0, year="2025",
+                                     is_retake=True))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="다시 재수강", course_id=203,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+                is_retake=True,
+            )
+        self.assertIn("error", result)
+        self.assertIn("재수강 대상이 아닙니다", result["error"])
+
+
+class StripMarkdownFenceTest(unittest.TestCase):
+    """`_llm_judge`가 gpt-4o-mini의 ```json ... ``` 감싼 응답에서 fence만 제거하고
+    본문을 온전히 반환하는지. 이전 문자셋 기반(lstrip("json\\n"))의 왜곡 가능성 회피."""
+
+    def test_plain_json_passthrough(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '{"pass": true}'
+        self.assertEqual(s, _strip_markdown_fence(s))
+
+    def test_strips_json_fence(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '```json\n{"pass": true, "reason": "OK"}\n```'
+        self.assertEqual('{"pass": true, "reason": "OK"}', _strip_markdown_fence(s))
+
+    def test_strips_bare_fence(self):
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '```\n{"pass": false}\n```'
+        self.assertEqual('{"pass": false}', _strip_markdown_fence(s))
+
+    def test_does_not_mangle_content_starting_with_j_or_s(self):
+        """이전 lstrip("json\\n")은 첫 글자가 j/s/o/n이면 왜곡. 지금은 line 단위라 안전."""
+        from tests.eval.run_eval import _strip_markdown_fence
+        s = '{"json_key": "sample string with json in it"}'
+        self.assertEqual(s, _strip_markdown_fence(s))
+
+
+class PrereqExtractTest(unittest.TestCase):
+    """description 텍스트에서 선수과목명 추출 — 라벨 있는 경우만 잡고 자유서술은 무시."""
+
+    def test_extracts_after_label_with_comma(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선수과목: 자료구조, 알고리즘")
+        self.assertEqual(["자료구조", "알고리즘"], result)
+
+    def test_extracts_with_fullwidth_colon(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선이수 과목: 컴퓨터프로그래밍(I)")
+        self.assertEqual(["컴퓨터프로그래밍(I)"], result)
+
+    def test_splits_on_conjunctions(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("선수과목: A 및 B 또는 C")
+        self.assertEqual(["A", "B", "C"], result)
+
+    def test_ignores_free_prose_without_label(self):
+        """'X를 미리 이수한 학생 대상' 같은 서술문은 잡지 않는다 (false positive 방지)."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description("자료구조를 미리 이수한 학생 대상")
+        self.assertEqual([], result)
+
+    def test_returns_empty_on_none_and_empty(self):
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        self.assertEqual([], _extract_prereqs_from_description(None))
+        self.assertEqual([], _extract_prereqs_from_description(""))
+
+    def test_stops_at_descriptive_verb(self):
+        """라벨이 문장 중간에 있고 뒤에 서술어가 이어져도 과목명만 추출."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        # "선수과목: 자료구조 를 요구한다" → 개선 전엔 "자료구조 를 요구한다" 로 실패
+        result = _extract_prereqs_from_description("본 과목은 선수과목: 자료구조 를 요구한다.")
+        self.assertEqual(["자료구조"], result)
+
+    def test_stops_at_period_before_next_sentence(self):
+        """마침표 뒤에 다른 서술이 이어져도 앞 절만."""
+        from app.domains.planning.roadmap_chat import _extract_prereqs_from_description
+        result = _extract_prereqs_from_description(
+            "선수과목: 자료구조. 이 과목은 심화 내용을 다룬다."
+        )
+        self.assertEqual(["자료구조"], result)
+
+
+class PrereqBlockedTest(unittest.TestCase):
+    """선수과목 미이수 감지: 학과 개설 과목 중 description에서 뽑은 선수가 이수 세트에
+    없으면 blocked. 로드맵/시간표 챗 자매 노출은 각 챗 유닛에서 커버."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_setup(self, db):
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return user, roadmap
+
+    def test_flags_course_with_missing_prereq(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=100, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual(1, len(result))
+        self.assertEqual("운영체제", result[0]["course_name"])
+        self.assertEqual(["자료구조"], result[0]["missing_prerequisites"])
+
+    def test_skips_when_prereq_completed(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=101, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                     category="전공필수", credits=3, year="2024"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual([], result)
+
+    def test_skips_course_without_description(self):
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=102, course_name="X", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description=None))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_skips_course_already_completed(self):
+        """이미 이수한 과목은 판단 대상 아님 (다른 가드가 재추천 막음)."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=103, course_name="컴파일러", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1",
+                      description="선수과목: 자료구조"))
+        # 컴파일러는 이수, 자료구조는 미이수
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴파일러",
+                                     category="전공선택", credits=3, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_partial_prereq_completion_still_blocks(self):
+        """선수 여러 개 중 하나라도 미이수면 blocked."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=104, course_name="네트워크보안", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="2",
+                      description="선수과목: 컴퓨터네트워크, 시스템프로그래밍"))
+        # 컴퓨터네트워크만 이수
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터네트워크",
+                                     category="전공선택", credits=3, year="2024"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual(1, len(result))
+        self.assertEqual(["시스템프로그래밍"], result[0]["missing_prerequisites"])
+
+    def test_uses_roadmap_completed_when_roadmap_id_given(self):
+        """로드맵 status='completed' 항목도 이수 세트에 포함."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=105, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(CourseRoadmapItem(roadmap_id=rm.id, course_name="자료구조",
+                                  planned_grade=2, status="completed"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_normalizes_roman_variants_in_matching(self):
+        """이수기록 '컴퓨터프로그래밍 Ⅰ' vs 선수 라벨 '컴퓨터프로그래밍(I)' 매칭."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=106, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1",
+                      description="선수과목: 컴퓨터프로그래밍(I)"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="컴퓨터프로그래밍 Ⅰ",
+                                     category="전공기초", credits=3, year="2024"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+
 class SafeCallDispatchGuardTest(unittest.TestCase):
     """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
     스키마에 없는 필드 추가. 예전엔 handler(**tool_input)가 TypeError로 죽고, langfuse

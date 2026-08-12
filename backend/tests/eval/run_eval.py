@@ -84,7 +84,71 @@ def _eval_assertion(exp: ExpectedBehavior, result: EvalResult) -> str | None:
     if kind == "custom":
         return target(result)  # type: ignore[operator]
 
+    if kind == "llm_judge":
+        ok, reason = _llm_judge(result.reply, str(target), result.tool_calls)
+        return None if ok else f"[llm_judge] {reason}"
+
     return f"unknown assertion kind: {kind}"
+
+
+# 판정 LLM은 피검사 모델과 다른 걸 써야 방법론적으로 깔끔하다 (같은 모델이 자기 판정
+# 하면 편향). gpt-4o-mini는 저렴하고 non-reasoning이라 채점 태스크에 안정적.
+_JUDGE_MODEL = "openai:gpt-4o-mini"
+
+
+def _llm_judge(reply: str, criterion: str, tool_calls: list[dict]) -> tuple[bool, str]:
+    """자연어 기준으로 응답이 조건을 만족하는지 판정. (passed, reason) 반환.
+
+    문자열 매칭 assertion으로 잡을 수 없는 의미 기반 검증에 쓴다. 예:
+    - "부·복수전공 옵션을 능동적으로 제안했는가?"
+    - "'공학작문'이 이번 학기 개설 안 됨을 정직하게 알렸는가? 지어내지 않고?"
+    """
+    from langchain.chat_models import init_chat_model
+
+    tool_names = [c.get("name") for c in tool_calls]
+    prompt = f"""너는 챗봇 응답 채점자다. 아래 판정 기준을 만족하는지 엄격히 판정해라.
+
+판정 기준: {criterion}
+
+챗봇이 호출한 도구 순서: {tool_names}
+
+챗봇의 최종 응답:
+\"\"\"
+{reply}
+\"\"\"
+
+응답 형식(반드시 순수 JSON, 다른 텍스트 금지):
+{{"pass": true 또는 false, "reason": "한 문장 판정 근거"}}"""
+
+    try:
+        llm = init_chat_model(_JUDGE_MODEL, temperature=0)
+        r = llm.invoke(prompt)
+        content = r.content if isinstance(r.content, str) else str(r.content)
+        import json
+        data = json.loads(_strip_markdown_fence(content))
+        return bool(data["pass"]), str(data.get("reason", ""))
+    except Exception as e:  # noqa: BLE001 - 판정 실패는 fail로 처리하되 이유 노출
+        return False, f"judge_error: {type(e).__name__}: {e}"
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """LLM이 ```json ... ``` 로 감싸서 낸 응답에서 fence만 제거하고 본문 반환.
+
+    이전 구현은 `text.lstrip("json\\n")` 문자셋 기반이라 "javascript"로 시작하는
+    응답을 "avascript"로 왜곡할 수 있었다 (실제 발생 확률 낮지만 명시적 오류).
+    라인 단위 제거로 안전화.
+    """
+    s = text.strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.split("\n")
+    # 첫 줄이 ```json 또는 ``` 이면 제거
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    # 마지막 줄이 ``` 이면 제거
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 # --- 실행 -----------------------------------------------------------------
@@ -412,6 +476,16 @@ def main() -> int:
         "--runs", type=int, default=1, metavar="N",
         help="각 케이스를 N번 반복해 LLM 확률성을 평균낸다 (기본 1). --live에서만 유효.",
     )
+    ap.add_argument(
+        "--langfuse-upload", action="store_true",
+        help="케이스 실행 대신 Langfuse Datasets에 sync만 하고 종료. "
+             "LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY env 필요.",
+    )
+    ap.add_argument(
+        "--langfuse-run", metavar="NAME",
+        help="--live 실행 결과를 Langfuse dataset run으로 링크한다. NAME이 그룹 이름 "
+             "(모델·시각이 뒤에 붙어 유일화). 모델별로 별도 run이 만들어져 UI에서 A/B 비교 가능.",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -419,6 +493,12 @@ def main() -> int:
     if not cases:
         print(f"no cases match {args.case!r}", file=sys.stderr)
         return 2
+
+    if args.langfuse_upload:
+        from .langfuse_sync import DATASET_NAME, sync_cases_to_langfuse
+        n = sync_cases_to_langfuse(cases)
+        print(f"Uploaded {n} case(s) to Langfuse dataset '{DATASET_NAME}'")
+        return 0
 
     if not args.live:
         # dry-run은 모델 무관.
@@ -433,6 +513,55 @@ def main() -> int:
     models: list[str | None] = args.model if args.model else [None]  # None = env 기본값
     runs = max(1, args.runs)
     by_model: dict[str, list[CaseOutcome]] = {}
+
+    if args.langfuse_run:
+        # Langfuse experiment 모드 — dataset.run_experiment로 실행. observe_agent_call이
+        # 만든 trace가 dataset run에 자동 링크된다. --runs > 1이면 하나의 케이스가 N번
+        # 반복되며, 각 반복이 별개 trace(같은 dataset item)로 기록된다.
+        from .langfuse_sync import run_experiment_for_model
+        slug_to_case = {c.slug: c for c in cases}
+        for m in models:
+            label = m if m is not None else "(env default)"
+            print(f"\n=== Langfuse experiment: {args.langfuse_run} / model: {label} (N={runs}) ===")
+
+            def _task(*, item, **_kw):
+                case = slug_to_case.get(item.id)
+                if case is None:
+                    return {"skipped": f"no local case for slug {item.id}"}
+                # runs>1이면 dataset item당 여러 실행이지만 SDK는 task 한 번만 호출.
+                # 확률성 분산은 하니스 --runs가 아니라 experiment를 여러 번 돌려서 처리.
+                outcome = run_live(case)
+                return {
+                    "reply": outcome.reply_preview,
+                    "passed": outcome.ok,
+                    "failures": outcome.failures,
+                    "elapsed_ms": outcome.elapsed_ms,
+                    "iterations": outcome.iterations,
+                    "input_tokens": outcome.input_tokens,
+                    "output_tokens": outcome.output_tokens,
+                    "reasoning_tokens": outcome.reasoning_tokens,
+                }
+
+            def _ev_passed(*, output, **_kw):
+                return {"name": "passed", "value": 1.0 if output.get("passed") else 0.0}
+
+            def _ev_latency(*, output, **_kw):
+                return {"name": "latency_ms", "value": float(output.get("elapsed_ms") or 0)}
+
+            def _ev_iterations(*, output, **_kw):
+                return {"name": "iterations", "value": float(output.get("iterations") or 0)}
+
+            with _override_model(m):
+                info = run_experiment_for_model(
+                    run_name=args.langfuse_run, model_override=m,
+                    task_fn=_task,
+                    evaluators=[_ev_passed, _ev_latency, _ev_iterations],
+                )
+            print(f"→ Langfuse run: {info['run_name']}")
+            if info.get("url"):
+                print(f"→ URL: {info['url']}")
+        return 0
+
     for m in models:
         label = m if m is not None else "(env default)"
         print(f"\n=== model: {label} (N={runs}) ===")

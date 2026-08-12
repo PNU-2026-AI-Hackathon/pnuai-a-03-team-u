@@ -150,6 +150,108 @@ class StudentContextTest(unittest.TestCase):
         self.assertIn("자료구조", result["completed_course_names"])
         self.assertIn("운영체제", result["completed_course_names"])
         self.assertIn("term_credit_cap", result)
+        # roadmap 챗과 동일한 critical_missing_required 필드가 timetable에도 노출됨
+        self.assertIn("critical_missing_required", result)
+
+    def test_critical_missing_flags_required_not_open_this_semester(self):
+        """target_term=2학기인데 필수과목이 1학기 전용 개설이고 미이수면 critical.
+        roadmap 챗의 동일 헬퍼를 재사용하므로 로직 자체는 roadmap 테스트가 커버 —
+        여기선 timetable 파이프라인이 값을 실제로 노출하는지만 확인."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        # 1학기 전용 전공필수, 학생 미이수 → target_term=2학기와 어긋남 → critical
+        db.add(Course(
+            id=901, course_name="자료구조", department_id=100,
+            category="전공필수", credits=3.0, year="2", semester="1",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertIn("자료구조", names)
+
+    def test_critical_missing_skips_course_open_this_semester(self):
+        """2학기 전용 필수 미이수 + target_term=2학기면 이번에 들 수 있어 critical 아님."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        db.add(Course(
+            id=902, course_name="컴퓨터구조", department_id=100,
+            category="전공필수", credits=3.0, year="2", semester="2",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        names = [c["course_name"] for c in result["critical_missing_required"]]
+        self.assertNotIn("컴퓨터구조", names)
+
+    def test_retake_candidates_exposed(self):
+        """retake_candidates 필드가 로드맵 챗과 동일 스키마로 노출된다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="이산수학",
+            credits=3.0, year="2024", grade="D+", grade_point=1.5,
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        self.assertIn("retake_candidates", result)
+        names = [c["course_name"] for c in result["retake_candidates"]]
+        self.assertIn("이산수학", names)
+
+    def test_conditional_prompt_baseline_shorter_than_complex(self):
+        """조건부 규칙 assembly — 상태 없는 학생은 CORE만, 복잡한 학생은 규칙 추가로 길어짐."""
+        from app.domains.planning.timetable_chat import _build_timetable_system_prompt
+        # Baseline: 성적 없고 필수 미이수 없음
+        db = _make_db()
+        user = _make_student(db)
+        db.commit()
+        baseline_prompt, baseline_rules = _build_timetable_system_prompt(db, user, "2학기")
+        self.assertEqual([], baseline_rules)
+
+        # 복잡한 학생: 저성적 SCR + 미이수 필수 (1학기 전용, target=2학기)
+        db2 = _make_db()
+        user2 = _make_student(db2)
+        db2.add(GraduationRequirement(
+            department_id=100, program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+        ))
+        db2.add(StudentCourseRecord(user_id=user2.id, raw_course_name="이산수학",
+                                     credits=3.0, grade="D+", grade_point=1.5, year="2024"))
+        db2.add(Course(id=990, course_name="자료구조", department_id=100,
+                       category="전공필수", credits=3.0, year="2", semester="1"))
+        db2.commit()
+        complex_prompt, complex_rules = _build_timetable_system_prompt(db2, user2, "2학기")
+
+        self.assertIn("retake_candidates", complex_rules)
+        self.assertIn("critical_missing", complex_rules)
+        self.assertLess(len(baseline_prompt), len(complex_prompt))
+
+    def test_prereq_blocked_exposed(self):
+        """prereq_blocked 필드로 선수 미이수 과목이 노출된다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(Course(
+            id=910, course_name="운영체제", department_id=100,
+            category="전공선택", credits=3.0, year="3", semester="2",
+            description="선수과목: 자료구조",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        result = ctx.get_student_context()
+        self.assertIn("prereq_blocked", result)
+        blocked = {b["course_name"]: b["missing_prerequisites"]
+                    for b in result["prereq_blocked"]}
+        self.assertIn("운영체제", blocked)
+        self.assertEqual(["자료구조"], blocked["운영체제"])
 
 
 class RunTimetableChatIntegrationTest(unittest.TestCase):
