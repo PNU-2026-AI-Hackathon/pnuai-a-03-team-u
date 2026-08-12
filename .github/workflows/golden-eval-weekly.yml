@@ -1,0 +1,91 @@
+name: golden-eval-weekly
+
+# 챗 에이전트 골든 데이터셋을 실제 LLM으로 매주 돌려 Langfuse에 dataset run으로
+# 기록한다. 트렌드 관측용 — LLM 확률성과 프롬프트 변경 효과를 주간 단위로 추적.
+#
+# 비용: Luna(gpt-5.4-nano) N=3 × 21 케이스 = 약 $0.4/실행 (판정 LLM 포함).
+# 트래픽 부하: TPM 200k 안에서 max_concurrency=1로 실행. 20~30분 소요.
+#
+# 관측 URL: Langfuse Dataset `planu-golden-v1` → Runs 탭 → `weekly-<date>` 항목.
+#
+# 실패는 gate 아님 (LLM 확률성 특성상 어떤 케이스는 낮은 pass율이 정상 궤도).
+# 진짜 회귀는 Langfuse UI에서 pass율·latency·비용 시계열로 판단.
+
+on:
+  schedule:
+    # 매주 월요일 UTC 18:00 = KST 화요일 03:00 (야간 트래픽 낮음)
+    - cron: "0 18 * * MON"
+  workflow_dispatch:
+    # 수동 실행 시 override 가능
+    inputs:
+      model:
+        description: "LLM 모델 (langchain init_chat_model 형식)"
+        required: false
+        default: "openai:gpt-5.4-nano"
+      runs:
+        description: "케이스당 반복 수 (LLM 확률성 완화)"
+        required: false
+        default: "3"
+
+jobs:
+  live-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Sync latest cases to Langfuse dataset
+        # 케이스 정의가 커밋 사이 바뀌었을 수 있으니 매 주 sync. Idempotent (같은 slug
+        # 재업로드는 upsert).
+        working-directory: backend
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+        run: python -m tests.eval.run_eval --langfuse-upload
+
+      - name: Run --live experiment (Langfuse dataset run)
+        working-directory: backend
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+          LANGFUSE_USER_ID_SALT: ${{ secrets.LANGFUSE_USER_ID_SALT }}
+          MODEL: ${{ github.event.inputs.model || 'openai:gpt-5.4-nano' }}
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+        run: |
+          RUN_LABEL="weekly-$(date -u +%Y%m%d)"
+          echo "## Golden eval — $RUN_LABEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Model: \`$MODEL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runs per case: $RUNS" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          # 실패해도 workflow는 계속 (exit 1은 assertion fail로 정상 신호)
+          python -m tests.eval.run_eval \
+            --live \
+            --runs "$RUNS" \
+            --model "$MODEL" \
+            --langfuse-run "$RUN_LABEL" \
+            || true
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "결과는 [Langfuse Dataset planu-golden-v1](https://cloud.langfuse.com) 의 Runs 탭에서 확인 (\`$RUN_LABEL\` 필터)." >> "$GITHUB_STEP_SUMMARY"
