@@ -930,12 +930,15 @@ def case_missing_foundation() -> EvalCase:
 
 
 def case_last_semester_1st_only_gap() -> EvalCase:
-    """13: 4학년 2학기, 1학기 전용 필수과목 미이수 — 졸업 불가 위험 안내."""
+    """13: 4학년 학생이 컴퓨터구조(2학기 전용) 미이수. 다음 배치 학기가 1학기라
+    개설 안 됨 — 도구가 critical_missing_required로 자동 감지 → LLM이 위험 안내.
+
+    _current_academic_term 패치는 (2026, 2) → 다음 학기 = 2027-1학기 (1학기).
+    컴퓨터구조.semester='2'(2학기 전용) → 다음 학기에 개설 X → critical.
+    """
     depts, majors = _cs_hierarchy()
-    # 시나리오: 자료구조(2-1 전용)를 안 들었고 지금 4-2 학생. 다음 학기(=졸업 학기)에
-    # 못 듣게 됨.
     persona = PersonaSpec(
-        id="last-sem-gap", label="4-2, 1학기 전용 필수 미이수",
+        id="last-sem-gap", label="4학년 · 2학기 전용 필수 미이수",
         departments=depts, majors=majors,
         department_id=DEPT_CS, major_id=MAJOR_CS,
         career_goal="백엔드 개발자",
@@ -946,36 +949,42 @@ def case_last_semester_1st_only_gap() -> EvalCase:
             curriculum_year="2023", required_total_credits=133,
         )],
         courses=[
-            # 자료구조를 1학기 전용으로 명시 (semester='1')
+            # 컴퓨터구조: 2학기 전용 필수. 학생이 미이수인데 다음 학기(1학기) 개설 X.
             CourseSpec(id=1010, course_name="자료구조", department_id=DEPT_CS, major_id=MAJOR_CS,
                        category="전공필수", credits=3, year="2", semester="1"),
             CourseSpec(id=1011, course_name="알고리즘", department_id=DEPT_CS, major_id=MAJOR_CS,
                        category="전공필수", credits=3, year="2", semester="2"),
-            CourseSpec(id=1012, course_name="운영체제", department_id=DEPT_CS, major_id=MAJOR_CS,
+            CourseSpec(id=1012, course_name="컴퓨터구조", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            CourseSpec(id=1013, course_name="운영체제", department_id=DEPT_CS, major_id=MAJOR_CS,
                        category="전공선택", credits=3, year="3", semester="1"),
         ],
+        # 컴퓨터구조 빼고 다 이수함
         records=[
             RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초", year="2023"),
-            # 자료구조 미이수. 알고리즘·운영체제 등은 이수.
+            RecordSpec(raw_course_name="자료구조", category="전공필수", year="2024"),
             RecordSpec(raw_course_name="알고리즘", category="전공필수", year="2024"),
             RecordSpec(raw_course_name="운영체제", category="전공선택", year="2025"),
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
-            for n, g in [("컴퓨터프로그래밍(I)", 1), ("알고리즘", 2), ("운영체제", 3)]
+            for n, g in [("컴퓨터프로그래밍(I)", 1), ("자료구조", 2),
+                          ("알고리즘", 2), ("운영체제", 3)]
         ],
     )
     return EvalCase(
         slug="13-last-sem-gap", persona=persona, agent="roadmap",
-        prompt="4학년 2학기예요. 이번 학기 뭐 들어야 졸업할 수 있어요?",
+        prompt="4학년 2학기예요. 다음 학기 뭐 들어야 졸업할 수 있어요?",
         expectations=[
+            ExpectedBehavior("tool_called", "get_roadmap_items",
+                             reason="critical_missing_required는 이 도구로만 확인"),
             ExpectedBehavior(
                 "llm_judge",
-                "학생이 이수 안 한 자료구조(전공필수, courses.semester='1'=1학기 전용)를 "
-                "'이번 4-2 학기에 개설 안 됨' 사실을 인지하고 위험을 알리거나 "
-                "대안(예: 다음 학년도 1학기 재수강, 다른 대체 필수)을 제시했는가? "
-                "그냥 다른 과목만 나열했으면 fail.",
-                reason="1학기 전용 미수강 → 졸업 불가 위험 감지",
+                "학생이 이수 안 한 컴퓨터구조(2학기 전용 전공필수)를 "
+                "'다음 학기(1학기)에는 개설 안 된다'는 사실과 함께 명시적으로 위험 안내"
+                "하거나 대안(같은 학기의 다음 연도)을 제시했는가? 그냥 다른 과목만 "
+                "나열하고 이 필수 미이수를 언급 안 했으면 fail.",
+                reason="critical_missing_required 활용 검증",
             ),
         ],
     )
