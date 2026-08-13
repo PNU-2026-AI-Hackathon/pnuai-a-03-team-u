@@ -35,6 +35,16 @@
   id 순으로 하나를 고르되 `warnings`에 "행이 N개 있어 id=X를 사용함"을 남겨 조용히
   달라지지 않게 했다. 감시는 `scripts/report_duplicate_requirements.py`(read-only).
 
+- **[chore] 간호학과 중복 요건 행 정리 (Supabase 반영, `scripts/dedupe_graduation_requirements.py`)**:
+  위 ②의 원인이던 중복 행을 실제로 정리했다. 두 행(444, 488)은 `id`·`created_at`·`updated_at`을
+  뺀 **모든 컬럼이 동일**했고(같은 데이터가 두 번 적재된 것), `graduation_requirements.id`를
+  참조하는 FK도 없어 안전했다. 판정 엔진이 이미 쓰던 **id=444를 남겨** 정리 후에도 동작이
+  그대로다. 삭제 후 중복 조합 0개, 364 → 363행.
+  스크립트는 재사용 가능하게 만들었다 — 모든 컬럼이 동일한 그룹만 지우고, 기준학점이나
+  `special_rules`가 조금이라도 다르면 **건너뛰고 보고만 한다**(어느 쪽이 맞는지는 학과 원문을
+  봐야 알 수 있고, 근거 없이 지우면 졸업 판정이 틀어진다). 기본이 dry-run이고 `--commit`으로
+  반영하며, dry-run이 지울 행의 전체 내용을 출력해 실행 로그가 곧 백업이 되게 했다.
+
 - **[feat] 보안 P0 4건 구현 (`docs/backend/security-privacy-plan.md` 참고)**:
   - **레이트 리밋** (`app/core/ratelimit.py`): slowapi 도입. 로그인 `5/minute;30/hour`,
     회원가입 `5/hour`, 재설정 `3/hour;10/day`, **챗 `10/minute;100/day`**, portal-sync `5/hour`.
