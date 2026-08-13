@@ -3,8 +3,12 @@ name: golden-eval-weekly
 # 챗 에이전트 골든 데이터셋을 실제 LLM으로 매주 돌려 Langfuse에 dataset run으로
 # 기록한다. 트렌드 관측용 — LLM 확률성과 프롬프트 변경 효과를 주간 단위로 추적.
 #
-# 비용: Luna(gpt-5.4-nano) N=3 × 21 케이스 = 약 $0.4/실행 (판정 LLM 포함).
-# 트래픽 부하: TPM 200k 안에서 max_concurrency=1로 실행. 20~30분 소요.
+# 비용: Luna(gpt-5.4-nano) N=3 × 26 케이스 = 78 실행, 약 $0.5/회 (판정 LLM 포함).
+# 트래픽 부하: TPM 200k 안에서 max_concurrency=1로 실행. 30~45분 소요.
+#
+# 주의: 2026-08-13 이전에는 `--runs`가 Langfuse 경로에서 무시돼 라벨만 N=3이고 실제로는
+# N=1이 돌았다. 지금은 experiment를 N번 반복 실행하고 `weekly-<date>-r1..r3` 으로 남는다
+# (metadata.run_group으로 묶어서 조회). timeout을 45→70분으로 올린 것도 이 때문.
 #
 # 관측 URL: Langfuse Dataset `planu-golden-v1` → Runs 탭 → `weekly-<date>` 항목.
 #
@@ -30,7 +34,7 @@ on:
 jobs:
   live-eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
