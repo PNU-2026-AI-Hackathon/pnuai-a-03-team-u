@@ -103,6 +103,85 @@ class BalancedLiberalAreaRollupTest(_Base):
         self.assertEqual(3, int(mr.earned_credits))
 
 
+class DepartmentLevelFallbackTest(_Base):
+    """전공 단위 요건이 없으면 학과 단위(major_id IS NULL)로 폴백하는지.
+
+    `graduation_requirements.major_id = NULL`은 "모름"이 아니라 "이 학과 전체에 공통 적용"
+    이라는 확정적 의미다(운영 DB 실측: 전공이 있는 학과인데 요건은 학과 단위로만 등록된
+    행이 64개, 예를 들어 기계공학부 primary 2026은 전공 5개 각각의 요건 행이 없다).
+
+    폴백이 없던 옛 구현은 그런 학생을 `requirement_found=False`로 떨어뜨려 졸업요건 판정을
+    아예 못 받게 했다. `timetable._term_credit_cap`은 이미 같은 폴백을 하고 있어서 두 코드
+    경로가 서로 다르게 동작하던 문제이기도 하다.
+    """
+
+    def _make_student_with_major(self, db, major_id=20):
+        db.add(Major(id=major_id, department_id=10, name="컴퓨터공학전공"))
+        user = db.get(User, 1)
+        user.major_id = major_id
+        prog = db.query(UserAcademicProgram).filter_by(user_id=1).one()
+        prog.major_id = major_id
+        db.flush()
+
+    def test_falls_back_to_department_level_requirement(self):
+        db = self.make_db()
+        self._make_student_with_major(db)
+        db.add(GraduationRequirement(
+            department_id=10, major_id=None, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+        ))
+        db.commit()
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertTrue(progress.requirement_found)
+        self.assertEqual(133, progress.required_total_credits)
+
+    def test_fallback_is_flagged_in_warnings(self):
+        """전공별 세부 기준이 아니라는 걸 사용자·LLM이 알아야 한다."""
+        db = self.make_db()
+        self._make_student_with_major(db)
+        db.add(GraduationRequirement(
+            department_id=10, major_id=None, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+        ))
+        db.commit()
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertTrue(any("학과 단위 기준으로 판정" in w for w in progress.warnings),
+                        progress.warnings)
+
+    def test_major_level_still_wins_when_present(self):
+        """폴백을 넣었다고 전공 우선순위가 무너지면 안 된다 (골든 TC05와 같은 취지)."""
+        db = self.make_db()
+        self._make_student_with_major(db)
+        db.add(GraduationRequirement(
+            department_id=10, major_id=None, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+        ))
+        db.add(GraduationRequirement(
+            department_id=10, major_id=20, program_type="primary",
+            curriculum_year="2024", required_total_credits=120,
+        ))
+        db.commit()
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertEqual(120, progress.required_total_credits)
+        self.assertFalse(any("학과 단위 기준으로 판정" in w for w in progress.warnings))
+
+    def test_no_requirement_at_any_level_is_still_not_found(self):
+        """어느 수준에도 요건이 없으면 없는 대로 보고해야 한다 — 억지로 만들지 않는다.
+
+        실제 사례: 디자인학과 primary 요건은 두 행 다 전공이 지정돼 있고(시각디자인·
+        애니메이션) 학과 단위 행이 없다. 디자인앤테크놀로지전공 학생은 폴백해도 못 찾는다.
+        """
+        db = self.make_db()
+        self._make_student_with_major(db, major_id=20)
+        db.add(GraduationRequirement(
+            department_id=10, major_id=99, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+        ))
+        db.commit()
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertFalse(progress.requirement_found)
+
+
 class DuplicateRequirementRowTest(_Base):
     """같은 조건의 기준학점 행이 여럿일 때 죽지 않고 판정하는지.
 

@@ -76,6 +76,8 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fail-on-duplicate", action="store_true",
                     help="중복이 하나라도 있으면 exit 1 (적재 후 검증·CI용)")
+    ap.add_argument("--check-coverage", action="store_true",
+                    help="요건을 못 찾는 활성 학적도 함께 보고한다 (판정 불가 학생 감지)")
     args = ap.parse_args()
 
     url = os.environ.get("DATABASE_URL")
@@ -118,7 +120,42 @@ def main() -> int:
             print("틀어진다. 정리 후 유니크 제약을 걸어 재발을 막는 것이 근본 해결이다:")
             print("  (program_type, department_id, major_id, curriculum_year)")
 
+        if args.check_coverage:
+            _report_coverage_gaps(conn)
+
     return 1 if (groups and args.fail_on_duplicate) else 0
+
+
+# 요건을 전공 단위로도 학과 단위로도 못 찾는 활성 학적. 이 학생들은 졸업요건 화면에
+# "기준학점 데이터가 없어 계산할 수 없음"만 보게 된다 — 중복만큼이나 실사용에 직접 영향이
+# 있어서 같이 본다. `_find_requirement`의 탐색 순서(전공 → 학과)를 그대로 재현한다.
+_COVERAGE_GAPS = """
+SELECT d.name AS dept, m.name AS major, uap.program_type, uap.curriculum_year
+FROM user_academic_programs uap
+JOIN departments d ON d.id = uap.department_id
+LEFT JOIN majors m ON m.id = uap.major_id
+WHERE uap.status = 'active'
+  AND NOT EXISTS (
+        SELECT 1 FROM graduation_requirements g
+        WHERE g.program_type = uap.program_type
+          AND (   (uap.major_id IS NOT NULL AND g.major_id = uap.major_id)
+               OR (g.department_id = uap.department_id AND g.major_id IS NULL)))
+ORDER BY d.name, uap.program_type
+"""
+
+
+def _report_coverage_gaps(conn) -> None:
+    rows = conn.execute(text(_COVERAGE_GAPS)).all()
+    print("=" * 72)
+    print(f"요건을 못 찾는 활성 학적: {len(rows)}건")
+    if not rows:
+        print("  없음 — 모든 활성 학적이 전공 단위 또는 학과 단위 요건에 매칭된다.")
+        return
+    print("  이 학생들은 졸업요건 화면에서 '기준학점 데이터가 없어 계산할 수 없음'만 본다.")
+    print("  전공 단위 요건을 등록하거나, 학과 전체에 공통 적용이면 major_id=NULL 행을 추가한다.\n")
+    for r in rows:
+        scope = f"{r.dept} / {r.major}" if r.major else r.dept
+        print(f"  - {scope} / {r.program_type} / {r.curriculum_year}")
 
 
 if __name__ == "__main__":

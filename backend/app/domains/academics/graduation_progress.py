@@ -86,16 +86,38 @@ def _find_requirement(db: Session, program: UserAcademicProgram) -> GraduationRe
     if program.major_id is None and program.department_id is None:
         return None
 
-    query = db.query(GraduationRequirement).filter(
-        GraduationRequirement.program_type == program.program_type
-    )
+    # 전공 단위 요건을 먼저 찾고, 없으면 **학과 단위(major_id IS NULL)로 폴백**한다.
+    #
+    # `graduation_requirements.major_id = NULL`은 "모름"이 아니라 "이 학과 전체에 공통 적용"
+    # 이라는 확정적 의미다. 실제로 전공이 있는 학과인데 요건은 학과 단위로만 등록된 경우가
+    # 64행 있다 (예: 기계공학부 primary 2026 — 전공 5개 각각의 요건 행은 없다).
+    #
+    # 폴백이 없던 옛 구현은 그런 학과의 학생을 `requirement_found=False`로 떨어뜨려
+    # **졸업요건 판정을 아예 못 받게** 했다 — 2026-08-13 실측으로 활성 학적 6건 중 3건이
+    # 여기 걸렸다. `timetable._term_credit_cap`은 이미 같은 폴백을 하고 있어서 두 코드
+    # 경로가 서로 다르게 동작하고 있었다.
+    scopes = []
     if program.major_id is not None:
-        query = query.filter(GraduationRequirement.major_id == program.major_id)
-    else:
-        query = query.filter(
-            GraduationRequirement.department_id == program.department_id,
-            GraduationRequirement.major_id.is_(None),
+        scopes.append(GraduationRequirement.major_id == program.major_id)
+    if program.department_id is not None:
+        scopes.append(
+            (GraduationRequirement.department_id == program.department_id)
+            & GraduationRequirement.major_id.is_(None)
         )
+
+    for scope in scopes:
+        found = _find_in_scope(db, program, scope)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_in_scope(db: Session, program: UserAcademicProgram, scope) -> GraduationRequirement | None:
+    """한 스코프(전공 단위 또는 학과 단위) 안에서 연도 매칭 → 최신 연도 폴백."""
+    query = db.query(GraduationRequirement).filter(
+        GraduationRequirement.program_type == program.program_type,
+        scope,
+    )
 
     if program.curriculum_year:
         # `.one_or_none()`이 아니라 `.first()`인 이유: graduation_requirements에
@@ -194,6 +216,14 @@ def compute_graduation_progress(
             warnings.append(
                 f"학생 교육과정연도({program.curriculum_year})와 정확히 일치하는 기준학점이 없어 "
                 f"{requirement.curriculum_year}년 기준으로 대체함"
+            )
+
+        # 전공 단위 요건이 없어 학과 단위로 폴백한 경우. 판정은 되지만 전공별 세부 기준이
+        # 아니라는 걸 사용자·LLM이 알아야 한다.
+        if program.major_id is not None and requirement.major_id is None:
+            warnings.append(
+                "이 전공의 기준학점 행이 없어 학과 단위 기준으로 판정함 — "
+                "전공별 세부 기준이 다르면 결과가 어긋날 수 있음"
             )
 
         # 같은 조합의 기준학점 행이 여럿이면 어느 걸 썼는지 드러낸다 — 조용히 하나를 고르면

@@ -35,6 +35,27 @@
   id 순으로 하나를 고르되 `warnings`에 "행이 N개 있어 id=X를 사용함"을 남겨 조용히
   달라지지 않게 했다. 감시는 `scripts/report_duplicate_requirements.py`(read-only).
 
+- **[fix] 전공 단위 요건이 없을 때 학과 단위로 폴백 (`graduation_progress._find_requirement`)**:
+  "유니크 제약을 왜 거는가"를 설명하다 발견했다. `graduation_requirements.major_id = NULL`은
+  "모름"이 아니라 **"이 학과 전체에 공통 적용"** 이라는 확정적 의미인데(전공이 있는 학과인데
+  요건은 학과 단위로만 등록된 행이 64개 — 예: 기계공학부 primary 2026은 전공 5개 각각의
+  요건 행이 없다), 판정 엔진은 학생에게 `major_id`가 있으면 전공 단위만 찾고 **폴백하지
+  않아** `requirement_found=False`로 떨어뜨렸다. `timetable._term_credit_cap`은 이미 같은
+  폴백을 하고 있어서 두 코드 경로가 서로 다르게 동작하던 문제이기도 하다.
+  → 전공 → 학과 순으로 탐색하고, 학과 단위로 폴백했으면 warnings에 남긴다(전공별 세부
+  기준이 아니라는 걸 사용자·LLM이 알아야 한다). 전공 우선순위는 그대로다(골든 TC05 통과).
+  **현재 학생 중 이 폴백으로 살아나는 건 0명**이다 — 아래 데이터 공백 3건은 어느 수준에도
+  요건이 없어서 폴백해도 못 찾는다. 다만 학과 단위 요건은 있고 전공 단위는 없는 전공이
+  62개 중 7개라, 그 전공 학생이 가입하면 바로 효과가 있다.
+
+- **[관측] 요건을 못 찾는 활성 학적 3건 (데이터 공백)**: `report_duplicate_requirements.py
+  --check-coverage`로 감시 추가. 이 학생들은 졸업요건 화면에서 "기준학점 데이터가 없어
+  계산할 수 없음"만 본다.
+  - 디자인학과 / 디자인앤테크놀로지전공 primary — 디자인학과 primary 요건 2행이 둘 다
+    전공 지정(시각디자인·애니메이션)이고 학과 단위 행이 없다. 이 전공 요건 등록 필요.
+  - 전기전자공학부 / 전자공학전공 minor — 부전공 요건 행 자체가 없다.
+  - djkds / asdf — 테스트 데이터로 보임, 정리 대상.
+
 - **[chore] 간호학과 중복 요건 행 정리 (Supabase 반영, `scripts/dedupe_graduation_requirements.py`)**:
   위 ②의 원인이던 중복 행을 실제로 정리했다. 두 행(444, 488)은 `id`·`created_at`·`updated_at`을
   뺀 **모든 컬럼이 동일**했고(같은 데이터가 두 번 적재된 것), `graduation_requirements.id`를
