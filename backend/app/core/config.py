@@ -73,6 +73,23 @@ class Settings(BaseSettings):
         r"^https://pnuai-a-03-team-u(?:-[a-z0-9-]+)?\.vercel\.app$"
     )
 
+    # --- 레이트 리밋 (docs/backend/security-privacy-plan.md P0-1) ---
+    #
+    # 형식은 slowapi/limits 문법: "5/minute", 여러 개면 세미콜론으로 "10/minute;100/day".
+    # 로컬에서 반복 테스트할 때만 RATE_LIMIT_ENABLED=false로 끈다 — 배포에서 끄면
+    # 로그인 brute force와 챗 LLM 비용 폭탄에 그대로 노출된다.
+    RATE_LIMIT_ENABLED: bool = True
+    # 비면 in-memory. 워커가 여러 개면 프로세스별로 따로 세므로 스케일아웃 시 redis:// 지정.
+    RATE_LIMIT_STORAGE_URI: str | None = None
+
+    RATE_LIMIT_LOGIN: str = "5/minute;30/hour"
+    RATE_LIMIT_SIGNUP: str = "5/hour"
+    RATE_LIMIT_PASSWORD_RESET: str = "3/hour;10/day"
+    # 챗이 가장 빡빡하다 — 요청당 LLM 비용이 나가고 정상 사용자는 이 이상 쓸 이유가 없다.
+    RATE_LIMIT_CHAT: str = "10/minute;100/day"
+    # Playwright 크롤이라 서버 자원도 많이 쓴다.
+    RATE_LIMIT_PORTAL_SYNC: str = "5/hour"
+
     # --- Langfuse (LLM 관측/평가) ---
     # 셋 다 값이 있어야 실제 trace 전송된다. 하나라도 비면 콜백은 no-op.
     # 개인 Cloud 프로젝트 `planu-backend` API 키를 팀 채널에서 공유.

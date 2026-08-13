@@ -14,7 +14,50 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
-## 2026-08-13 (blackest21)
+## 2026-08-13 (blackest21) — 백엔드 전수 점검 + 보안 P0 구현
+
+- **[fix] ⚠️ 졸업요건 판정 버그 2건 (`app/domains/academics/graduation_progress.py`)**:
+  백엔드 전수 점검에서 나온 P0. 둘 다 학생에게 잘못된 판정이 보이거나 아예 에러가 났다.
+
+  ① **균형교양 이수학점이 통째로 사라졌다.** portal_sync가 One-Stop 판정을 근거로
+  `student_course_records.category`를 '교양선택' → 세부영역명('사상과역사' 등)으로 덮어쓰는데
+  (로드맵 챗이 세부영역별 조언을 하려면 필요), 판정 엔진은 raw category로 group by하고
+  '교양선택'만 찾았다. 결과: **균형교양 18학점을 이수한 학생이 포털 동기화 후 "교양선택
+  0학점 이수, 18학점 남음"** 으로 표시된다. 총 이수학점은 맞아서 눈에 잘 안 띈다.
+  영향 범위가 넓다 — 졸업 진단 화면, 로드맵 챗의 `get_graduation_progress`,
+  시간표 챗의 `remaining_by_category` 전부. `_CATEGORY_ROLLUP`으로 세부영역을 '교양선택'에
+  합산하고, 세부영역 상수를 academics로 옮겨 단일 출처로 만들었다(roadmap_chat이 가져다 씀).
+
+  ② **중복 요건 행이 있으면 500 에러.** `_find_requirement`가 `.one_or_none()`이라
+  같은 (program_type, department_id, curriculum_year) 조합이 두 행이면 MultipleResultsFound가
+  난다. 실제로 있다 — **간호학과 dual 2026이 2행**이라 그 학생은 졸업요건 조회가 통째로
+  죽었다. `graduation_requirements`에 유니크 제약이 없는 게 근본 원인.
+  id 순으로 하나를 고르되 `warnings`에 "행이 N개 있어 id=X를 사용함"을 남겨 조용히
+  달라지지 않게 했다. 감시는 `scripts/report_duplicate_requirements.py`(read-only).
+
+- **[feat] 보안 P0 4건 구현 (`docs/backend/security-privacy-plan.md` 참고)**:
+  - **레이트 리밋** (`app/core/ratelimit.py`): slowapi 도입. 로그인 `5/minute;30/hour`,
+    회원가입 `5/hour`, 재설정 `3/hour;10/day`, **챗 `10/minute;100/day`**, portal-sync `5/hour`.
+    가장 급했던 건 챗이다 — 로그인만 하면 무제한 OpenAI 호출이 가능했고 한 대화가 입력
+    6만 토큰을 쓰기도 한다. 키는 인증 후면 user_id, 아니면 IP(`_user_or_ip`) — IP로만 세면
+    같은 학교 네트워크·NAT 뒤 학생들이 서로의 몫을 잡아먹는다. 429는 한국어 + `Retry-After`.
+    ⚠️ in-memory 저장소라 워커가 여러 개면 한도가 프로세스 수만큼 느슨해진다.
+  - **JWT 무효화** (`core/security.py`): 토큰에 `password_hash` 지문(`pv`)을 넣고 매 요청
+    대조. 비밀번호가 바뀌면 옛 토큰이 즉시 무효다. **스키마 변경 없이** 해결했다 —
+    사용자 행은 인증 과정에서 어차피 로드하므로 추가 쿼리도 없고, 공유 Supabase에
+    손대지 않아도 된다. `pv` 없는 옛 토큰은 거절하므로 **배포 시 재로그인이 한 번 필요**하다.
+  - **SecretStr + 422 sanitizer**: portal-sync 비밀번호를 `SecretStr`로(로그·repr에 마스킹),
+    `_validation_handler`가 422 응답에서 `input`/`ctx` 제거. pydantic v2는 검증 실패한
+    입력값을 에러에 그대로 담아서, 비밀번호가 응답으로 되돌아올 수 있었다.
+  - **메일 로그 가드**: `ENV != local`이면 재설정 링크 본문을 로그에 안 찍는다.
+
+  회귀 테스트 `tests/test_security_hardening.py` — 리밋은 TestClient로 실제 429를 확인하고,
+  나머지는 "막혀야 하는 시나리오"를 직접 태운다. 유닛 테스트가 엔드포인트 함수를 직접
+  호출하는 스타일이라 `tests/conftest.py`에서 리밋을 기본 비활성화하고
+  `@pytest.mark.ratelimit`을 붙인 테스트에서만 켠다(리밋 카운터는 프로세스 전역이라
+  켜두면 테스트끼리 간섭한다).
+
+## 2026-08-13 (blackest21) — 챗 품질 + 골든 하니스
 
 보안·개인정보 계획 문서화 + 골든 데이터셋 감사/보강 + 그 과정에서 드러난 챗 결함 3건 수정.
 DB 마이그레이션 없음, 팀 공유 Supabase 반영 없음 (전부 코드·문서·테스트).

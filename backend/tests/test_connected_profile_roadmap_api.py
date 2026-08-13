@@ -115,7 +115,8 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
 
     def test_signup_saves_academic_year(self):
         response = signup(
-            SignupRequest(
+            request=None,
+            payload=SignupRequest(
                 email="new-student@pusan.ac.kr",
                 password="password123",
                 name="신규 학생",
@@ -125,7 +126,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
                 college="정보의생명공학대학",
                 department="의생명융합공학부",
             ),
-            self.db,
+            db=self.db,
         )
 
         saved_user = self.db.scalar(select(User).where(User.student_id == "202699999"))

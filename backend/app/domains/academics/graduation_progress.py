@@ -26,6 +26,31 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
     "required_free_elective": "일반선택",
 }
 
+# 효원균형교양 7개 세부영역.
+#
+# portal_sync._refine_liberal_area_categories가 One-Stop 졸업예정정보를 근거로
+# student_course_records.category를 '교양선택' → 세부영역명으로 덮어쓴다(로드맵 챗이
+# "너 사상과역사 아직 안 들었네" 같은 조언을 하려면 이 값이 필요하다).
+#
+# 그래서 집계할 때 이 값들을 다시 '교양선택'으로 롤업하지 않으면 **이수학점이 통째로
+# 사라진다** — 균형교양 18학점을 이수한 학생이 포털 동기화 후 "교양선택 0학점 이수,
+# 18학점 남음"으로 표시되는 실제 버그가 있었다(2026-08-13 발견).
+#
+# 여기(academics)에 두는 이유: 판정 엔진이 진짜 소비자이고, planning(로드맵 챗)이
+# 이걸 가져다 쓰는 방향이 모듈 경계상 맞다.
+BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
+    "사상과역사",
+    "사회와문화",
+    "문학과예술",
+    "과학과기술",
+    "건강과레포츠",
+    "외국어",
+    "융복합",
+)
+
+# 이수기록 category 원값 → 요건 집계에 쓸 상위 이수구분.
+_CATEGORY_ROLLUP: dict[str, str] = {area: "교양선택" for area in BALANCED_LIBERAL_AREAS}
+
 
 @dataclass
 class CategoryProgress:
@@ -73,23 +98,57 @@ def _find_requirement(db: Session, program: UserAcademicProgram) -> GraduationRe
         )
 
     if program.curriculum_year:
-        exact = query.filter(
-            GraduationRequirement.curriculum_year == program.curriculum_year
-        ).one_or_none()
+        # `.one_or_none()`이 아니라 `.first()`인 이유: graduation_requirements에
+        # (program_type, department_id, major_id, curriculum_year) 유니크 제약이 없어서
+        # 같은 조합이 두 행 존재할 수 있다. 실제로 있다 — 간호학과 dual 2026이 2행이라
+        # 해당 학생은 졸업요건 조회에서 MultipleResultsFound로 **500 에러**가 났다
+        # (2026-08-13 발견). 판정 불가로 죽는 것보다 하나를 골라 계산하고 경고를 남기는
+        # 쪽이 낫다. 근본 해결은 유니크 제약 + 중복 정리이고, 중복은
+        # scripts/report_duplicate_requirements.py로 감시한다.
+        exact = (
+            query.filter(GraduationRequirement.curriculum_year == program.curriculum_year)
+            .order_by(GraduationRequirement.id)
+            .first()
+        )
         if exact is not None:
             return exact
 
     return query.order_by(GraduationRequirement.curriculum_year.desc()).first()
 
 
+def _count_matching_requirements(
+    db: Session, program: UserAcademicProgram, requirement: GraduationRequirement
+) -> int:
+    """이 프로그램 조건에 맞는 기준학점 행이 몇 개인지 (중복 감지용)."""
+    query = db.query(func.count(GraduationRequirement.id)).filter(
+        GraduationRequirement.program_type == program.program_type,
+        GraduationRequirement.curriculum_year == requirement.curriculum_year,
+    )
+    if program.major_id is not None:
+        query = query.filter(GraduationRequirement.major_id == program.major_id)
+    else:
+        query = query.filter(
+            GraduationRequirement.department_id == program.department_id,
+            GraduationRequirement.major_id.is_(None),
+        )
+    return query.scalar() or 0
+
+
 def _earned_credits_by_category(db: Session, user_id: int) -> dict[str, Decimal]:
+    """이수구분별 이수학점. 균형교양 세부영역은 '교양선택'으로 합산한다(_CATEGORY_ROLLUP)."""
     rows = (
         db.query(StudentCourseRecord.category, func.sum(StudentCourseRecord.credits))
         .filter(StudentCourseRecord.user_id == user_id)
         .group_by(StudentCourseRecord.category)
         .all()
     )
-    return {category: (total or Decimal("0")) for category, total in rows if category}
+    totals: dict[str, Decimal] = {}
+    for category, total in rows:
+        if not category:
+            continue
+        label = _CATEGORY_ROLLUP.get(category, category)
+        totals[label] = totals.get(label, Decimal("0")) + (total or Decimal("0"))
+    return totals
 
 
 def compute_graduation_progress(
@@ -135,6 +194,15 @@ def compute_graduation_progress(
             warnings.append(
                 f"학생 교육과정연도({program.curriculum_year})와 정확히 일치하는 기준학점이 없어 "
                 f"{requirement.curriculum_year}년 기준으로 대체함"
+            )
+
+        # 같은 조합의 기준학점 행이 여럿이면 어느 걸 썼는지 드러낸다 — 조용히 하나를 고르면
+        # 판정 결과가 달라진 이유를 아무도 모른다.
+        duplicate_count = _count_matching_requirements(db, program, requirement)
+        if duplicate_count > 1:
+            warnings.append(
+                f"같은 조건의 기준학점 행이 {duplicate_count}개 있어 id={requirement.id}를 "
+                f"사용함 — 데이터 정리 필요 (scripts/report_duplicate_requirements.py)"
             )
 
         categories: list[CategoryProgress] = []

@@ -55,7 +55,10 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
 
 ### P0 — 이번 스프린트 (외부 공개 전 필수)
 
-**P0-1. 레이트 리밋이 전혀 없다**
+> **상태 (2026-08-13): P0 4건 모두 구현 완료.** 회귀 테스트는
+> `backend/tests/test_security_hardening.py`. 아래 각 항목에 실제로 어떻게 막았는지 적었다.
+
+**P0-1. 레이트 리밋이 전혀 없다** — ✅ 구현 완료
 - 확인: `requirements.txt`에 slowapi 없음, `app/main.py`에 미들웨어 없음
 - 노출: ① `/auth/login` 무제한 시도 → 비밀번호 brute force ② `/auth/password-reset/request`
   무제한 → 메일 폭탄 + 토큰 남발 ③ **챗 엔드포인트 무제한 → OpenAI 요금 폭탄**
@@ -65,25 +68,42 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
   portal-sync `5/hour` (user_id, Playwright라 서버 자원 소모도 큼)
 - 챗은 리밋 초과 시 429 + 한국어 안내. 프론트에서 그대로 노출
 
-**P0-2. JWT를 무효화할 방법이 없다**
+  **구현**: `app/core/ratelimit.py` + 엔드포인트별 `@limiter.limit`. 적용 값은
+  `settings.RATE_LIMIT_*`로 뺐다 — 로그인 `5/minute;30/hour`, 회원가입 `5/hour`,
+  재설정 `3/hour;10/day`, **챗 `10/minute;100/day`**, portal-sync `5/hour`.
+  키는 인증 후면 user_id, 아니면 IP다(`_user_or_ip`) — IP로만 세면 같은 학교
+  네트워크·NAT 뒤 학생들이 서로의 몫을 잡아먹는다. `get_current_user`가
+  `request.state.user_id`를 채워 그 전환이 일어난다.
+  429는 `_rate_limit_handler`가 한국어 메시지 + `Retry-After`로 돌려준다.
+  ⚠️ 저장소가 in-memory라 **워커 여러 개면 한도가 프로세스 수만큼 느슨해진다**.
+  스케일아웃 시 `RATE_LIMIT_STORAGE_URI=redis://...`를 채울 것.
+
+**P0-2. JWT를 무효화할 방법이 없다** — ✅ 구현 완료 (스키마 변경 없이)
 - 확인: 페이로드가 `{sub, exp}`뿐, 만료 7일, 서버측 세션 저장소 없음 (`core/security.py:71`)
 - 노출: 비밀번호 변경·계정 탈퇴·토큰 유출 후에도 **최대 7일간 기존 토큰이 유효**.
   탈퇴 API 주석의 "JWT 무효화는 프론트에서 로컬 토큰 삭제로 처리"는 공격자에겐 무의미
-- 조치: `users.token_valid_after`(timestamptz) 추가 → 토큰에 `iat` 포함 →
-  `get_current_user`에서 `iat < token_valid_after`면 401. 비밀번호 변경/재설정 확정 시
-  `token_valid_after = now()` 갱신. 마이그레이션 1개 + 3파일 수정으로 끝난다
+- **구현**: 컬럼 추가 대신 토큰에 현재 `password_hash`의 지문(`pv`)을 넣고 매 요청
+  대조한다(`core/security.py: password_fingerprint`). 비밀번호가 바뀌면 해시가 바뀌어
+  지문이 어긋나므로 옛 토큰이 즉시 무효다. 사용자 행은 인증 과정에서 어차피 로드하므로
+  **추가 쿼리도, 마이그레이션도 없다**(공유 Supabase에 손대지 않으려는 선택이기도 하다).
+  `pv` 없는 옛 토큰은 거절한다 — 통과시키면 무효화가 최대 7일간 무의미해진다.
+  **배포 시 기존 로그인 세션이 한 번 끊기고 재로그인이 필요하다.**
+- 남은 것: "비밀번호 변경 없이 다른 기기 로그아웃"은 여전히 불가.
+  그건 `users.token_valid_after` 컬럼이 필요하고 공유 DB 마이그레이션이라 별도 승인 후.
 
-**P0-3. 포털 비밀번호가 요청 본문으로 들어오는 구간의 잔여 노출**
+**P0-3. 포털 비밀번호가 요청 본문으로 들어오는 구간의 잔여 노출** — ✅ 구현 완료
 - 저장은 안 하지만 ① Pydantic 검증 실패 시 422 응답에 입력값이 echo될 수 있고
   ② 예외 로깅·APM 연동 시 본문이 딸려갈 수 있다
-- 조치: `PortalSyncRequest.password`를 `pydantic.SecretStr`로 변경(로그·repr에 `**********`),
-  `RequestValidationError` 핸들러를 추가해 응답에서 `input` 필드 제거
+- **구현**: `PortalSyncRequest.password`를 `SecretStr`로 바꿔 로그·repr에 `**********`으로
+  찍히게 하고(실제 값은 `.get_secret_value()`로만 꺼냄), `app/main.py`에
+  `_validation_handler`를 붙여 422 응답에서 `input`/`ctx`를 제거했다. 어디가 왜 틀렸는지
+  (`loc`, `msg`, `type`)는 남겨서 프론트 안내는 그대로 된다.
 
-**P0-4. SMTP 미설정 시 재설정 링크가 로그에 평문 출력**
+**P0-4. SMTP 미설정 시 재설정 링크가 로그에 평문 출력** — ✅ 구현 완료
 - 확인: `core/mailer.py:31` — 로컬 개발 편의 기능이지만 운영에서 `SMTP_HOST`가 비면
   로그 접근자가 임의 계정을 탈취할 수 있다
-- 조치: `settings.ENV`가 local이 아니면 링크 본문 대신 `"SMTP 미설정 — 메일 미발송"`
-  경고만 남기고, 기동 시 `ENV != local && !SMTP_HOST`면 startup 경고 로그
+- **구현**: `core/mailer.py`가 `settings.ENV == "local"`일 때만 본문을 로그에 남긴다.
+  그 외 환경에서는 수신자·제목만 error 로그로 남기고 **본문(=재설정 링크)은 찍지 않는다**.
 
 ### P1 — 다음 스프린트
 
@@ -139,14 +159,16 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
 | 시스템 프롬프트 유출 | 가능 (프롬프트 자체는 비밀 아님) | 수용 |
 | 판정을 LLM이 하게 되는 경계 붕괴 | 규칙 엔진이 판정, LLM은 설명만 (`CLAUDE.md` 절대 원칙 1) | 골든 데이터셋 assertion으로 회귀 감시 |
 | 대화 원문의 자유 입력 PII | 4패턴 마스킹 후 Langfuse 전송, LLM 원본에는 그대로 | `llm-privacy-audit.md` 4절 한계 참고 |
-| 비용 남용 | **무방비** | P0-1 레이트 리밋 |
+| 비용 남용 | ✅ 챗 `10/minute;100/day` 리밋 적용 | user_id 기준. 스케일아웃 시 redis 저장소 필요 |
 
 ## 5. 실행 순서
 
 ```
-1주차  P0-1 레이트 리밋 · P0-4 메일 로그 가드      (독립, 병렬 가능)
-      P0-3 SecretStr + 422 핸들러
-2주차  P0-2 JWT 무효화 (마이그레이션 포함)
+✅ 완료  P0-1 레이트 리밋 · P0-2 JWT 무효화 · P0-3 SecretStr+422 · P0-4 메일 로그 가드
+        (2026-08-13, 회귀 테스트 tests/test_security_hardening.py)
+
+남은 것
+2주차  P0-2 후속: users.token_valid_after (비번 변경 없이 기기 로그아웃) — DB 마이그레이션 승인 필요
       P1-1 계정 삭제 커버리지 테스트
 3주차  P1-3 의존성 핀 + gitleaks/pip-audit CI
       P1-2 Langfuse 퍼지 스크립트 · P1-4 크롤러 폴백 제한

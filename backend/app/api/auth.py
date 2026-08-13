@@ -13,7 +13,7 @@ import datetime
 import hashlib
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, select
@@ -21,8 +21,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.ratelimit import (
+    LOGIN_LIMIT, PASSWORD_RESET_LIMIT, SIGNUP_LIMIT, limiter,
+)
 from app.core.mailer import send_password_reset_email
-from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token, decode_access_token, hash_password,
+    password_fingerprint, verify_password,
+)
 from app.domains.academics.hierarchy import resolve_hierarchy
 from app.domains.academics.models import Department, Major, UserAcademicProgram
 from app.domains.users.admission import AdmissionType, normalize_admission_type
@@ -209,7 +215,8 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def signup(payload: SignupRequest, db: Session = Depends(get_db)):
+@limiter.limit(SIGNUP_LIMIT)
+def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)):
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
 
@@ -263,13 +270,14 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(LOGIN_LIMIT)
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
     # 기존 계정 중 대소문자가 섞인 이메일이 있어 소문자로 맞춰 비교한다.
     user = db.scalar(select(User).where(func.lower(User.email) == payload.email))
     if user is None or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
 
-    return TokenResponse(access_token=create_access_token(user.id))
+    return TokenResponse(access_token=create_access_token(user.id, user.password_hash))
 
 
 def _hash_reset_token(token: str) -> str:
@@ -282,7 +290,9 @@ def _hash_reset_token(token: str) -> str:
 
 
 @router.post("/password-reset/request", response_model=MessageResponse)
-def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+@limiter.limit(PASSWORD_RESET_LIMIT)
+def request_password_reset(request: Request, payload: PasswordResetRequest,
+                            db: Session = Depends(get_db)):
     """웹메일과 이름이 모두 일치할 때만 재설정 링크를 메일로 보낸다.
 
     메일·이름이 맞지 않아도, 가입되지 않은 주소여도 응답은 항상 같다. 응답이
@@ -354,7 +364,9 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
 
 
 def get_current_user(
-    token: str | None = Depends(_oauth2_scheme), db: Session = Depends(get_db)
+    request: Request,
+    token: str | None = Depends(_oauth2_scheme),
+    db: Session = Depends(get_db),
 ) -> User:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -364,13 +376,22 @@ def get_current_user(
     if token is None:
         raise unauthorized
 
-    user_id = decode_access_token(token)
-    if user_id is None:
+    decoded = decode_access_token(token)
+    if decoded is None:
         raise unauthorized
+    user_id, fingerprint = decoded
 
     user = db.get(User, user_id)
     if user is None:
         raise unauthorized
+
+    # 비밀번호가 바뀌었으면 그 전에 발급된 토큰은 즉시 무효 (security.py 토큰 무효화 주석).
+    if fingerprint != password_fingerprint(user.password_hash):
+        raise unauthorized
+
+    # 레이트 리밋이 IP가 아니라 사용자 단위로 세도록 표시해둔다 (core/ratelimit._user_or_ip).
+    # IP로 세면 같은 학교 네트워크·NAT 뒤 학생들이 서로의 몫을 잡아먹는다.
+    request.state.user_id = user.id
     return user
 
 

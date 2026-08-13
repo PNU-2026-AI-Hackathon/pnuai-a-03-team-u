@@ -11,13 +11,14 @@ from __future__ import annotations
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.core.ratelimit import PORTAL_SYNC_LIMIT, limiter
 from app.domains.academics.models import Major, StudentCourseRecord, UserAcademicProgram
 from app.domains.planning.history import sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap
@@ -45,8 +46,15 @@ router = APIRouter(prefix="/me", tags=["portal-sync"])
 
 
 class PortalSyncRequest(BaseModel):
+    """One-Stop 자격증명. 저장하지 않고 이 요청 처리 동안만 메모리에 있는다.
+
+    password를 SecretStr로 두는 이유: 저장은 안 하지만 예외 로깅·APM 연동·모델 repr에
+    본문이 딸려갈 수 있다. SecretStr이면 그런 경로에서 `**********`으로 찍힌다
+    (security-privacy-plan.md P0-3). 실제 값은 `.get_secret_value()`로만 꺼낸다.
+    """
+
     login_id: str
-    password: str
+    password: SecretStr
 
 
 class CourseRecordResponse(BaseModel):
@@ -112,14 +120,16 @@ class CourseRecordsReplaceRequest(BaseModel):
 
 
 @router.post("/portal-sync", response_model=PortalSyncResponse)
+@limiter.limit(PORTAL_SYNC_LIMIT)
 def sync_portal_data(
+    request: Request,
     payload: PortalSyncRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """학번/비밀번호로 One-Stop에 로그인해 학적부/성적/졸업요건을 가져와 저장한다."""
     try:
-        with pnu_session(payload.login_id, payload.password) as page:
+        with pnu_session(payload.login_id, payload.password.get_secret_value()) as page:
             student_record = fetch_student_record(page)
             grades_tables = fetch_all_grades(page)
             graduation_tables = fetch_graduation_requirement(page)

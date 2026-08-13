@@ -56,15 +56,11 @@ MAX_TOOL_ITERATIONS = 8
 # 이 세부영역명으로 override 한다. 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
 # 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
 # 미이수로 오인할 수 있다.
-_BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
-    "사상과역사",
-    "사회와문화",
-    "문학과예술",
-    "과학과기술",
-    "건강과레포츠",
-    "외국어",
-    "융복합",
-)
+# 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
+# (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
+from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+
+_BALANCED_LIBERAL_AREAS = BALANCED_LIBERAL_AREAS
 
 
 def _current_academic_term() -> tuple[int, int]:
