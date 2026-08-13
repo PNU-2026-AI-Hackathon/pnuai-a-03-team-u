@@ -35,17 +35,23 @@
   id 순으로 하나를 고르되 `warnings`에 "행이 N개 있어 id=X를 사용함"을 남겨 조용히
   달라지지 않게 했다. 감시는 `scripts/report_duplicate_requirements.py`(read-only).
 
-- **[fix] ⚠️ 시드 스크립트의 NULL 비교 함정 — 중복의 진짜 원인 (`scripts/seed_*.py` 4개)**:
-  유니크 제약을 걸기 전 영향 범위를 확인하다 **간호학과 중복이 왜 생겼는지**를 찾았다.
-  네 스크립트가 `GraduationRequirement.major_id == major_id`로 기존 행을 조회하는데,
-  `major_id`가 `None`이면 SQL이 `major_id = NULL`이 되어 **절대 참이 아니다**. 그래서 학과
-  단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT됐다 — 재실행할 때마다
-  중복이 쌓이는 구조였다. 대상이 `major_id NULL`인 dual/minor/융합 요건 **199행**이다.
-  `seed_sw_convergence_programs.py`만 올바른 패턴(`.is_(None)` 분기)을 쓰고 있었고,
-  같은 파일 안에서도 한 곳은 맞고(832행) 한 곳은 틀린(941행) 상태였다.
-  → 6개 지점 전부 `.is_(None)` 분기로 통일. 수정 후 전 스크립트 dry-run에서 **신규 0건**
-  (`seed_dual_and_special`은 130행이 전부 unchanged). `backfill_sw_convergence_rules`의
-  insert=2는 고고학과·지리교육과에 interdisciplinary 행이 실제로 없는 정상 누락이다.
+- **[fix] 시드 스크립트가 한 실행 안에서 중복 행을 만들던 버그 (`scripts/seed_dual_and_special_2026_08_10.py` 외 2개)**:
+  간호학과 중복(2026-08-13 정리)의 **실제 원인**이다. `SessionLocal`이 `autoflush=False`라
+  `db.add()` 후 flush하지 않으면 방금 추가한 행이 **같은 실행의 이후 조회에 보이지 않는다.**
+  그런데 이 스크립트는 한 실행에서 같은 (학과, program_type)을 두 번 건드린다 — 별표 2
+  대량 처리와 이수 불가 학과 마킹이 겹치는 경우다. 계측 결과 133건 호출 중 **간호학과
+  dept=95 dual이 유일하게 2회** 호출됐고, 실제 중복 행 수(1건)와 정확히 일치한다.
+  두 행의 `created_at`이 34µs 차이였던 것도 "두 번 실행"이 아니라 "한 실행 안 두 번 add"
+  라는 증거였다. → `db.add()` 뒤에 `db.flush()` 추가. 빈 DB 상태를 트랜잭션 안에서
+  재현해 검증했다(2번째 호출이 `insert` → `unchanged`로 바뀌고 1행만 남는다).
+  같은 패턴이 있는 `backfill_sw_convergence_rules.py`·`seed_minor_program_rules.py`에도
+  방어적으로 같은 flush를 넣었다 — 유니크 제약이 생긴 뒤로는 이 상황이 조용한 중복이
+  아니라 IntegrityError가 되기 때문이다.
+
+  > ⚠️ **정정**: 이 세션에서 한때 원인을 "시드 스크립트의 `major_id == None` NULL 비교
+  > 함정"으로 지목했으나 **틀린 진단이었다.** SQLAlchemy는 `column == None`을 컴파일
+  > 시점에 `IS NULL`로 자동 변환한다(실측 확인). 그 코드는 처음부터 정상이었고, 그때
+  > 넣었던 `.is_(None)` 수정 6곳은 되돌렸다.
 
 - **[feat] graduation_requirements 스코프 유니크 인덱스 (Supabase 반영 완료)**:
   ```sql

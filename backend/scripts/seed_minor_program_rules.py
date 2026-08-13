@@ -648,13 +648,7 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
     # graduation_requirements upsert
     q = select(GraduationRequirement).where(
         GraduationRequirement.department_id == dept.id,
-        # major_id가 None일 때 `== None`은 SQL에서 `= NULL`이 되어 절대 참이 아니다.
-        # 그래서 학과 단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT돼
-        # 재실행할 때마다 중복이 쌓였다 — 간호학과 dual 2026 중복(2026-08-13 정리)의
-        # 실제 원인이다. is_(None)으로 분기해야 멱등해진다.
-        GraduationRequirement.major_id.is_(None)
-        if major is None
-        else GraduationRequirement.major_id == major.id,
+        GraduationRequirement.major_id == (major.id if major else None),
         GraduationRequirement.program_type == "minor",
         GraduationRequirement.curriculum_year == rule.curriculum_year,
     )
@@ -678,6 +672,9 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
                 required_total_credits=rule.total_credits,
                 special_rules=special,
             ))
+            # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+            # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+            db.flush()
 
     # program_courses upsert (필수과목 있으면)
     for code, name, group_label in rule.courses:
@@ -687,10 +684,7 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
             continue
         pc_q = select(ProgramCourse).where(
             ProgramCourse.department_id == dept.id,
-            # 위와 같은 NULL 비교 함정. program_courses도 학과 단위 행이 134개 있다.
-            ProgramCourse.major_id.is_(None)
-            if major is None
-            else ProgramCourse.major_id == major.id,
+            ProgramCourse.major_id == (major.id if major else None),
             ProgramCourse.course_id == course.id,
             ProgramCourse.curriculum_year == rule.curriculum_year,
         )
@@ -709,6 +703,9 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
                 requirement_group=group_label,
                 curriculum_year=rule.curriculum_year,
             ))
+            # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+            # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+            db.flush()
     return stats
 
 

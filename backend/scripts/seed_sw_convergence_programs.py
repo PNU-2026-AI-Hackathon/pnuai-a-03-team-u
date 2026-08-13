@@ -938,11 +938,7 @@ def _upsert_linked_courses(
             row = db.scalars(
                 select(ProgramCourse).where(
                     ProgramCourse.department_id == department_id,
-                    # 같은 파일 832행과 같은 형태여야 한다 — `== None`은 `= NULL`이라
-                    # 학과 단위 행(major_id IS NULL)이 조회에 안 걸려 중복이 쌓인다.
-                    ProgramCourse.major_id.is_(None)
-                    if major_id is None
-                    else ProgramCourse.major_id == major_id,
+                    ProgramCourse.major_id == major_id,
                     ProgramCourse.course_id == course.id,
                     ProgramCourse.curriculum_year == CURRICULUM_YEAR,
                 )

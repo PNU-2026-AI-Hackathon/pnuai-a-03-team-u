@@ -229,13 +229,7 @@ def _upsert_gr(
     existing = db.scalars(
         select(GraduationRequirement).where(
             GraduationRequirement.department_id == dept_id,
-            # major_id가 None일 때 `== None`은 SQL에서 `= NULL`이 되어 절대 참이 아니다.
-            # 그래서 학과 단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT돼
-            # 재실행할 때마다 중복이 쌓였다 — 간호학과 dual 2026 중복(2026-08-13 정리)의
-            # 실제 원인이다. is_(None)으로 분기해야 멱등해진다.
-            GraduationRequirement.major_id.is_(None)
-            if major_id is None
-            else GraduationRequirement.major_id == major_id,
+            GraduationRequirement.major_id == major_id,
             GraduationRequirement.program_type == program_type,
             GraduationRequirement.curriculum_year == CURRICULUM_YEAR,
         )
@@ -256,6 +250,13 @@ def _upsert_gr(
             required_total_credits=total_credits,
             special_rules=special,
         ))
+        # SessionLocal이 autoflush=False라, flush를 안 하면 방금 add한 행이 **같은 실행의
+        # 이후 조회에 보이지 않는다**. 이 스크립트는 한 실행에서 같은 (학과, program_type)을
+        # 두 번 건드릴 수 있다 — 별표 2 대량 처리와 이수 불가 학과 마킹이 겹치는 경우다
+        # (실측: 간호학과 dept=95 dual이 133건 중 유일하게 2회 호출된다).
+        # flush가 없으면 두 번째 호출이 위 조회에서 못 찾고 또 add해서 중복 행이 생긴다 —
+        # 2026-08-13에 정리한 간호학과 dual 2026 중복(created_at 34µs 차이)의 실제 원인이다.
+        db.flush()
     return "insert"
 
 
@@ -270,10 +271,7 @@ def _upsert_pc(
     existing = db.scalars(
         select(ProgramCourse).where(
             ProgramCourse.department_id == dept_id,
-            # 위 _upsert_gr과 같은 NULL 비교 함정 — `== None`은 `= NULL`이라 절대 안 걸린다.
-            ProgramCourse.major_id.is_(None)
-            if major_id is None
-            else ProgramCourse.major_id == major_id,
+            ProgramCourse.major_id == major_id,
             ProgramCourse.course_id == course_id,
             ProgramCourse.curriculum_year == CURRICULUM_YEAR,
         )

@@ -110,13 +110,7 @@ def main():
 
             q = select(GraduationRequirement).where(
                 GraduationRequirement.department_id == dept_id,
-                # major_id가 None일 때 `== None`은 SQL에서 `= NULL`이 되어 절대 참이 아니다.
-                # 그래서 학과 단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT돼
-                # 재실행할 때마다 중복이 쌓였다 — 간호학과 dual 2026 중복(2026-08-13 정리)의
-                # 실제 원인이다. is_(None)으로 분기해야 멱등해진다.
-                GraduationRequirement.major_id.is_(None)
-                if major_id is None
-                else GraduationRequirement.major_id == major_id,
+                GraduationRequirement.major_id == major_id,
                 GraduationRequirement.program_type == "interdisciplinary",
                 GraduationRequirement.curriculum_year == curr_year,
             )
@@ -141,6 +135,9 @@ def main():
                         curriculum_year=curr_year,
                         special_rules=special,
                     ))
+                    # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+                    # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+                    db.flush()
             n_groups = len(special.get('groups', []))
             print(f"  [{action:9s}] {program_label:60s} groups={n_groups} courses={len(cs)}")
 
