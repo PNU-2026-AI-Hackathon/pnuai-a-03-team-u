@@ -1,0 +1,179 @@
+# Plan-U 보안 · 개인정보 계획
+
+작성 2026-08-12 · 백엔드 담당
+
+Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수**를 다룬다. 학사 데이터는
+그 자체로 민감정보이고, 학번+이름+학과 조합이면 개인이 즉시 특정된다. 게다가 이 데이터의
+일부가 **외부 LLM(OpenAI)과 관측 플랫폼(Langfuse)으로 나간다**. 이 문서는 (1) 무엇을
+어디에 보관·전송하는지 인벤토리로 확정하고, (2) 현재 방어선을 감사 결과로 기록하고,
+(3) 남은 갭을 우선순위와 함께 실행 가능한 작업으로 정리한다.
+
+관련 문서: `docs/backend/features/llm-privacy-audit.md` (LLM 전송 경계 상세)
+
+---
+
+## 1. 데이터 인벤토리
+
+| 등급 | 데이터 | 저장 위치 | 암호화 | 외부 전송 |
+|------|--------|-----------|--------|-----------|
+| **S — 자격증명** | 로그인 비밀번호 | `users.password_hash` | bcrypt (단방향) | ✗ |
+| | One-Stop 포털 비밀번호 | **저장 안 함** (요청 메모리만) | — | ✗ |
+| | 비밀번호 재설정 토큰 | `password_reset_tokens.token_hash` | sha256 | 메일 본문(원문 링크) |
+| | 서비스 시크릿 (API 키, JWT 키, Fernet 키, DB 비번) | `backend/.env`, GitHub Secrets | — | ✗ |
+| **A — 직접 식별자** | 이름, 학번, 웹메일 | `users` | 평문 | ✗ (LLM·Langfuse 모두 미전송) |
+| | 지도교수명 | `users.advisor_name` | 평문 | ✗ |
+| **B — 학사 민감정보** | 이수내역·성적 | `student_course_records` | 평문 | LLM에 **과목명+이수구분만** (성적 등급 제외) |
+| | 자격증·어학점수·비교과 | `user_certifications`, `user_language_scores`, `user_activities` | 평문 | ✗ |
+| | 학적 프로그램·졸업요건 진도 | `user_academic_programs` 외 | 평문 | LLM에 전송 |
+| | 진로 목표 (자유 입력) | `users.career_goal` | 평문 | LLM에 전송 |
+| **C — 파생/행동** | 챗 대화 원문 | `course_roadmap_chat_messages`, `timetable_chat_messages` | 평문 | LLM + Langfuse(마스킹 적용) |
+| | 로드맵·시간표 | `course_roadmap_items`, `course_plans` | 평문 | LLM에 전송 |
+
+> **B 등급이 평문 저장인 이유**: 졸업요건 판정 엔진이 SQL 집계로 학점을 합산하므로 컬럼
+> 암호화 시 판정 자체가 불가능하다. 대신 접근 통제(Supabase 프로젝트 멤버 제한)와 전송 구간
+> 암호화(HTTPS)로 커버한다. 이 트레이드오프는 의도된 것이며, 재검토 트리거는 "서비스 외부
+> 공개 + 실사용자 유입"이다.
+
+## 2. 현재 방어선 (감사 결과 — 이미 되어 있는 것)
+
+코드 실측으로 확인했다. 새로 만들 필요 없고, **깨뜨리지 않는 것**이 목표다.
+
+| 항목 | 구현 | 위치 |
+|------|------|------|
+| 비밀번호 단방향 해시 | bcrypt (passlib 미사용 — 4.1+ 호환 이슈 회피) | `core/security.py:50` |
+| 재설정 토큰 | 128비트 난수 + sha256 저장 + 30분 TTL + 재발급 시 기존 무효화 | `api/auth.py:275-325` |
+| 사용자 열거 방지 | 가입 여부와 무관하게 동일 응답 | `api/auth.py:284` |
+| 포털 비밀번호 미저장 | 매 sync마다 재입력, `portal_credentials` 저장 중단 + 퍼지 스크립트 | `api/portal_sync.py:158`, `scripts/purge_portal_credentials.py` |
+| 계정 완전 삭제 | 15개 테이블 hard delete + 삭제 행 수 반환 | `api/profile.py:370` |
+| IDOR 방지 | 모든 개인 리소스가 `current_user.id` 스코프 (`_get_owned_roadmap` 패턴) | `api/roadmaps.py`, `api/timetables.py` |
+| LLM 식별자 미전송 | 프롬프트에 이름·학번·이메일 없음 | `roadmap_chat._build_student_context_block` |
+| Langfuse 마스킹 | 이메일/휴대폰/유선/학번 4패턴 + user_id salt 해시 | `ai/llm/langfuse_masking.py` |
+| 시크릿 미커밋 | `.env*` gitignore (`.env.example`만 허용), 추적 파일에 시크릿 없음 확인 | `.gitignore:11-14` |
+| 크롤 실패 응답 | 스택트레이스 대신 일반 메시지, 원본은 서버 로그만 | `api/portal_sync.py:145` |
+
+## 3. 확인된 갭과 조치
+
+### P0 — 이번 스프린트 (외부 공개 전 필수)
+
+**P0-1. 레이트 리밋이 전혀 없다**
+- 확인: `requirements.txt`에 slowapi 없음, `app/main.py`에 미들웨어 없음
+- 노출: ① `/auth/login` 무제한 시도 → 비밀번호 brute force ② `/auth/password-reset/request`
+  무제한 → 메일 폭탄 + 토큰 남발 ③ **챗 엔드포인트 무제한 → OpenAI 요금 폭탄**
+  (로그인만 하면 한 사용자가 초당 수십 회 LLM 호출 가능)
+- 조치: `slowapi` 도입. 엔드포인트별 정책 —
+  로그인 `5/min` (IP+이메일 조합), 재설정 요청 `3/hour` (이메일), 챗 `10/min` + `100/day` (user_id),
+  portal-sync `5/hour` (user_id, Playwright라 서버 자원 소모도 큼)
+- 챗은 리밋 초과 시 429 + 한국어 안내. 프론트에서 그대로 노출
+
+**P0-2. JWT를 무효화할 방법이 없다**
+- 확인: 페이로드가 `{sub, exp}`뿐, 만료 7일, 서버측 세션 저장소 없음 (`core/security.py:71`)
+- 노출: 비밀번호 변경·계정 탈퇴·토큰 유출 후에도 **최대 7일간 기존 토큰이 유효**.
+  탈퇴 API 주석의 "JWT 무효화는 프론트에서 로컬 토큰 삭제로 처리"는 공격자에겐 무의미
+- 조치: `users.token_valid_after`(timestamptz) 추가 → 토큰에 `iat` 포함 →
+  `get_current_user`에서 `iat < token_valid_after`면 401. 비밀번호 변경/재설정 확정 시
+  `token_valid_after = now()` 갱신. 마이그레이션 1개 + 3파일 수정으로 끝난다
+
+**P0-3. 포털 비밀번호가 요청 본문으로 들어오는 구간의 잔여 노출**
+- 저장은 안 하지만 ① Pydantic 검증 실패 시 422 응답에 입력값이 echo될 수 있고
+  ② 예외 로깅·APM 연동 시 본문이 딸려갈 수 있다
+- 조치: `PortalSyncRequest.password`를 `pydantic.SecretStr`로 변경(로그·repr에 `**********`),
+  `RequestValidationError` 핸들러를 추가해 응답에서 `input` 필드 제거
+
+**P0-4. SMTP 미설정 시 재설정 링크가 로그에 평문 출력**
+- 확인: `core/mailer.py:31` — 로컬 개발 편의 기능이지만 운영에서 `SMTP_HOST`가 비면
+  로그 접근자가 임의 계정을 탈취할 수 있다
+- 조치: `settings.ENV`가 local이 아니면 링크 본문 대신 `"SMTP 미설정 — 메일 미발송"`
+  경고만 남기고, 기동 시 `ENV != local && !SMTP_HOST`면 startup 경고 로그
+
+### P1 — 다음 스프린트
+
+**P1-1. 계정 삭제 목록이 수동 관리라 새 테이블 추가 시 누락된다**
+- `_ACCOUNT_DELETE_STEPS`는 하드코딩 리스트. 새 개인 데이터 테이블이 생기면 조용히 남는다
+- 조치: 테스트 추가 — SQLAlchemy 메타데이터에서 `user_id` 컬럼(또는 user FK)을 가진 모든
+  테이블을 뽑아 삭제 목록에 있는지 검증. 누락되면 CI 실패
+
+**P1-2. 탈퇴 후 Langfuse trace가 남는다**
+- DB는 지워지지만 Langfuse의 해시 user_id trace + 마스킹된 대화 원문은 남는다
+- 조치: `hash_user_id(user_id)`로 필터해 trace를 삭제하는 스크립트
+  (`scripts/purge_langfuse_user.py`) + 탈퇴 API가 그 해시를 응답에 포함.
+  보존기간 정책(예: 90일 자동 만료)을 Langfuse 프로젝트 설정에 적용
+
+**P1-3. 의존성 버전 핀 없음 + 스캔 없음**
+- `requirements.txt`에 `==` 핀이 하나도 없다 → 빌드 재현 불가, 공급망 침해에 무방비
+- 조치: `pip freeze > constraints.txt` 방식으로 핀 고정(직접 의존성은 `requirements.txt`에
+  범위, 전이 의존성은 constraints), CI에 `pip-audit` + `gitleaks` 워크플로 추가
+
+**P1-4. 개발자 개인 학교 계정이 크롤러 기본값으로 폴백된다**
+- `crawlers/pnu_session.py:103` — 인자 없으면 `settings.PNU_LOGIN_ID/PW` 사용.
+  `.env`가 팀 채널로 공유되면 개인 부산대 계정이 그대로 노출된다
+- 조치: 폴백을 `ENV == "local"`일 때만 허용하고, 아니면 명시적 인자 필수로 변경
+
+**P1-5. CORS 설정 완화 여지**
+- `allow_credentials=True`인데 인증은 Authorization 헤더(localStorage 토큰)로 하고 쿠키를
+  쓰지 않는다 → `False`로 낮춰도 동작에 영향 없고 공격면만 줄어든다
+- `CORS_ORIGIN_REGEX`가 Vercel preview 전체(`...-*.vercel.app`)를 허용한다.
+  현재는 수용하되, 운영 도메인 확정 후 프로덕션 백엔드에서는 preview 패턴 제거
+
+**P1-6. 프론트 토큰이 localStorage에 있다**
+- XSS 하나면 토큰이 통째로 나간다. httpOnly 쿠키 전환은 CSRF 대책까지 따라와서 이번
+  일정에는 과하다
+- 대신 최소 조치: 응답에 CSP 헤더 추가(인라인 스크립트 차단), `rememberLogin=false`일 때
+  sessionStorage를 쓰는 현재 동작 유지, 의존성에 알려진 XSS 취약점 없는지 `npm audit`
+
+### P2 — 서비스 공개 전
+
+- **개인정보처리방침 + 수집 동의**: 수집 항목·보유기간·파기 절차 명시. 특히 **OpenAI·Langfuse로
+  학사정보가 나가는 것은 "처리위탁"**이라 고지가 필요하다. 온보딩에 "학생지원시스템 계정
+  정보는 저장하지 않습니다" 문구는 이미 있으니, 같은 자리에 LLM 위탁 고지를 추가
+- **보존기간 정책**: 졸업/장기 미접속(예: 24개월) 계정의 학사 데이터 자동 파기 배치
+- **접근 감사 로그**: 팀원 5명이 Supabase에 직접 접근한다. 최소한 누가 언제 프로덕션 DB에
+  붙었는지 기록 (Supabase 로그 보존 설정)
+- **DB 백업 + 복구 리허설**: 백업 존재 여부와 복호화 절차를 실제로 한 번 돌려본다
+
+## 4. LLM 특화 위협
+
+| 위협 | 현재 상태 | 조치 |
+|------|-----------|------|
+| 프롬프트 인젝션으로 타인 데이터 조회 | **불가** — 모든 도구가 `_ToolContext(db, user, roadmap)`에 바인딩돼 user_id를 인자로 받지 않는다 | 유지. 도구에 user_id/roadmap_id 파라미터를 추가하는 변경은 금지 |
+| 인젝션으로 무단 DB 변경 | **불가** — `propose_change`는 제안만 만들고, 실제 반영은 사용자 승인 API(`apply_pending_changes`)에서만 | 유지 |
+| 시스템 프롬프트 유출 | 가능 (프롬프트 자체는 비밀 아님) | 수용 |
+| 판정을 LLM이 하게 되는 경계 붕괴 | 규칙 엔진이 판정, LLM은 설명만 (`CLAUDE.md` 절대 원칙 1) | 골든 데이터셋 assertion으로 회귀 감시 |
+| 대화 원문의 자유 입력 PII | 4패턴 마스킹 후 Langfuse 전송, LLM 원본에는 그대로 | `llm-privacy-audit.md` 4절 한계 참고 |
+| 비용 남용 | **무방비** | P0-1 레이트 리밋 |
+
+## 5. 실행 순서
+
+```
+1주차  P0-1 레이트 리밋 · P0-4 메일 로그 가드      (독립, 병렬 가능)
+      P0-3 SecretStr + 422 핸들러
+2주차  P0-2 JWT 무효화 (마이그레이션 포함)
+      P1-1 계정 삭제 커버리지 테스트
+3주차  P1-3 의존성 핀 + gitleaks/pip-audit CI
+      P1-2 Langfuse 퍼지 스크립트 · P1-4 크롤러 폴백 제한
+이후   P1-5/6, P2 (공개 일정에 맞춰)
+```
+
+## 6. PR 리뷰 체크리스트
+
+새 코드가 개인정보를 만지면 아래를 확인한다.
+
+- [ ] 새 엔드포인트가 개인 리소스를 다루면 `Depends(get_current_user)` + `user_id` 스코프 필터가 있는가 (경로 파라미터 id만 믿지 않는가)
+- [ ] 새로 만든 테이블에 `user_id`가 있으면 `_ACCOUNT_DELETE_STEPS`에 추가했는가
+- [ ] LLM 프롬프트·도구 응답에 이름/학번/이메일을 넣지 않았는가
+- [ ] 도구 함수 시그니처에 `user_id`/`roadmap_id` 같은 스코프 파라미터를 추가하지 않았는가
+- [ ] 로그에 비밀번호·토큰·재설정 링크가 찍히지 않는가
+- [ ] 새 시크릿은 `.env.example`에 **이름만** 추가하고 값은 팀 채널로 공유했는가
+- [ ] 새 LLM 호출 경로가 생겼으면 `observe_agent_call`로 감싸 마스킹이 적용되는가
+
+## 7. 사고 대응 — 키가 유출됐을 때
+
+| 키 | 재발급 | 여파 |
+|----|--------|------|
+| `OPENAI_API_KEY` | OpenAI 대시보드에서 폐기·재발급 | 요금. 즉시 폐기 |
+| `JWT_SECRET_KEY` | 새로 생성 | **모든 사용자 강제 로그아웃** (기존 토큰 전부 무효 — 의도된 동작) |
+| `CREDENTIAL_ENCRYPTION_KEY` | 새로 생성 | 현재 이 키로 암호화된 실사용 데이터 없음(포털 비번 저장 중단). 교체 자유 |
+| `DATABASE_URL` 비번 | Supabase에서 회전 | 전원 `.env` 갱신 필요 |
+| `LANGFUSE_*` | Langfuse 프로젝트에서 재발급 | 관측 데이터 노출. `USER_ID_SALT`도 함께 회전 |
+
+공통: 유출 경로가 git 커밋이면 키 폐기가 우선이고 히스토리 정리는 그 다음이다
+(커밋을 지워도 이미 노출된 키는 되돌아오지 않는다).
