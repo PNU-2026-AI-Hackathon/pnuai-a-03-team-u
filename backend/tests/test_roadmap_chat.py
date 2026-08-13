@@ -28,6 +28,19 @@ _ROADMAP_TEST_TABLES = [
 ]
 
 
+# create는 course_id를 요구하므로(빈 로드맵 항목 방지), 다른 가드를 검증하는 테스트도
+# 통과시킬 실제 과목이 하나 필요하다. 학기 무관('1,2') 개설이라 계절수업·학기 전용 가드에
+# 걸리지 않고, 이름도 다른 시드와 겹치지 않아 이수/중복 가드를 건드리지 않는다.
+_GENERIC_COURSE_ID = 7777
+
+
+def _seed_generic_course(db):
+    db.add(Course(id=_GENERIC_COURSE_ID, course_name="일반선택과목", department_id=10,
+                  category="전공선택", credits=3, year="1", semester="1,2"))
+    db.flush()
+    return _GENERIC_COURSE_ID
+
+
 class ProposeChangeGradeGuardTest(unittest.TestCase):
     def make_db(self):
         engine = create_engine("sqlite:///:memory:")
@@ -66,9 +79,11 @@ class ProposeChangeGradeGuardTest(unittest.TestCase):
     def test_allows_grade_at_or_above_earliest_completed(self):
         db = self.make_db()
         user, roadmap = self.make_roadmap(db, completed_grades=[3, 4])
+        course_id = _seed_generic_course(db)
         ctx = _ToolContext(db, user, roadmap)
 
-        result = ctx.propose_change(action="create", reason="test", planned_grade=3)
+        result = ctx.propose_change(action="create", reason="test", planned_grade=3,
+                                    course_id=course_id)
 
         self.assertNotIn("error", result)
         self.assertEqual(1, len(ctx.pending_changes))
@@ -76,9 +91,11 @@ class ProposeChangeGradeGuardTest(unittest.TestCase):
     def test_no_completed_items_means_no_restriction(self):
         db = self.make_db()
         user, roadmap = self.make_roadmap(db, completed_grades=[])
+        course_id = _seed_generic_course(db)
         ctx = _ToolContext(db, user, roadmap)
 
-        result = ctx.propose_change(action="create", reason="test", planned_grade=1)
+        result = ctx.propose_change(action="create", reason="test", planned_grade=1,
+                                    course_id=course_id)
 
         self.assertNotIn("error", result)
         self.assertEqual(1, len(ctx.pending_changes))
@@ -200,9 +217,10 @@ class ProposeChangePastTermGuardTest(unittest.TestCase):
     def test_create_in_current_term_is_allowed(self):
         db = self.make_db()
         ctx = self.make_ctx(db)
+        course_id = _seed_generic_course(db)
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
-                action="create", reason="test",
+                action="create", reason="test", course_id=course_id,
                 planned_year="2026", planned_semester="1학기", planned_grade=2,
             )
         self.assertNotIn("error", result)
@@ -211,9 +229,10 @@ class ProposeChangePastTermGuardTest(unittest.TestCase):
     def test_create_in_future_term_is_allowed(self):
         db = self.make_db()
         ctx = self.make_ctx(db)
+        course_id = _seed_generic_course(db)
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
-                action="create", reason="test",
+                action="create", reason="test", course_id=course_id,
                 planned_year="2027", planned_semester="1학기", planned_grade=3,
             )
         self.assertNotIn("error", result)
@@ -223,9 +242,10 @@ class ProposeChangePastTermGuardTest(unittest.TestCase):
         가드는 통과시켜야 한다 — 오탐으로 정상 제안을 막지 않는다."""
         db = self.make_db()
         ctx = self.make_ctx(db)
+        course_id = _seed_generic_course(db)
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
-                action="create", reason="test",
+                action="create", reason="test", course_id=course_id,
                 planned_year="2024", planned_semester="1학기 또는 2학기", planned_grade=2,
             )
         self.assertNotIn("error", result)
@@ -564,11 +584,12 @@ class TransferStudentFallbackGuardTest(unittest.TestCase):
         db.add(StudentCourseRecord(user_id=1, raw_course_name="이산수학",
                                      category="전공기초", credits=3,
                                      year="2026", semester="입학전성적"))
+        course_id = _seed_generic_course(db)
         db.flush()
         self.assertIsNone(ctx._min_completed_grade())
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
-                action="create", reason="test",
+                action="create", reason="test", course_id=course_id,
                 planned_year="2026", planned_semester="1학기", planned_grade=1,
             )
         self.assertNotIn("error", result)
@@ -577,9 +598,10 @@ class TransferStudentFallbackGuardTest(unittest.TestCase):
         """일반 신입생(이수기록 없음)은 1학년으로 자유롭게 create 가능해야 한다."""
         db = self.make_db()
         ctx = self.make_ctx(db)
+        course_id = _seed_generic_course(db)
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
             result = ctx.propose_change(
-                action="create", reason="test",
+                action="create", reason="test", course_id=course_id,
                 planned_year="2026", planned_semester="1학기", planned_grade=1,
             )
         self.assertNotIn("error", result)
@@ -877,8 +899,15 @@ class ProposeChangeDuplicateGuardTest(unittest.TestCase):
             )
         self.assertNotIn("error", result)
 
-    def test_create_without_course_id_is_not_blocked_by_duplicate_guard(self):
-        """course_id 없이 course_name만으로 create하는 경우(자유입력)는 이 가드를 피한다."""
+    def test_create_without_course_id_is_rejected(self):
+        """course_id 없는 create는 거절한다.
+
+        예전에는 "자유입력 항목"으로 보고 통과시켰지만, 이 도구는 course_name을 받지 않고
+        apply_pending_changes가 이름·학점·이수구분을 Course에서만 가져온다 — 그래서 승인하면
+        전부 NULL인 빈 로드맵 행이 생겼다. 게다가 이수·중복·재수강·계절수업 가드가 모두
+        course_obj가 있을 때만 도는 분기라 통째로 우회됐다 (골든 케이스 22에서 실제 관측:
+        is_retake=True + course_id=None이 모든 검증을 지나감).
+        """
         db = self.make_db()
         ctx = self.make_ctx(db)
         with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
@@ -886,7 +915,19 @@ class ProposeChangeDuplicateGuardTest(unittest.TestCase):
                 action="create", reason="test",
                 planned_year="2026", planned_semester="2학기", planned_grade=3,
             )
-        self.assertNotIn("error", result)
+        self.assertIn("error", result)
+        self.assertIn("course_id", result["error"])
+
+    def test_create_without_course_id_is_rejected_even_with_retake_flag(self):
+        """재수강 우회 플래그가 course_id 누락을 덮지 못한다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="사용자 재수강 요청", is_retake=True,
+                planned_year="2026", planned_semester="2학기", planned_grade=3,
+            )
+        self.assertIn("error", result)
 
     def test_get_roadmap_items_exposes_course_id_for_dedup(self):
         """LLM이 중복을 스스로 피하려면 items의 course_id도 봐야 한다."""
@@ -1161,13 +1202,36 @@ class ConditionalPromptAssemblyTest(unittest.TestCase):
         # non-primary가 있으면 mismatch 규칙은 배제 (이미 부·복수로 대응)
         self.assertNotIn("career_dept_mismatch", rules)
 
-    def test_career_without_non_primary_triggers_mismatch(self):
+    def _seed_dept_courses(self, db, names):
+        for i, name in enumerate(names):
+            db.add(Course(id=950 + i, course_name=name, department_id=10,
+                          category="전공선택", credits=3, year="2", semester="1"))
+        db.flush()
+
+    def test_career_unrelated_to_department_curriculum_triggers_mismatch(self):
+        """진로군 키워드가 학과 커리큘럼에 전혀 없으면 부·복수전공 안내 규칙을 붙인다."""
         from app.domains.planning.roadmap_chat import _select_applicable_rules
         db = self.make_db()
         user = self.make_baseline_user(db, career_goal="백엔드 개발자")
+        self._seed_dept_courses(db, ["현대문학의이해", "국어학개론"])
         db.commit()
         rules = _select_applicable_rules(db, user)
         self.assertIn("career_dept_mismatch", rules)
+
+    def test_career_matching_department_curriculum_does_not_trigger_mismatch(self):
+        """진로와 전공이 잘 맞으면 규칙을 붙이지 않는다.
+
+        옛 구현은 "진로 목표가 있고 부·복수전공이 없으면" 무조건 붙여서, 정컴 학생 +
+        백엔드 진로처럼 완벽히 맞는 경우에도 "부전공을 제안해라"는 강한 지시가 매 대화에
+        실렸다 (골든 케이스 16개 중 10개에서 발동, 2026-08 관측).
+        """
+        from app.domains.planning.roadmap_chat import _select_applicable_rules
+        db = self.make_db()
+        user = self.make_baseline_user(db, career_goal="백엔드 개발자")
+        self._seed_dept_courses(db, ["데이터베이스", "운영체제", "컴퓨터네트워크"])
+        db.commit()
+        rules = _select_applicable_rules(db, user)
+        self.assertNotIn("career_dept_mismatch", rules)
 
     def test_transfer_admission_triggers_rule(self):
         from app.domains.planning.roadmap_chat import _select_applicable_rules
@@ -1540,6 +1604,127 @@ class SafeCallDispatchGuardTest(unittest.TestCase):
 
         result = _safe_call(handler, {"query": "x", "limit": 5})
         self.assertEqual({"q": "x", "n": 5}, result)
+
+
+class NarrowScopeRequestProbeTest(unittest.TestCase):
+    """"이것만 해줘"류 요청에만 붙는 범위 준수 규칙.
+
+    CORE에도 같은 취지의 규칙이 있지만 프롬프트 뒤쪽에 묻혀 준수도가 낮았다 —
+    골든 케이스 26(N=3 중 2회 위반: "데이터베이스만 옮겨줘"에 컴퓨터네트워크까지 이동).
+    """
+
+    def test_narrow_markers_detected(self):
+        from app.domains.planning.roadmap_chat import _looks_like_narrow_scope_request
+        for msg in [
+            "데이터베이스를 4학년 2학기로 옮겨주세요. 그것만요.",
+            "이것만 바꿔주세요",
+            "하나만 옮겨줘",
+            "다른 건 건드리지 말고 이 과목만 미뤄줘",
+        ]:
+            self.assertTrue(_looks_like_narrow_scope_request(msg), msg)
+
+    def test_broad_requests_not_flagged(self):
+        from app.domains.planning.roadmap_chat import _looks_like_narrow_scope_request
+        for msg in [
+            "다음 학기 수강계획 추천해주세요",
+            "졸업까지 뭐가 남았는지 정리해줘",
+            "AI 진로에 도움되는 과목 알려줘",
+            None,
+            "",
+        ]:
+            self.assertFalse(_looks_like_narrow_scope_request(msg), msg)
+
+    def test_rule_is_appended_last_for_recency(self):
+        """규칙은 프롬프트 맨 끝에 와야 한다 (recency로 준수도 확보)."""
+        from app.domains.planning.roadmap_chat import _CONDITIONAL_RULES, _build_system_prompt
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        db = sessionmaker(bind=engine)()
+        user = User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(CourseRoadmap(id=1, user_id=1))
+        db.commit()
+
+        prompt, rules = _build_system_prompt(db, user, "이거만 옮겨주세요")
+        self.assertIn("narrow_scope_request", rules)
+        self.assertEqual("narrow_scope_request", rules[-1])
+        self.assertTrue(prompt.rstrip().endswith(
+            _CONDITIONAL_RULES["narrow_scope_request"].rstrip()
+        ))
+
+        _, rules_broad = _build_system_prompt(db, user, "수강계획 추천해줘")
+        self.assertNotIn("narrow_scope_request", rules_broad)
+
+
+class CareerMismatchProbeTest(unittest.TestCase):
+    """`_career_looks_mismatched` — 진로-전공 mismatch 규칙을 붙일지 판정하는 probe.
+
+    이 규칙은 "부전공/복수전공을 능동적으로 제안해라"는 강한 지시라, 진로와 전공이 잘 맞는
+    학생에게까지 붙으면 불필요한 권유를 유발하고 프롬프트 fatigue로 다른 규칙의 준수도를
+    떨어뜨린다. 옛 구현은 "진로 목표가 있고 부·복수전공이 없으면" 전부 붙였다.
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_user(self, db, career_goal, dept_id=10, course_names=()):
+        db.add(School(id=1, name="부산대학교"))
+        db.add(College(id=1, school_id=1, name="테스트대학"))
+        db.add(Department(id=dept_id, college_id=1, name="테스트학과"))
+        db.flush()
+        for i, name in enumerate(course_names):
+            db.add(Course(id=900 + i, course_name=name, department_id=dept_id,
+                          category="전공선택", credits=3, year="2", semester="1"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=dept_id, career_goal=career_goal)
+        db.add(user)
+        db.flush()
+        return user
+
+    def probe(self, career_goal, course_names):
+        db = self.make_db()
+        user = self.make_user(db, career_goal, course_names=course_names)
+        return roadmap_chat_mod._career_looks_mismatched(db, user)
+
+    def test_career_keywords_absent_from_department_is_mismatch(self):
+        # 국문학과 커리큘럼 + 백엔드 진로 → 규칙이 붙어야 한다 (골든 케이스 14)
+        self.assertTrue(self.probe("백엔드 개발자", ["현대문학의이해", "국어학개론"]))
+
+    def test_career_keywords_present_in_department_is_not_mismatch(self):
+        # 정컴 커리큘럼 + 백엔드 진로 → 잘 맞으므로 규칙을 붙이지 않는다
+        self.assertFalse(self.probe("백엔드 개발자", ["데이터베이스", "운영체제", "컴퓨터네트워크"]))
+
+    def test_unknown_career_group_never_fires(self):
+        # 알려진 진로군에 안 걸리면 판단 근거가 없다 → mismatch로 단정하지 않는다
+        self.assertFalse(self.probe("자동차 엔지니어", ["현대문학의이해", "국어학개론"]))
+
+    def test_loose_alias_is_rescued_by_course_name_overlap(self):
+        # "재무분석가"는 '분석' 때문에 data 진로군에 걸리지만, 경영학과에 '재무관리'가
+        # 있으므로 mismatch가 아니다 — 진로 문구와 과목명의 2글자 겹침으로 구제한다
+        self.assertFalse(self.probe("재무분석가", ["재무관리", "회계원리", "투자론"]))
+
+    def test_empty_catalog_is_not_treated_as_mismatch(self):
+        # 학과 개설과목 데이터가 아직 없는 상태를 mismatch로 오인하면 안 된다
+        self.assertFalse(self.probe("백엔드 개발자", []))
+
+    def test_description_also_counts_as_alignment_evidence(self):
+        # 과목명에 키워드가 없어도 교과목개요에 있으면 정합으로 본다
+        db = self.make_db()
+        db.add(School(id=1, name="부산대학교"))
+        db.add(College(id=1, school_id=1, name="테스트대학"))
+        db.add(Department(id=10, college_id=1, name="테스트학과"))
+        db.flush()
+        db.add(Course(id=901, course_name="정보처리특론", department_id=10,
+                      category="전공선택", credits=3, year="3", semester="1",
+                      description="서버 구축과 데이터베이스 설계를 다룬다."))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, career_goal="백엔드 개발자")
+        db.add(user)
+        db.flush()
+        self.assertFalse(roadmap_chat_mod._career_looks_mismatched(db, user))
 
 
 if __name__ == "__main__":

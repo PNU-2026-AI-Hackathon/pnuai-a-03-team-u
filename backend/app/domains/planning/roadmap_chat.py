@@ -305,6 +305,16 @@ _CONDITIONAL_RULES: dict[str, str] = {
   없이는 도구가 이수 완료 재추천으로 거절한다. 자격 없는 과목(retake_candidates에
   없음 = B- 이상)에 억지로 is_retake 넘기면 도구가 거절.""",
 
+    "narrow_scope_request": """
+- **이번 요청은 범위가 좁다 — 요청한 것 하나만 처리해라**: 사용자가 대상을 콕 집고
+  "그것만"류 표현으로 범위를 못박았다. 그 항목에 대한 `propose_change` **딱 하나만**
+  호출하고 바로 `finish_response`로 끝내라.
+  - 같은 학기에 다른 항목이 보여도 건드리지 마라. 묶어서 옮기지 마라.
+  - 물어보지도 않은 과목 추천·재수강 권유·졸업요건 브리핑을 덧붙이지 마라.
+  - 관련 조언이 떠오르면 제안(propose_change) 대신 finish_response 문장 한 줄로만 언급해라.
+  실제 관측: "데이터베이스만 옮겨줘"에 컴퓨터네트워크까지 같이 옮겨서 사용자가 요청하지
+  않은 변경이 승인 대기에 올라갔다.""",
+
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
   이미 이수한 세부영역과 미이수 세부영역이 프로필 블록에 노출돼 있다. **미이수 세부영역
@@ -314,7 +324,80 @@ _CONDITIONAL_RULES: dict[str, str] = {
 }
 
 
-def _select_applicable_rules(db: Session, user: User) -> list[str]:
+def _career_looks_mismatched(db: Session, user: User) -> bool:
+    """진로 목표가 주전공 학과 커리큘럼과 동떨어져 보이는지 판정하는 cheap probe.
+
+    판정: 진로 문구가 알려진 진로군(`CAREER_ALIASES`)에 걸리면, 그 진로군 키워드에
+    해당하는 과목이 학생의 주전공 학과 개설과목에 **하나도 없을 때만** mismatch로 본다.
+    진로군에 안 걸리면(예: "재무분석가", "자동차 엔지니어") 판단 근거가 없으므로 False —
+    모르는 걸 mismatch로 단정하지 않는다.
+
+    이전 구현은 "진로 목표가 있고 부·복수전공이 없으면" 무조건 mismatch 규칙을 붙였다.
+    그래서 정컴 학생 + "백엔드 개발자"처럼 완벽히 일치하는 경우에도 매 대화마다 "부전공/
+    복수전공을 제안해라"는 강한 지시가 시스템 프롬프트에 실렸다 — 불필요한 부전공 권유를
+    유발하고, 프롬프트 fatigue로 다른 규칙의 준수도까지 떨어뜨린다
+    (`docs/backend/...`/골든 하니스 2026-08 관측).
+    """
+    if user.department_id is None or not user.career_goal:
+        return False
+
+    from app.ai.rag.career_keywords import CAREER_KEYWORDS, career_alias_groups
+
+    career = user.career_goal.strip()
+    groups = career_alias_groups(career)
+    if not groups:
+        return False
+
+    rows = db.execute(
+        select(Course.course_name, Course.description).where(
+            Course.department_id == user.department_id
+        )
+    ).all()
+    if not rows:
+        # 학과 개설과목 데이터가 없으면 아무것도 판정할 수 없다. 데이터 공백을
+        # mismatch로 오인해서 엉뚱한 부전공 권유를 하지 않는다.
+        return False
+
+    haystack = " ".join(f"{name or ''} {desc or ''}" for name, desc in rows).lower()
+
+    # 신호 1 — 진로군 키워드가 학과 개설과목에 등장하는가
+    if any(kw.lower() in haystack for kw in {k for g in groups for k in CAREER_KEYWORDS[g]}):
+        return False
+
+    # 신호 2 — 진로 문구 자체가 과목명과 겹치는가 (2글자 단위).
+    # alias가 느슨해서 생기는 오탐을 잡는다: "재무분석가"는 '분석' 때문에 data 진로군에
+    # 걸리지만, 경영학과에 '재무관리'·'기업재무'가 있으므로 mismatch가 아니다.
+    bigrams = {career[i:i + 2] for i in range(len(career) - 1) if not career[i:i + 2].isspace()}
+    if any(bg.lower() in haystack for bg in bigrams if len(bg.strip()) == 2):
+        return False
+
+    return True
+
+
+# "이것만 해줘"류 범위 한정 표현. 조사·어미 변형까지 다 잡으려 하지 않고, 오탐이 거의
+# 없는 명확한 표현만 둔다 — 넓은 요청에 이 규칙이 잘못 붙으면 정상적인 다중 추천이 막힌다.
+_NARROW_SCOPE_MARKERS = (
+    "그것만", "그거만", "이것만", "이거만", "하나만", "한 개만", "딱 하나",
+    "그 과목만", "이 과목만", "다른 건 건드리지", "다른건 건드리지",
+    "다른 건 그대로", "추가 추천은 필요 없", "추천은 안 해도",
+)
+
+
+def _looks_like_narrow_scope_request(message: str | None) -> bool:
+    """사용자 메시지가 "이것만 처리해줘"라고 범위를 못박았는지.
+
+    학생 DB 상태가 아니라 이번 턴 메시지로만 판정하는 유일한 조건부 규칙이다.
+    CORE에도 같은 취지의 규칙이 있지만 긴 프롬프트 뒤쪽에 묻혀 준수도가 낮았다
+    (골든 케이스 26에서 N=3 중 2회 위반: "데이터베이스만 옮겨줘"에 컴퓨터네트워크까지
+    같이 이동). 신호가 명확할 때만 프롬프트 끝에 짧고 강한 규칙을 덧붙인다.
+    """
+    if not message:
+        return False
+    compact = message.replace(" ", "")
+    return any(marker.replace(" ", "") in compact for marker in _NARROW_SCOPE_MARKERS)
+
+
+def _select_applicable_rules(db: Session, user: User, message: str | None = None) -> list[str]:
     """학생 상태를 cheap probe로 확인해 활성화할 조건부 규칙 키 목록 반환.
 
     각 probe는 SQL COUNT 등 가벼운 쿼리만. 이미 계산 완료된 값(예: critical_missing)
@@ -334,8 +417,8 @@ def _select_applicable_rules(db: Session, user: User) -> list[str]:
     has_non_primary = bool(non_primary_count)
     if has_non_primary:
         applicable.append("non_primary_programs")
-    elif user.career_goal:
-        # 진로는 있는데 non-primary 없음 → mismatch 가능성 (LLM이 실제 판단)
+    elif _career_looks_mismatched(db, user):
+        # 진로군 키워드에 맞는 과목이 주전공 학과에 하나도 없을 때만 (probe 주석 참고).
         applicable.append("career_dept_mismatch")
 
     # 2. 편입생 (admission_type)
@@ -343,8 +426,23 @@ def _select_applicable_rules(db: Session, user: User) -> list[str]:
         applicable.append("transfer_student")
 
     # 3. 엇학기 (SCR '입학전성적' 없이 curriculum_year와 실제 이수 순번 misalign)
-    #    간이 판정: SCR count > 0 이고 최신 SCR의 year_taken이 curriculum_year + 4년 이상
-    #    지났으면 휴학 이력 가능성. 확정은 어렵지만 프롬프트에 힌트만 노출하는 정도라 넉넉히.
+    #
+    #    ⚠️ 이 판정은 현재 **사실상 죽어 있다**. 조건이 "최신 SCR 연도 - curriculum_year >= 4"
+    #    인데, 이건 엇학기가 아니라 "입학한 지 오래됐나"를 재는 것이다. 정작 이 규칙이 필요한
+    #    대상(한 학기 휴학한 학생)은 gap이 2~3이라 걸리지 않는다 — 골든 케이스 10
+    #    (2022 입학, 2024-2 휴학)이 그래서 규칙을 한 번도 못 받고 3/3 실패한다.
+    #
+    #    2026-08-13에 고치려다 되돌렸다. 조사 결과 두 가지가 걸림돌이다:
+    #    (a) `project_curriculum_term`은 미래 학기에 대해 "쉬지 않고 다닌다"고 가정하고
+    #        마지막 기록에 달력 거리를 더한다. 그래서 "다음 학기의 커리큘럼 좌표"와
+    #        "쉬지 않았을 때의 좌표"는 **구조적으로 항상 같아진다** — 비교 근거가 안 된다.
+    #    (b) 올바른 지표는 (이수한 정규 학기 수) < (입학 후 경과 학기 수)인데, 이걸 적용하면
+    #        골든 페르소나 7개가 엇학기로 잡힌다. 페르소나 데이터가 자기모순이기 때문이다 —
+    #        예: 케이스 02는 "3학년까지 다 이수" 설정인데 이수 기록이 2학기치뿐이고
+    #        전부 curriculum_year(2024)보다 뒤인 2025년으로 찍혀 있다.
+    #
+    #    → 제대로 고치려면 페르소나의 이수 기록 연도부터 정합하게 만들고(21개 케이스 데이터
+    #      작업), 그 뒤에 위 (b) 지표로 교체한 다음 N=3 스윕으로 검증해야 한다.
     scr_years = db.scalars(
         select(StudentCourseRecord.year).where(
             StudentCourseRecord.user_id == user.id,
@@ -396,14 +494,21 @@ def _select_applicable_rules(db: Session, user: User) -> list[str]:
     if has_liberal:
         applicable.append("liberal_area_partial")
 
+    # 6. 범위 한정 요청 — 유일하게 DB가 아니라 이번 턴 메시지로 판정한다.
+    #    맨 끝에 붙여서 프롬프트 마지막 줄이 되게 한다 (recency).
+    if _looks_like_narrow_scope_request(message):
+        applicable.append("narrow_scope_request")
+
     return applicable
 
 
-def _build_system_prompt(db: Session, user: User) -> tuple[str, list[str]]:
+def _build_system_prompt(
+    db: Session, user: User, message: str | None = None
+) -> tuple[str, list[str]]:
     """core + applicable conditional rules + student context block 결합한 최종 시스템
     프롬프트. 두 번째 리턴은 적용된 rule 키 목록 (관측·디버깅용, 프롬프트 안 실림).
     """
-    rules = _select_applicable_rules(db, user)
+    rules = _select_applicable_rules(db, user, message)
     conditional_text = "".join(_CONDITIONAL_RULES[k] for k in rules)
     return _CORE_PROMPT + conditional_text, rules
 
@@ -759,8 +864,9 @@ def _compute_retake_candidates(db: Session, user: User) -> list[dict]:
 
     LLM에게는 **권유 후보**로 노출한다. 학생이 명시적으로 GPA 개선/재수강 관심을
     표할 때만 이 목록에서 후보를 제시하고, 그렇지 않으면 매번 강권하지 마라.
-    실제 재수강 등록은 별도 UI 흐름 (지금 propose_change로 create하면 도구 단
-    completed_courses_guard가 막는다 — 재수강 propose는 후속 이슈).
+    사용자가 특정 과목을 콕 집어 재수강을 요청하면 `propose_change(..., is_retake=True)`로
+    로드맵에 넣을 수 있다 — 그 플래그가 있어야만 completed_courses_guard를 우회하고,
+    이 목록에 없는 과목(B- 이상)에 넘기면 도구가 거절한다. 골든 케이스 22가 이 흐름을 지킨다.
     """
 
     def _norm(n: str | None) -> str:
@@ -1604,6 +1710,28 @@ class _ToolContext:
                 )
             }
 
+        if action == "create" and course_id is None:
+            # 마지막 관문. course_id 없는 create는 항상 빈 항목을 만든다: 이 도구는
+            # course_name을 받지 않고 PendingRoadmapChange에도 그 컬럼이 없어서,
+            # apply_pending_changes가 이름·학점·이수구분을 전부 Course에서 가져온다
+            # (`course_name=course.course_name if course else None`). 승인하면 과목명도
+            # 학점도 없는 로드맵 행이 생기고 요건 집계에도 안 잡힌다.
+            #
+            # 더 나쁜 건, 이수·중복·재수강·계절수업 가드가 전부 `course_obj is not None`
+            # 분기 안에 있어서 통째로 우회된다는 점이다 — 골든 케이스 22에서 실제로
+            # `is_retake=True, course_id=None`이 모든 검증을 지나쳐 빈 항목을 만들었다.
+            #
+            # 위치가 마지막인 이유: 과거 학기·학년·학점 상한처럼 더 구체적인 위반이
+            # 있으면 그 에러를 먼저 보여주는 게 LLM이 고치기 쉽다.
+            return {
+                "error": (
+                    "create에는 course_id가 필요합니다. search_courses로 대상 과목을 먼저 "
+                    "찾아 course_id를 확인한 뒤 다시 호출하세요. 이미 이수한 과목을 재수강 "
+                    "제안하는 경우에도 마찬가지입니다 — retake_candidates의 과목명으로 "
+                    "search_courses를 호출해 course_id를 얻은 뒤 is_retake=True와 함께 넘기세요."
+                )
+            }
+
         change = PendingRoadmapChange(
             roadmap_id=self.roadmap.id,
             item_id=item_id,
@@ -1908,7 +2036,9 @@ def run_roadmap_chat(
         with trace.span("load_history_and_context", as_type="retriever"):
             history = _load_history(db, session.id)
             context_block = _build_student_context_block(db, user)
-            base_prompt, applied_rules = _build_system_prompt(db, user)
+            # message를 넘기는 이유: 범위 한정 요청("그것만요") 규칙은 학생 DB 상태가
+            # 아니라 이번 턴 문장으로만 판정된다.
+            base_prompt, applied_rules = _build_system_prompt(db, user, message)
 
         system_prompt = base_prompt + "\n\n" + context_block
         messages: list = [SystemMessage(content=system_prompt)]
@@ -2042,7 +2172,15 @@ def run_roadmap_chat(
         trace.score("tool_calls", non_finish_tool_calls)
         trace.score("pending_changes", len(ctx.pending_changes))
 
-    return {"reply": final_text, "pending_changes": ctx.pending_changes, "session_id": session.id}
+    return {
+        "reply": final_text,
+        "pending_changes": ctx.pending_changes,
+        "session_id": session.id,
+        # 아래 둘은 API 응답에는 안 쓰이고 평가 하니스(tests/eval)가 읽는다. timetable_chat의
+        # 반환 형태와 맞춰 두 에이전트를 같은 기준으로 채점할 수 있게 한다.
+        "finished": finished,          # finish_response로 정상 종료했는지 (폴백 요약이면 False)
+        "iterations": iterations_used,  # LLM 왕복 횟수 (도구 호출 수 아님)
+    }
 
 
 def apply_pending_changes(
