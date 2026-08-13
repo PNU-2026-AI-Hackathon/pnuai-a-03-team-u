@@ -229,7 +229,13 @@ def _upsert_gr(
     existing = db.scalars(
         select(GraduationRequirement).where(
             GraduationRequirement.department_id == dept_id,
-            GraduationRequirement.major_id == major_id,
+            # major_id가 None일 때 `== None`은 SQL에서 `= NULL`이 되어 절대 참이 아니다.
+            # 그래서 학과 단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT돼
+            # 재실행할 때마다 중복이 쌓였다 — 간호학과 dual 2026 중복(2026-08-13 정리)의
+            # 실제 원인이다. is_(None)으로 분기해야 멱등해진다.
+            GraduationRequirement.major_id.is_(None)
+            if major_id is None
+            else GraduationRequirement.major_id == major_id,
             GraduationRequirement.program_type == program_type,
             GraduationRequirement.curriculum_year == CURRICULUM_YEAR,
         )
@@ -264,7 +270,10 @@ def _upsert_pc(
     existing = db.scalars(
         select(ProgramCourse).where(
             ProgramCourse.department_id == dept_id,
-            ProgramCourse.major_id == major_id,
+            # 위 _upsert_gr과 같은 NULL 비교 함정 — `== None`은 `= NULL`이라 절대 안 걸린다.
+            ProgramCourse.major_id.is_(None)
+            if major_id is None
+            else ProgramCourse.major_id == major_id,
             ProgramCourse.course_id == course_id,
             ProgramCourse.curriculum_year == CURRICULUM_YEAR,
         )

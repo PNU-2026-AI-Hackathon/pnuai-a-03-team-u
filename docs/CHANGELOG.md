@@ -35,6 +35,38 @@
   id 순으로 하나를 고르되 `warnings`에 "행이 N개 있어 id=X를 사용함"을 남겨 조용히
   달라지지 않게 했다. 감시는 `scripts/report_duplicate_requirements.py`(read-only).
 
+- **[fix] ⚠️ 시드 스크립트의 NULL 비교 함정 — 중복의 진짜 원인 (`scripts/seed_*.py` 4개)**:
+  유니크 제약을 걸기 전 영향 범위를 확인하다 **간호학과 중복이 왜 생겼는지**를 찾았다.
+  네 스크립트가 `GraduationRequirement.major_id == major_id`로 기존 행을 조회하는데,
+  `major_id`가 `None`이면 SQL이 `major_id = NULL`이 되어 **절대 참이 아니다**. 그래서 학과
+  단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT됐다 — 재실행할 때마다
+  중복이 쌓이는 구조였다. 대상이 `major_id NULL`인 dual/minor/융합 요건 **199행**이다.
+  `seed_sw_convergence_programs.py`만 올바른 패턴(`.is_(None)` 분기)을 쓰고 있었고,
+  같은 파일 안에서도 한 곳은 맞고(832행) 한 곳은 틀린(941행) 상태였다.
+  → 6개 지점 전부 `.is_(None)` 분기로 통일. 수정 후 전 스크립트 dry-run에서 **신규 0건**
+  (`seed_dual_and_special`은 130행이 전부 unchanged). `backfill_sw_convergence_rules`의
+  insert=2는 고고학과·지리교육과에 interdisciplinary 행이 실제로 없는 정상 누락이다.
+
+- **[feat] graduation_requirements 스코프 유니크 인덱스 (Supabase 반영 완료)**:
+  ```sql
+  CREATE UNIQUE INDEX uq_graduation_requirements_scope
+      ON graduation_requirements (program_type, department_id, major_id, curriculum_year)
+      NULLS NOT DISTINCT;
+  ```
+  **`NULLS NOT DISTINCT`가 핵심이다.** Postgres에서 `NULL = NULL`은 참이 아니라 NULL이라
+  평범한 UNIQUE 인덱스는 NULL이 낀 행을 전부 "서로 다르다"고 보고 통과시킨다. 그런데
+  `major_id = NULL`인 행이 363행 중 290행(79%)이고 정작 중복이 났던 간호학과 행도
+  NULL이었다 — **평범한 UNIQUE로 걸었으면 제약을 걸어놓고 79%가 무방비인 상태**가 됐다.
+  임시 테이블로 두 방식을 실제 재현해 확인했다. 여기서 NULL은 "모름"이 아니라 "이 학과
+  전체에 공통 적용"이라는 확정적 의미라 의미상으로도 맞다. PostgreSQL 15+ 필요(운영 17.6).
+
+  운영 반영은 `scripts/apply_graduation_requirement_unique_index.py`로 했다 —
+  Supabase의 `alembic_version`(8f3c21b47ae0)이 로컬 migrations에 없어 `alembic upgrade`가
+  실패하는 알려진 상황이라, 신규 DB용 마이그레이션(`c3d4e5f6a7b8`)은 그대로 두고 운영에는
+  같은 DDL만 직접 반영했다. 스크립트가 반영 전에 PG버전·기존 중복·인덱스 존재를 검사하고,
+  `--drop`으로 되돌릴 수 있다.
+  검증: major_id=NULL 중복 삽입이 IntegrityError로 거부되고, 다른 연도는 정상 삽입됨.
+
 - **[fix] 전공 단위 요건이 없을 때 학과 단위로 폴백 (`graduation_progress._find_requirement`)**:
   "유니크 제약을 왜 거는가"를 설명하다 발견했다. `graduation_requirements.major_id = NULL`은
   "모름"이 아니라 **"이 학과 전체에 공통 적용"** 이라는 확정적 의미인데(전공이 있는 학과인데

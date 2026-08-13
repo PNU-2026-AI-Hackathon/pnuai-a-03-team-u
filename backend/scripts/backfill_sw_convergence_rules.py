@@ -110,7 +110,13 @@ def main():
 
             q = select(GraduationRequirement).where(
                 GraduationRequirement.department_id == dept_id,
-                GraduationRequirement.major_id == major_id,
+                # major_id가 None일 때 `== None`은 SQL에서 `= NULL`이 되어 절대 참이 아니다.
+                # 그래서 학과 단위 행(major_id IS NULL)은 조회에 안 걸리고 매번 새로 INSERT돼
+                # 재실행할 때마다 중복이 쌓였다 — 간호학과 dual 2026 중복(2026-08-13 정리)의
+                # 실제 원인이다. is_(None)으로 분기해야 멱등해진다.
+                GraduationRequirement.major_id.is_(None)
+                if major_id is None
+                else GraduationRequirement.major_id == major_id,
                 GraduationRequirement.program_type == "interdisciplinary",
                 GraduationRequirement.curriculum_year == curr_year,
             )

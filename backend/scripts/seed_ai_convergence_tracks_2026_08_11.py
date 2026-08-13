@@ -108,7 +108,12 @@ def main() -> int:
             gr = db.scalars(
                 select(GraduationRequirement).where(
                     GraduationRequirement.department_id == dept_id,
-                    GraduationRequirement.major_id == major_id,
+                    # 현재 _TRACKS는 major_id가 전부 채워져 있어 발동하지 않지만,
+                    # `== None`은 `= NULL`이라 학과 단위 트랙이 추가되면 조용히
+                    # "missing"으로 빠진다(업데이트가 안 됨). 미리 막아둔다.
+                    GraduationRequirement.major_id.is_(None)
+                    if major_id is None
+                    else GraduationRequirement.major_id == major_id,
                     GraduationRequirement.program_type == "interdisciplinary",
                 )
             ).first()
