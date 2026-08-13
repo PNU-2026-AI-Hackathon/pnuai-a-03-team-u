@@ -14,8 +14,12 @@ export type RoadmapItem = {
   id: number;
   course_id: number | null;
   planned_grade: number | null;
+  // 달력 학기 — 성적표·개설 강좌와 같은 기준. "2026년 1학기".
   planned_year: string | null;
   planned_semester: string | null;
+  // 커리큘럼 학기 — 로드맵의 학년 슬롯 기준. "3학년 2학기"의 2학기.
+  // 휴학·편입이 있으면 달력 학기와 다르다. 계절수업/입학전성적은 null.
+  curriculum_semester: string | null;
   course_name: string | null;
   department_name: string | null;
   major_name: string | null;
@@ -37,11 +41,16 @@ export type Roadmap = {
   items: RoadmapItem[];
 };
 
+/**
+ * 학년 슬롯에 과목을 놓을 때는 planned_grade + curriculum_semester만 보내면 된다.
+ * 달력 학기는 서버가 이수 기록에서 환산해 채운다(roadmaps.py의 _fill_missing_term_axis).
+ */
 export type RoadmapItemPayload = {
   course_id: number;
   planned_grade?: number | null;
   planned_year?: string | null;
   planned_semester?: string | null;
+  curriculum_semester?: string | null;
   reason?: string | null;
 };
 
@@ -50,6 +59,7 @@ export type RoadmapItemUpdatePayload = {
   planned_grade?: number | null;
   planned_year?: string | null;
   planned_semester?: string | null;
+  curriculum_semester?: string | null;
   status?: string;
   is_confirmed?: boolean;
   reason?: string | null;

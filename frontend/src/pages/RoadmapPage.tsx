@@ -1200,8 +1200,11 @@ type ApiTimelineTerm = {
   term: string;
   period: string;
   grade: number | null;
+  /** 달력 축. 학년 슬롯은 항목이 하나라도 들어와야 채워진다(빈 미래 학기는 null). */
   year: string | null;
   semester: string | null;
+  /** 커리큘럼 축. 학년 슬롯이면 항상 있고, "기타 이수 내역" 칸이면 null. */
+  curriculumSemester: string | null;
   items: RoadmapItem[];
 };
 
@@ -1289,6 +1292,7 @@ function buildApiTimeline(
       grade: null,
       year: null,
       semester: null,
+      curriculumSemester: null,
       items: [],
     });
   }
@@ -1300,8 +1304,11 @@ function buildApiTimeline(
         term: `${grade}학년 ${semester}`,
         period: "계획 없음",
         grade,
+        // 이 슬롯이 달력상 언제인지는 항목이 들어와야 알 수 있다 — 휴학하면
+        // 4학년 1학기가 달력 2학기일 수도 있어서 여기서 추측하지 않는다.
         year: null,
-        semester,
+        semester: null,
+        curriculumSemester: semester,
         items: [],
       });
     }
@@ -1309,14 +1316,19 @@ function buildApiTimeline(
 
   const terms = new Map(regularTerms.map((term) => [term.key, term]));
   items.filter((item) => item.status !== "dropped").forEach((item) => {
+    // 학년 슬롯은 커리큘럼 축(planned_grade + curriculum_semester)으로 잡고,
+    // 그 밖의 칸 이름은 달력 축(planned_year + planned_semester)으로 쓴다.
+    // 휴학·편입 학생은 둘이 어긋난다 — 2026년 1학기가 커리큘럼상 3학년 2학기.
     const semester = normalizeSemester(item.planned_semester);
+    const curriculumSemester = normalizeSemester(item.curriculum_semester);
     // 입학전성적은 planned_grade가 비어 있고 semester 원본이 그대로 남아 있다.
     // 편입생만 전용 칸을 갖는다. 조기이수 학점이 있는 신입생은 학년 흐름을
     // 흐트러뜨리지 않도록 아래 "기타 이수 내역"으로 보낸다.
     const isPreAdmission = isPreAdmissionSemester(item.planned_semester);
     const preAdmissionKey = isTransfer && isPreAdmission ? PRE_ADMISSION_KEY : null;
-    const regularKey = item.planned_grade && (semester === "1학기" || semester === "2학기")
-      ? `${item.planned_grade}-${semester}`
+    const regularKey = item.planned_grade
+      && (curriculumSemester === "1학기" || curriculumSemester === "2학기")
+      ? `${item.planned_grade}-${curriculumSemester}`
       : null;
     const key = preAdmissionKey ?? regularKey ?? `extra-${item.planned_year ?? ""}-${semester ?? "미정"}`;
     const existing = terms.get(key);
@@ -1324,6 +1336,7 @@ function buildApiTimeline(
     if (existing) {
       existing.items.push(item);
       if (!existing.year && item.planned_year) existing.year = item.planned_year;
+      if (!existing.semester && semester) existing.semester = semester;
       return;
     }
 
@@ -1340,6 +1353,7 @@ function buildApiTimeline(
       grade: item.planned_grade,
       year: item.planned_year,
       semester,
+      curriculumSemester: curriculumSemester ?? null,
       items: [item],
     });
   });
@@ -1373,8 +1387,10 @@ function buildApiRequirementGroups(program: GraduationProgram | null, items: Roa
         .map((item) => ({
           name: item.course_name ?? "과목명 없음",
           credits: item.credits ?? 0,
+          // "3학년 2학기"는 커리큘럼 축이라 curriculum_semester를 써야 한다.
+          // 학년을 모르면 달력 축("2026 1학기")으로 떨어뜨린다.
           term: item.planned_grade
-            ? `${item.planned_grade}학년 ${normalizeSemester(item.planned_semester) ?? "학기 미정"}`
+            ? `${item.planned_grade}학년 ${normalizeSemester(item.curriculum_semester) ?? "학기 미정"}`
             : [item.planned_year, normalizeSemester(item.planned_semester)].filter(Boolean).join(" ") || "학기 미정",
           status: apiStatusLabels[item.status] ?? "이수 예정",
         })),
@@ -1682,11 +1698,14 @@ function ConnectedRoadmapPage() {
   function moveDraftItem(itemId: number, targetTermKey: string) {
     const target = timeline.find((term) => term.key === targetTermKey);
     if (!target || !roadmap) return;
+    // 화면이 아는 건 커리큘럼 슬롯뿐이다. 달력 학기는 저장 시 서버가 이수
+    // 기록에서 환산하므로, 여기 값은 저장 전까지만 쓰는 낙관적 표시값이다.
     setDraftItems((current) => current?.map((item) => item.id === itemId ? {
       ...item,
       planned_grade: target.grade,
       planned_year: target.year ?? plannedYearForGrade(roadmap, user?.student_id, target.grade),
       planned_semester: target.semester,
+      curriculum_semester: target.curriculumSemester,
     } : item) ?? null);
     setRoadmapEditError("");
   }
@@ -1717,6 +1736,7 @@ function ConnectedRoadmapPage() {
       planned_grade: term.grade,
       planned_year: term.year ?? plannedYearForGrade(roadmap, user?.student_id, term.grade),
       planned_semester: term.semester,
+      curriculum_semester: term.curriculumSemester,
       course_name: selectedCourse.course_name,
       department_name: null,
       major_name: null,
@@ -1747,8 +1767,7 @@ function ConnectedRoadmapPage() {
       return original && (
         original.course_id !== item.course_id
         || original.planned_grade !== item.planned_grade
-        || original.planned_year !== item.planned_year
-        || normalizeSemester(original.planned_semester) !== normalizeSemester(item.planned_semester)
+        || normalizeSemester(original.curriculum_semester) !== normalizeSemester(item.curriculum_semester)
       );
     });
 
@@ -1757,18 +1776,18 @@ function ConnectedRoadmapPage() {
         ...deletedItems.map((item) => deleteRoadmapItem(roadmap.id, item.id)),
         ...createdItems.map((item) => {
           if (!item.course_id) throw new Error("선택되지 않은 과목이 있습니다.");
+          // 커리큘럼 축만 보낸다. 달력 학기를 같이 보내면 화면이 추측한 값이
+          // 서버의 환산값을 덮어써서, 휴학 학생의 학기가 다시 어긋난다.
           return createRoadmapItem(roadmap.id, {
             course_id: item.course_id,
             planned_grade: item.planned_grade,
-            planned_year: item.planned_year,
-            planned_semester: item.planned_semester,
+            curriculum_semester: item.curriculum_semester,
           });
         }),
         ...updatedItems.map((item) => updateRoadmapItem(roadmap.id, item.id, {
           course_id: item.course_id ?? undefined,
           planned_grade: item.planned_grade,
-          planned_year: item.planned_year,
-          planned_semester: item.planned_semester,
+          curriculum_semester: item.curriculum_semester,
         })),
       ]);
       await reloadRoadmap();
@@ -2005,7 +2024,7 @@ function ConnectedRoadmapPage() {
                             <span className="semester-course-status status-completed">이수 완료</span>
                           ) : (
                             <>
-                              <label><span>배치 학기</span><select value={term.key} onChange={(event) => moveDraftItem(item.id, event.target.value)}>{timeline.filter((candidate) => candidate.grade && candidate.semester).map((candidate) => <option value={candidate.key} key={candidate.key}>{candidate.term}</option>)}</select></label>
+                              <label><span>배치 학기</span><select value={term.key} onChange={(event) => moveDraftItem(item.id, event.target.value)}>{timeline.filter((candidate) => candidate.grade && candidate.curriculumSemester).map((candidate) => <option value={candidate.key} key={candidate.key}>{candidate.term}</option>)}</select></label>
                               <button className="delete-roadmap-item-button" type="button" aria-label={`${item.course_name ?? "과목"} 삭제`} title="과목 삭제" onClick={() => removeDraftItem(item)}><Trash2 size={16} aria-hidden="true" /></button>
                             </>
                           )}
@@ -2041,7 +2060,7 @@ function ConnectedRoadmapPage() {
                         </>
                       ) : null}
                     </ul>
-                    {isEditingRoadmap && term.grade && term.semester ? (
+                    {isEditingRoadmap && term.grade && term.curriculumSemester ? (
                       addingTerm === term.key ? (
                         <div className="add-roadmap-item-form api-course-picker">
                           <label className="semester-edit-name"><span>과목 검색</span><input value={courseQuery} type="search" autoComplete="off" placeholder="과목명을 2글자 이상 입력" onChange={(event) => { setCourseQuery(event.target.value); setSelectedCourse(null); }} /></label>
