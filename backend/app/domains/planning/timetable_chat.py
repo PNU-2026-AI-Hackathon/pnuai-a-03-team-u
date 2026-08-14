@@ -29,6 +29,7 @@ from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.models import StudentCourseRecord
+from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
     CourseRoadmap,
@@ -182,7 +183,7 @@ def _select_timetable_rules(db: Session, user: User, target_semester: str) -> li
         select(_func.count(UserAcademicProgram.id)).where(
             UserAcademicProgram.user_id == user.id,
             UserAcademicProgram.program_type != "primary",
-            UserAcademicProgram.status == "active",
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
         )
     ):
         applicable.append("non_primary_programs")
@@ -575,8 +576,8 @@ class _TimeTableToolContext:
             from app.domains.academics.models import UserAcademicProgram
             prog = self.db.scalars(
                 select(UserAcademicProgram).filter_by(
-                    user_id=self.user.id, program_type=program_type, status="active"
-                )
+                    user_id=self.user.id, program_type=program_type,
+                ).where(UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
             ).first()
             if prog is not None and prog.department_id is not None:
                 return prog.department_id, prog.major_id

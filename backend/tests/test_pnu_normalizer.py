@@ -22,6 +22,7 @@ from app.domains.academics.models import (
 )
 from app.domains.courses.models import Course  # noqa: F401 — SCR.course_id FK 해석용
 from app.domains.users.models import User
+from app.domains.academics.program_status import is_active_program_status
 from app.ingestion.normalizers.pnu_normalizer import (
     _grade_to_point,
     _normalize_category,
@@ -230,11 +231,10 @@ class MapStudentRecordTest(unittest.TestCase):
         self.assertEqual(4, db.get(User, 1).academic_year)
 
     def test_leave_of_absence_status_is_kept_verbatim(self):
-        """휴학이면 status가 'active'가 아니게 된다.
+        """휴학이면 status에 원문이 그대로 들어간다.
 
-        `compute_graduation_progress`는 status='active'만 집계하므로, 휴학생은 졸업요건
-        판정이 통째로 비게 된다. 현재 동작을 그대로 고정해두고, 정책 판단이 필요하면
-        여기 테스트가 먼저 깨지게 한다.
+        이 값 자체는 보존한다 — 판정 대상 여부는 `program_status.ACTIVE_PROGRAM_STATUSES`가
+        정하고, 휴학은 거기 포함된다(복학 예정이라 남은 요건을 알아야 한다).
         """
         db = self.make_db()
         program = map_student_record(db, 1, {
@@ -243,6 +243,17 @@ class MapStudentRecordTest(unittest.TestCase):
             "교육과정적용년도": "2024", "학적상태": "휴학",
         })
         self.assertEqual("휴학", program.status)
+        self.assertTrue(is_active_program_status(program.status))
+
+    def test_withdrawn_status_is_not_active(self):
+        """자퇴·제적은 학적이 없어진 것이라 판정 대상이 아니다."""
+        db = self.make_db()
+        program = map_student_record(db, 1, {
+            "소속학과": "정보의생명공학대학 정보컴퓨터공학부",
+            "교육과정적용년도": "2024", "학적상태": "자퇴",
+        })
+        self.assertEqual("자퇴", program.status)
+        self.assertFalse(is_active_program_status(program.status))
 
 
 class MapAcademicProgramRegistrationsTest(unittest.TestCase):

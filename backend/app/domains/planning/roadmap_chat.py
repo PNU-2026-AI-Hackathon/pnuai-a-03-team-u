@@ -59,6 +59,9 @@ MAX_TOOL_ITERATIONS = 8
 # 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
 # (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
 from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+from app.domains.academics.program_status import (
+    ACTIVE_PROGRAM_STATUSES, is_active_program_status,
+)
 
 _BALANCED_LIBERAL_AREAS = BALANCED_LIBERAL_AREAS
 
@@ -407,7 +410,7 @@ def _select_applicable_rules(db: Session, user: User, message: str | None = None
         select(func.count(UserAcademicProgram.id)).where(
             UserAcademicProgram.user_id == user.id,
             UserAcademicProgram.program_type != "primary",
-            UserAcademicProgram.status == "active",
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
         )
     )
     has_non_primary = bool(non_primary_count)
@@ -1128,7 +1131,8 @@ class _ToolContext:
         # 학생의 non-primary 프로그램 순회
         programs = self.db.scalars(
             select(UserAcademicProgram)
-            .where(UserAcademicProgram.user_id == self.user.id, UserAcademicProgram.status == "active")
+            .where(UserAcademicProgram.user_id == self.user.id,
+                   UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
             .where(UserAcademicProgram.program_type != "primary")
         ).all()
 
@@ -1360,8 +1364,8 @@ class _ToolContext:
         if program_type and program_type != "primary":
             target_prog = self.db.scalars(
                 select(UserAcademicProgram).filter_by(
-                    user_id=self.user.id, program_type=program_type, status="active"
-                )
+                    user_id=self.user.id, program_type=program_type,
+                ).where(UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
             ).first()
             if target_prog is None or target_prog.department_id is None:
                 return {"results": [], "note": f"{program_type} 프로그램이 학적에 없거나 학과 정보 부족."}
@@ -1869,7 +1873,8 @@ def _build_student_context_block(db: Session, user: User) -> str:
         if track_grs:
             enrolled_major_ids = {
                 p.major_id for p in programs
-                if p.program_type == "interdisciplinary" and p.status == "active"
+                if p.program_type == "interdisciplinary"
+                and is_active_program_status(p.status)
             }
             lines = []
             for g in track_grs:

@@ -182,6 +182,43 @@ class DepartmentLevelFallbackTest(_Base):
         self.assertFalse(progress.requirement_found)
 
 
+class LeaveOfAbsenceIsJudgedTest(_Base):
+    """휴학생도 졸업요건 판정을 받는지 (2026-08-14 정책 결정).
+
+    옛 구현은 `status == "active"`로만 걸러서, 포털이 '휴학'으로 내려준 학생은 로드맵·
+    시간표·졸업 진단 전부에서 판정이 통째로 비었다. 휴학은 학업을 그만둔 게 아니라 잠시
+    쉬는 것이라 오히려 "복학하면 뭐가 남았나"를 알아야 한다.
+    """
+
+    def _progress_with_status(self, status):
+        db = self.make_db()
+        prog = db.query(UserAcademicProgram).filter_by(user_id=1).one()
+        prog.status = status
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130,
+        ))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="자료구조",
+                                   category="전공필수", credits=3))
+        db.commit()
+        return compute_graduation_progress(db, 1)
+
+    def test_on_leave_student_is_judged(self):
+        results = self._progress_with_status("휴학")
+        self.assertEqual(1, len(results))
+        self.assertTrue(results[0].requirement_found)
+        self.assertEqual(130, results[0].required_total_credits)
+
+    def test_enrolled_and_default_statuses_are_judged(self):
+        for status in ("재학", "active"):
+            self.assertEqual(1, len(self._progress_with_status(status)), status)
+
+    def test_withdrawn_student_is_excluded(self):
+        """자퇴·제적·졸업은 판정 대상이 아니다."""
+        for status in ("자퇴", "제적", "졸업"):
+            self.assertEqual([], self._progress_with_status(status), status)
+
+
 class DuplicateRequirementRowTest(_Base):
     """같은 조건의 기준학점 행이 여럿일 때 죽지 않고 판정하는지.
 

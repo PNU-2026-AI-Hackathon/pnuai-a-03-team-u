@@ -14,6 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domains.academics.models import GraduationRequirement, StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 
 # StudentCourseRecord.category(성적표 원문 정규화 값) -> GraduationRequirement의
 # 기준학점 컬럼 매핑. "심화전공"은 우리 카테고리 체계에 없어 전공선택에 흡수된다.
@@ -179,7 +180,8 @@ def compute_graduation_progress(
     """사용자의 활성 학적 프로그램별로 기준학점 대비 이수학점/남은 학점을 계산한다."""
     programs_query = db.query(UserAcademicProgram).filter(
         UserAcademicProgram.user_id == user_id,
-        UserAcademicProgram.status == "active",
+        # 휴학생도 판정 대상이다 (program_status 정책 참고).
+        UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
     )
     if program_types:
         programs_query = programs_query.filter(UserAcademicProgram.program_type.in_(program_types))
