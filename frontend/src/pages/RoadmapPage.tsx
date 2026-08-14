@@ -17,6 +17,7 @@ import {
   getRoadmapConversation,
   listRoadmapSessions,
   searchCourses,
+  updateRoadmap,
   updateRoadmapItem,
 } from "../api/roadmaps";
 import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapChatSession, RoadmapConversation, RoadmapItem } from "../api/roadmaps";
@@ -1442,6 +1443,12 @@ function ConnectedRoadmapPage() {
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   /** 휴지통을 눌렀을 때 레일 안에 뜨는 삭제 확인 바. */
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  // 로드맵 메타(제목·목표 졸업연도) 인라인 편집. 항목 편집(draftItems)과는 별개다.
+  const [isMetaEditing, setIsMetaEditing] = useState(false);
+  const [metaTitleDraft, setMetaTitleDraft] = useState("");
+  const [metaTargetYearDraft, setMetaTargetYearDraft] = useState("");
+  const [isMetaSaving, setIsMetaSaving] = useState(false);
+  const [metaError, setMetaError] = useState("");
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
@@ -1456,6 +1463,38 @@ function ConnectedRoadmapPage() {
     const nextRoadmap = await getCurrentRoadmap();
     setRoadmap(nextRoadmap);
     return nextRoadmap;
+  }
+
+  function startMetaEditing() {
+    if (!roadmap) return;
+    setMetaTitleDraft(roadmap.title ?? "");
+    setMetaTargetYearDraft(roadmap.target_graduation_year ?? "");
+    setMetaError("");
+    setIsMetaEditing(true);
+  }
+
+  async function saveMetaEditing() {
+    if (!roadmap) return;
+    const targetYear = metaTargetYearDraft.trim();
+    if (targetYear && !/^\d{4}$/.test(targetYear)) {
+      setMetaError("목표 졸업연도는 4자리 연도로 입력해 주세요. 예: 2028");
+      return;
+    }
+    setIsMetaSaving(true);
+    setMetaError("");
+    try {
+      const updated = await updateRoadmap(roadmap.id, {
+        // 빈 제목은 null로 지워서 화면이 "전공 로드맵" 기본값으로 돌아가게 한다.
+        title: metaTitleDraft.trim() || null,
+        target_graduation_year: targetYear || null,
+      });
+      setRoadmap(updated);
+      setIsMetaEditing(false);
+    } catch (error) {
+      setMetaError(getApiErrorMessage(error, "로드맵 정보를 저장하지 못했습니다."));
+    } finally {
+      setIsMetaSaving(false);
+    }
   }
 
   /** 서버 대화 응답을 화면 상태로 옮긴다. 비어 있으면 안내 문구로 되돌린다. */
@@ -1950,7 +1989,44 @@ function ConnectedRoadmapPage() {
         </div>
         <div>
           <p className="eyebrow">로드맵</p>
-          <h2>{roadmapTitle}</h2>
+          {isMetaEditing ? (
+            <div className="roadmap-meta-editor">
+              <input
+                className="roadmap-meta-title-input"
+                value={metaTitleDraft}
+                onChange={(event) => setMetaTitleDraft(event.target.value)}
+                placeholder={`${user?.major ?? "전공"} 로드맵`}
+                maxLength={120}
+                disabled={isMetaSaving}
+              />
+              <input
+                className="roadmap-meta-year-input"
+                value={metaTargetYearDraft}
+                onChange={(event) => setMetaTargetYearDraft(event.target.value)}
+                placeholder="목표 졸업연도"
+                inputMode="numeric"
+                maxLength={4}
+                disabled={isMetaSaving}
+              />
+              <button type="button" onClick={() => void saveMetaEditing()} disabled={isMetaSaving} title="저장">
+                {isMetaSaving ? <LoaderCircle size={15} aria-hidden="true" /> : <Save size={15} aria-hidden="true" />}
+              </button>
+              <button type="button" onClick={() => setIsMetaEditing(false)} disabled={isMetaSaving} title="취소">
+                <X size={15} aria-hidden="true" />
+              </button>
+              {metaError ? <p className="roadmap-meta-error" role="alert">{metaError}</p> : null}
+            </div>
+          ) : (
+            <h2 className="roadmap-meta-title">
+              {roadmapTitle}
+              {roadmap.target_graduation_year ? (
+                <span className="roadmap-meta-target">{roadmap.target_graduation_year}년 졸업 목표</span>
+              ) : null}
+              <button className="roadmap-meta-edit-button" type="button" onClick={startMetaEditing} title="로드맵 이름·목표 졸업연도 수정" aria-label="로드맵 이름과 목표 졸업연도 수정">
+                <Pencil size={14} aria-hidden="true" />
+              </button>
+            </h2>
+          )}
           <p>{roadmap.summary || "졸업 요건과 앞으로 이수할 과목을 한 화면에서 관리합니다."}</p>
         </div>
         <div className="roadmap-head-tools">

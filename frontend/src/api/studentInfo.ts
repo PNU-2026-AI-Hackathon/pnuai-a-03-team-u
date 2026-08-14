@@ -175,3 +175,12 @@ export async function saveGraduationOverride(program: GraduationProgram) {
   });
   return data;
 }
+
+/** 수동 보정을 지우고 서버가 이수 기록으로 다시 계산한 값으로 돌아간다. */
+export async function clearGraduationOverride() {
+  if (isMockStudentDataEnabled) {
+    window.sessionStorage.removeItem("planUGraduationOverride");
+    return;
+  }
+  await apiClient.delete("/me/graduation/override");
+}

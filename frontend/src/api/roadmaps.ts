@@ -45,6 +45,18 @@ export type Roadmap = {
  * 학년 슬롯에 과목을 놓을 때는 planned_grade + curriculum_semester만 보내면 된다.
  * 달력 학기는 서버가 이수 기록에서 환산해 채운다(roadmaps.py의 _fill_missing_term_axis).
  */
+export type RoadmapUpdatePayload = {
+  title?: string | null;
+  target_graduation_year?: string | null;
+  summary?: string | null;
+};
+
+/** 로드맵 문서 자체의 메타(제목·목표 졸업연도 등)를 고친다. 항목과는 무관. */
+export async function updateRoadmap(roadmapId: number, payload: RoadmapUpdatePayload) {
+  const { data } = await apiClient.patch<Roadmap>(`/me/roadmaps/${roadmapId}`, payload);
+  return data;
+}
+
 export type RoadmapItemPayload = {
   course_id: number;
   planned_grade?: number | null;
