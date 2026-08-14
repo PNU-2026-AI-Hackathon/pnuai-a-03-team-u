@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from app.ai.rag.curriculum_ingestion import CurriculumRagIngestionService
 from app.ai.rag.curriculum_retriever import CurriculumRetriever, GraduationRequirementRetriever
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.core.ratelimit import RAG_INGEST_LIMIT, limiter
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/rag", tags=["rag"])
@@ -117,7 +118,9 @@ def search_graduation_requirements(
 
 
 @router.post("/ingest", response_model=RagIngestionResponse)
+@limiter.limit(RAG_INGEST_LIMIT)
 def ingest_rag_chunks(
+    request: Request,
     payload: RagIngestionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

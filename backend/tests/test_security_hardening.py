@@ -287,3 +287,45 @@ class EnvDefaultFailsClosedTest(unittest.TestCase):
             ".env.example에 ENV=local이 없다 — 기본값이 production이라 로컬 개발 "
             "편의 기능이 아무 안내 없이 꺼진다.",
         )
+
+
+class RagIngestRateLimitTest(unittest.TestCase):
+    """`POST /rag/ingest`에 리밋이 실제로 등록돼 있는지.
+
+    이 엔드포인트는 **전체 RAG 청크 재구축 + OpenAI 임베딩 호출**인데, 인증만 통과하면
+    학생 누구나 부를 수 있고 리밋이 없었다. 프론트에서 아무도 호출하지 않는 운영 작업이라
+    순수 비용/부하 공격면이었다 — 보안 계획의 "비용 남용" 항목이 챗만 덮고 있었다.
+
+    **HTTP로는 검증할 수 없다**: 미인증 호출은 `get_current_user` 의존성이 먼저 401로
+    끊어서 핸들러(=리미터)에 도달하지 않고, 인증하려면 DB가 필요하다. 그래서 조용히
+    깨지는 두 지점을 직접 본다:
+
+      1. 리밋이 limiter에 등록됐는가 (데코레이터를 떼면 조용히 사라진다 — 변이 테스트로
+         확인함)
+      2. 핸들러 시그니처에 `request: Request`가 있는가
+
+    2번은 slowapi가 데코레이션 시점에 `No "request" or "websocket" argument`로 터뜨려서
+    앱 import 자체가 실패한다(직접 확인). 즉 조용히 새는 경로는 아니지만, 그 예외를
+    보고 "인자를 빼자"가 아니라 "리밋을 떼자"로 잘못 고치는 걸 막으려고 함께 남긴다.
+    """
+
+    _ROUTE_KEY = "app.api.rag.ingest_rag_chunks"
+
+    def test_ingest_limit_is_registered(self):
+        from app.core.ratelimit import limiter
+
+        self.assertIn(
+            self._ROUTE_KEY, getattr(limiter, "_route_limits", {}),
+            "/rag/ingest에 @limiter.limit이 걸려 있지 않다 — 로그인한 학생 누구나 "
+            "전체 RAG 재구축과 임베딩 비용을 유발할 수 있다.",
+        )
+
+    def test_ingest_handler_takes_request(self):
+        import inspect
+
+        from app.api import rag
+
+        self.assertIn(
+            "request", inspect.signature(rag.ingest_rag_chunks).parameters,
+            "핸들러에 `request: Request` 인자가 없다 — slowapi가 조용히 무력화된다.",
+        )

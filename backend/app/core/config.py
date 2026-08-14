@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_CHAT: str = "10/minute;100/day"
     # Playwright 크롤이라 서버 자원도 많이 쓴다.
     RATE_LIMIT_PORTAL_SYNC: str = "5/hour"
+    # RAG 인제스트는 전체 청크 재구축 + OpenAI 임베딩 호출이다. 정상 사용자가 부를 일이
+    # 없는 운영 작업인데 인증만 통과하면 누구나 부를 수 있어, 비용 남용 경로였다.
+    RATE_LIMIT_RAG_INGEST: str = "2/hour;5/day"
 
     # --- Langfuse (LLM 관측/평가) ---
     # 셋 다 값이 있어야 실제 trace 전송된다. 하나라도 비면 콜백은 no-op.
