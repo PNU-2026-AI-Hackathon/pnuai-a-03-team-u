@@ -143,9 +143,9 @@ _TIMETABLE_CONDITIONAL_RULES: dict[str, str] = {
 
     "critical_missing": """
 - **필수 미이수 + 이번 학기 개설 X → 반드시 안내**: `critical_missing_required`에 항목이
-  있다. finish_response 앞부분에서 "이 필수 과목(예: '컴퓨터구조')은 X학기 전용 개설이라
-  이번 학기(Y학기)엔 못 담습니다. 다음 학년도 X학기에 반드시 들어야 졸업 가능합니다"처럼
-  지연·위험 + 대안 명시. 시간표 후보에는 넣지 마라 (이번 학기 개설 안 됨).""",
+  있다. finish_response 앞부분에서 **그 과목의 실제 이름과 개설 학기를 직접 써서**,
+  이번 학기에는 못 담는다는 사실과 다음에 언제 들어야 졸업 가능한지를 함께 알려라.
+  ⚠️ 과목명·학기는 `critical_missing_required`에 **실제로 들어 있는 값만** 써라. 시간표 후보에는 넣지 마라 (이번 학기 개설 안 됨).""",
 
     "prereq_blocked": """
 - **선수과목 부족 과목 이번 시간표 제외**: `prereq_blocked`에 항목이 있다. 이 course_id는

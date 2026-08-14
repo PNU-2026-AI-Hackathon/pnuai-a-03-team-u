@@ -350,35 +350,51 @@ def _spy_token_usage():
         yield log
 
 
-# TPM(200k) 초과로 429가 나면 그 케이스는 "실패"로 집계돼 pass율을 오염시킨다. 실제로
+# 일시적 실패(429·연결 끊김 등)가 나면 그 케이스는 "실패"로 집계돼 pass율을 오염시킨다. 실제로
 # 26케이스 × N=3 스윕에서 **실패 20건 중 12건이 429**였다 — 모델 품질이 아니라 하니스가
 # 만들어낸 실패다. 케이스 하나가 입력 66k 토큰을 쓰기도 해서 연속 실행이면 1분 안에 한도를
 # 넘는다. 429는 재시도로 흡수하고, 진짜 assertion 실패만 결과에 남긴다.
 _RATE_LIMIT_BACKOFF_S = (20, 45, 90)
 
 
-def _hit_rate_limit(outcome: CaseOutcome) -> bool:
-    """이 결과가 429 때문인지. 두 경로를 모두 본다.
+# 재시도해야 하는 일시적 실패 시그니처. 모델 품질과 무관하게 스윕 결과를 오염시킨다.
+#
+# 429(TPM 초과)뿐 아니라 **연결 오류**도 넣는다 — 노트북이 절전에 들어가거나 네트워크가
+# 잠깐 끊기면 `APIConnectionError`가 무더기로 나고, 실제로 78회 중 21회가 그렇게 죽어
+# 스윕 하나가 통째로 무효가 됐다(2026-08-14). 판정 결과를 보고 코드를 고치는 판단에
+# 쓰이므로, 인프라 잡음이 섞이면 잘못된 결론을 내리게 된다.
+_TRANSIENT_ERROR_MARKERS = (
+    "ratelimiterror", "rate limit", "rate_limit",      # 429
+    "apiconnectionerror", "connection error",           # 네트워크 끊김
+    "apitimeouterror", "timeout",                       # 응답 지연
+    "internalservererror", "502", "503", "504",         # 프로바이더 일시 장애
+)
 
-    - 에이전트 LLM 429 → 예외로 터져 `error`에 담긴다.
-    - 판정 LLM(gpt-4o-mini) 429 → `_llm_judge`가 예외를 삼키고 `judge_error: ...`를
+
+def _hit_transient_error(outcome: CaseOutcome) -> bool:
+    """이 결과가 일시적 인프라 실패 때문인지. 두 경로를 모두 본다.
+
+    - 에이전트 LLM 오류 → 예외로 터져 `error`에 담긴다.
+    - 판정 LLM(gpt-4o-mini) 오류 → `_llm_judge`가 예외를 삼키고 `judge_error: ...`를
       failure 문자열로 돌려주므로 `failures`에 담긴다.
     """
     blobs = [outcome.error or ""] + list(outcome.failures)
     joined = " ".join(blobs).lower()
-    return "ratelimiterror" in joined or "rate limit" in joined or "rate_limit" in joined
+    return any(m in joined for m in _TRANSIENT_ERROR_MARKERS)
 
 
 def run_live(case: EvalCase) -> CaseOutcome:
     """LLM 실호출 후 assertion 채점. 429는 백오프 재시도로 흡수한다."""
     outcome = _run_live_once(case)
     for i, backoff in enumerate(_RATE_LIMIT_BACKOFF_S, start=1):
-        if not _hit_rate_limit(outcome):
+        if not _hit_transient_error(outcome):
             return outcome
-        print(f"       (rate limit — {backoff}s 대기 후 재시도 {i}/{len(_RATE_LIMIT_BACKOFF_S)})")
+        reason = (outcome.error or " ".join(outcome.failures))[:60]
+        print(f"       (일시적 실패 — {backoff}s 대기 후 재시도 "
+              f"{i}/{len(_RATE_LIMIT_BACKOFF_S)}: {reason})")
         time.sleep(backoff)
         outcome = _run_live_once(case)
-    return outcome  # 재시도를 다 써도 429면 그대로 실패로 남긴다
+    return outcome  # 재시도를 다 써도 실패면 그대로 남긴다
 
 
 def _run_live_once(case: EvalCase) -> CaseOutcome:

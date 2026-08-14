@@ -105,6 +105,22 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
 - **구현**: `core/mailer.py`가 `settings.ENV == "local"`일 때만 본문을 로그에 남긴다.
   그 외 환경에서는 수신자·제목만 error 로그로 남기고 **본문(=재설정 링크)은 찍지 않는다**.
 
+**P0-5. 승인 반영이 `change.item_id`를 재검증하지 않았다** — ✅ 구현 완료 (2026-08-14 감사에서 발견)
+- `apply_pending_changes`(`roadmap_chat.py`)는 change 자체는 `change.roadmap_id != roadmap.id`로
+  거르지만, **`change.item_id`는 그 검사에 포함되지 않았다.** update/delete가 그 id를 그대로
+  `db.get(CourseRoadmapItem, ...)`에 넣어 수정·삭제했다.
+- **당시 실제로 악용 가능하지는 않았다** — 제안을 만드는 `propose_change`가 항목 소유권을
+  확인해서 남의 item_id가 담긴 행이 생기지 않는다. 즉 상위 한 겹에만 의존하는 구조였다.
+- 그래도 고친 이유: 승인은 **남의 로드맵 항목을 수정·삭제하는 경로**다. 상위 가드가
+  리팩터링으로 바뀌거나 새 제안 경로가 추가되면 조용한 데이터 훼손이 된다. 학사 계획은
+  사용자가 직접 쌓은 개인정보라 조용한 손상이 특히 나쁘다.
+- **구현**: 반영 직전 `_owned_item()`으로 `item.roadmap_id == roadmap.id`를 다시 확인한다
+  (defense in depth). 회귀 테스트 `ApplyPendingChangeItemOwnershipTest` 2건 —
+  **수정 전 코드에서 실제로 실패하는 것까지 확인**했다.
+- 함께 감사한 결과 **IDOR은 그 외에 없었다**: id를 경로로 받는 엔드포인트 22개 전부와
+  중첩 리소스(`_get_owned_item`은 부모 소유권 + `item.roadmap_id` 일치 둘 다 검사),
+  pending change 승인/거절 경로 모두 스코프가 걸려 있다.
+
 ### P1 — 다음 스프린트
 
 **P1-1. 계정 삭제 목록이 수동 관리라 새 테이블 추가 시 누락된다**

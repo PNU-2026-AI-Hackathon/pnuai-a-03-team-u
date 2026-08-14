@@ -1657,6 +1657,96 @@ class NarrowScopeRequestProbeTest(unittest.TestCase):
         self.assertNotIn("narrow_scope_request", rules_broad)
 
 
+class PromptHasNoCopyableCourseNamesTest(unittest.TestCase):
+    """프롬프트의 "모델이 말할 문장" 예시에 실제 과목명이 박혀 있으면 안 된다.
+
+    LLM은 예시 문장을 그대로 옮겨 적는다. `_CORE_PROMPT`에 "예: 3학년인데 이산수학(전공기초)
+    미이수면 ... '전공기초 이산수학이 미이수라 이번 학기 최우선 추천'이라고 명시하고"가
+    있었는데, **이산수학을 이미 이수한 학생에게도 그 문장을 그대로 말하는** 사례가
+    관측됐다(골든 케이스 24, 2026-08-13). 자리표시자 `〈과목명〉`으로 바꿔야 한다.
+
+    시간표 챗의 `critical_missing` 규칙도 같은 형태였다.
+    """
+
+    # 부산대 교육과정에 실재하는 이름들. 예시로 쓰면 LLM이 사실처럼 복사한다.
+    REAL_COURSE_NAMES = (
+        "이산수학", "자료구조", "알고리즘", "컴퓨터구조", "운영체제",
+        "컴퓨터네트워크", "데이터베이스", "시스템프로그래밍", "머신러닝",
+    )
+
+    def assert_no_real_names(self, text, where):
+        found = [n for n in self.REAL_COURSE_NAMES if n in text]
+        self.assertEqual(
+            [], found,
+            f"{where}에 실제 과목명 {found}이 있다. LLM이 그대로 복사해 없는 사실을 말한다 — "
+            "〈과목명〉 같은 자리표시자를 쓰고 '실제 값으로 바꿔라'를 명시할 것.",
+        )
+
+    def test_roadmap_core_prompt(self):
+        from app.domains.planning.roadmap_chat import _CORE_PROMPT
+        self.assert_no_real_names(_CORE_PROMPT, "로드맵 CORE 프롬프트")
+
+    def test_roadmap_conditional_rules(self):
+        from app.domains.planning.roadmap_chat import _CONDITIONAL_RULES
+        for key, text in _CONDITIONAL_RULES.items():
+            self.assert_no_real_names(text, f"로드맵 조건부 규칙 '{key}'")
+
+    def test_timetable_conditional_rules(self):
+        from app.domains.planning.timetable_chat import _TIMETABLE_CONDITIONAL_RULES
+        for key, text in _TIMETABLE_CONDITIONAL_RULES.items():
+            self.assert_no_real_names(text, f"시간표 조건부 규칙 '{key}'")
+
+    def test_no_quotable_placeholder_syntax(self):
+        """자리표시자 문법도 쓰면 안 된다 — LLM이 꺾쇠째 복사한다.
+
+        `"전공기초 〈과목명〉이 미이수라..."`로 바꿨더니 LLM이 과목명은 치환하면서
+        **꺾쇠는 그대로 둬서** `〈컴퓨터프로그래밍(I)〉`이 사용자 응답에 나왔다
+        (2026-08-14 관측). 인용 가능한 템플릿 문장 자체를 두지 않는 게 맞다.
+        """
+        from app.domains.planning.roadmap_chat import _CONDITIONAL_RULES, _CORE_PROMPT
+        from app.domains.planning.timetable_chat import _TIMETABLE_CONDITIONAL_RULES
+
+        texts = [("로드맵 CORE", _CORE_PROMPT)]
+        texts += [(f"로드맵 규칙 {k}", v) for k, v in _CONDITIONAL_RULES.items()]
+        texts += [(f"시간표 규칙 {k}", v) for k, v in _TIMETABLE_CONDITIONAL_RULES.items()]
+        for where, text in texts:
+            for token in ("〈", "〉"):
+                self.assertNotIn(
+                    token, text,
+                    f"{where}에 자리표시자 문법 {token}가 있다 — LLM이 꺾쇠째 복사한다.",
+                )
+
+    def test_rule_points_at_tool_list_not_an_example(self):
+        """미이수 필수 규칙은 예시 문장이 아니라 **도구가 준 목록**을 가리켜야 한다.
+
+        구체적 예시("이산수학 미이수면...")는 이미 이수한 학생에게도 복사됐고, 예시를 빼자
+        이번엔 규칙 준수가 무너졌다(케이스 12가 0/3). 크로스체크를 도구로 내리고
+        프롬프트는 목록만 가리키게 한 뒤 3/3으로 회복했다.
+
+        문구 자체는 스윕 결과에 따라 계속 다듬으므로 정확한 문장을 박아두지 않는다 —
+        규칙이 갖춰야 할 **세 가지 성질**만 검사한다.
+        """
+        from app.domains.planning.roadmap_chat import _CORE_PROMPT
+
+        # (1) 도구가 준 목록을 가리킨다.
+        self.assertIn("missing_required_available", _CORE_PROMPT)
+
+        # (2) 목록이 비었을 때의 가드가 있다 — 이산수학 환각의 직접 원인이었다.
+        self.assertRegex(
+            _CORE_PROMPT, r"비어 ?있으면",
+            "빈 목록일 때 '미이수 없음'으로 처리하라는 가드가 없다 — 이미 이수한 과목을 "
+            "미이수라고 말하는 환각이 되살아난다.",
+        )
+
+        # (3) 실제 과목명을 예시로 박아두지 않는다. LLM이 그대로 복사한다.
+        for name in ("이산수학", "자료구조", "컴퓨터프로그래밍"):
+            self.assertNotIn(
+                name, _CORE_PROMPT,
+                f"CORE 프롬프트에 실제 과목명 '{name}'이 있다 — 해당 과목을 이미 이수한 "
+                f"학생에게도 그대로 복사된다.",
+            )
+
+
 class TermGapProbeTest(unittest.TestCase):
     """엇학기 판정 — 마지막 이수 학기와 현재 학기 사이 공백.
 
@@ -1785,3 +1875,72 @@ class CareerMismatchProbeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApplyPendingChangeItemOwnershipTest(unittest.TestCase):
+    """승인 반영 시 `change.item_id`가 **이 로드맵의 항목인지** 다시 확인한다.
+
+    `apply_pending_changes`는 change 자체는 `change.roadmap_id != roadmap.id`로 거르지만,
+    예전에는 `change.item_id`를 그대로 믿고 `db.get(CourseRoadmapItem, change.item_id)`로
+    가져와 수정/삭제했다. 지금은 propose_change가 제안을 만들 때 항목 소유권을 확인하므로
+    남의 item_id가 담긴 행이 생기지 않지만, **승인은 항목을 수정·삭제하는 경로**라 한 겹
+    위에서만 지키면 그 위쪽이 바뀌는 순간 남의 로드맵이 조용히 훼손된다.
+
+    학사 계획은 개인정보이자 사용자가 직접 쌓은 데이터라 조용한 손상이 특히 나쁘다.
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def _two_roadmaps(self, db):
+        """공격자(user 1, roadmap 1)와 피해자(user 2, roadmap 2)."""
+        db.add_all([
+            User(id=1, email="a@example.com", password_hash="x", name="공격자"),
+            User(id=2, email="v@example.com", password_hash="x", name="피해자"),
+            CourseRoadmap(id=1, user_id=1),
+            CourseRoadmap(id=2, user_id=2),
+        ])
+        db.flush()
+        victim_item = CourseRoadmapItem(
+            roadmap_id=2, course_id=None, course_name="피해자과목",
+            planned_grade=3, planned_year="2026", planned_semester="1학기",
+        )
+        db.add(victim_item)
+        db.flush()
+        return db.get(CourseRoadmap, 1), victim_item
+
+    def test_update_does_not_touch_other_roadmaps_item(self):
+        db = self.make_db()
+        attacker_roadmap, victim_item = self._two_roadmaps(db)
+        change = PendingRoadmapChange(
+            roadmap_id=attacker_roadmap.id,   # 내 로드맵의 제안이지만
+            item_id=victim_item.id,           # 남의 항목을 겨냥한다
+            action="update", planned_semester="2학기", status="pending",
+        )
+        db.add(change)
+        db.flush()
+
+        roadmap_chat_mod.apply_pending_changes(db, attacker_roadmap, [change.id], [])
+
+        db.refresh(victim_item)
+        self.assertEqual("1학기", victim_item.planned_semester,
+                         "남의 로드맵 항목이 수정됐다")
+
+    def test_delete_does_not_remove_other_roadmaps_item(self):
+        db = self.make_db()
+        attacker_roadmap, victim_item = self._two_roadmaps(db)
+        victim_item_id = victim_item.id
+        change = PendingRoadmapChange(
+            roadmap_id=attacker_roadmap.id,
+            item_id=victim_item_id,
+            action="delete", status="pending",
+        )
+        db.add(change)
+        db.flush()
+
+        roadmap_chat_mod.apply_pending_changes(db, attacker_roadmap, [change.id], [])
+
+        self.assertIsNotNone(db.get(CourseRoadmapItem, victim_item_id),
+                             "남의 로드맵 항목이 삭제됐다")

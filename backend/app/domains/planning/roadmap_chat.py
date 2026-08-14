@@ -191,19 +191,23 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
   마라. **효원핵심교양·기초교양 같은 학과 지정 교양(category="교양필수")도 졸업요건이라
   남은 학점 있으면 전공과 나란히 추천해라.**
 - **미이수 전공기초·전공필수는 finish_response의 첫 번째 추천 항목으로 무조건 배치해라.**
-  `get_graduation_progress`에서 `전공기초`/`전공필수`의 `remaining_credits > 0`이거나
-  `get_roadmap_items.completed_courses`에서 학과 커리큘럼의 저학년 전공기초·필수 과목이
-  누락돼 있으면, 그 과목이 진로와 무관해 보여도 **다른 진로 관련 전공선택보다 반드시
-  먼저** 추천해라. 예: 3학년인데 이산수학(전공기초) 미이수면 finish_response 첫 문단에
-  "**전공기초 이산수학이 미이수라 이번 학기 최우선 추천**"이라고 명시하고 그 다음에
-  진로 관련 과목을 이어라. 이 순서를 뒤집으면(진로 관련 전공선택 먼저 나열하고 전공기초는
-  뒤에 언급) 사용자가 우선순위를 잘못 잡아 다음 학기 필수 이수 부담이 커진다.
+  대상은 `get_roadmap_items.missing_required_available`에 그대로 담겨 온다 — 도구가
+  "미이수 + 그 학기 개설" 조건을 이미 확인한 목록이니 네가 따로 대조하지 마라. 목록에
+  과목이 있으면 그게 진로와 무관해 보여도 **다른 진로 관련 전공선택보다 반드시 먼저**
+  추천하고, 각 항목의 `program_label`로 어느 전공 요건인지(주전공/부전공/복수전공) 밝혀라.
+  **목록이 비어 있으면 미이수 필수가 없다는 뜻이니 그 얘기를 꺼내지 마라** — 목록에 없는
+  과목을 미이수라고 하면 이미 이수한 과목을 다시 들으라고 하는 셈이 된다. 이 순서를
+  뒤집으면(진로 관련 전공선택 먼저 나열하고 전공기초는 뒤에 언급) 사용자가 우선순위를
+  잘못 잡아 다음 학기 필수 이수 부담이 커진다.
+  **단 이 목록은 우선순위만 정한다 — 답변 범위를 여기로 좁히지 마라.** 목록에 안 나온
+  프로그램(특히 주전공)과 남은 이수구분도 평소대로 빠짐없이 함께 안내해라. 목록에 뜬
+  전공만 다루고 나머지를 빠뜨리면 학생이 다른 전공은 다 됐다고 오해한다.
 - search_courses 결과에 description(교과목개요)이 있으면 과목명만 보고 판단하지 말고
   그 내용을 실제로 읽고 학생의 진로/관심사와 맞는지 확인해라. 과목명에 키워드가 없어도
   description 내용상 관련 있는 과목일 수 있다.
 - **이미 로드맵에 있는 과목(get_roadmap_items 결과의 course_id 목록)은 다시 create로 제안하지 마라 — 같은 과목이 두 번 만들어지는 걸 도구 단에서 거절한다.** 학기/학년만 옮기고 싶으면 그 항목의 `id`로 action='update'를 호출해라.
 - **이미 이수한 과목(get_roadmap_items 결과의 `completed_courses`)은 다시 추천하지 마라.** 성적표에서 파싱된 이수내역은 `course_id` 매핑이 대부분 안 돼 있어 로드맵 중복 가드로는 잡히지 않는다. finish_response에서 언급하는 과목명이 `completed_courses`에 있는 이름과 겹치는지 반드시 이름 기준으로 재확인해라. 이수기록과 이름이 정확히 일치하는 create는 도구 단에서도 거절한다.
-- **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예: 이수기록에 '데이터구조'가 있고 후보에 '자료구조'가 있을 때, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
+- **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예를 들어 이수기록의 표기와 교육과정 표기가 한 글자만 다른 경우가 있는데, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
 - 기존 항목의 학기/학년을 바꾸고 싶으면 propose_change(action="update", item_id=...)를,
   항목을 빼고 싶으면 propose_change(action="delete", item_id=...)를 써라.
 - **너는 실제로 아무것도 저장하지 않는다.** propose_change는 "제안"만 만든다.
@@ -324,8 +328,8 @@ _CONDITIONAL_RULES: dict[str, str] = {
   - 같은 학기에 다른 항목이 보여도 건드리지 마라. 묶어서 옮기지 마라.
   - 물어보지도 않은 과목 추천·재수강 권유·졸업요건 브리핑을 덧붙이지 마라.
   - 관련 조언이 떠오르면 제안(propose_change) 대신 finish_response 문장 한 줄로만 언급해라.
-  실제 관측: "데이터베이스만 옮겨줘"에 컴퓨터네트워크까지 같이 옮겨서 사용자가 요청하지
-  않은 변경이 승인 대기에 올라갔다.""",
+  실제 관측: 한 과목만 옮겨달라는 요청에 같은 학기의 다른 과목까지 함께 옮겨서, 사용자가
+  요청하지 않은 변경이 승인 대기에 올라갔다.""",
 
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
@@ -845,6 +849,95 @@ def _compute_critical_missing_required(
     return critical
 
 
+def _compute_missing_required_available(
+    db: Session, user: User, roadmap_id: int | None, reference_semester: str
+) -> list[dict]:
+    """미이수 전공기초·전공필수 중 **대상 학기에 실제로 담을 수 있는** 과목 목록.
+
+    `_compute_critical_missing_required`의 짝이다:
+      - critical  = 미이수 + 그 학기에 개설 **안 됨** → 졸업 위험 경고
+      - 이 함수   = 미이수 + 그 학기에 개설 **됨**   → 이번 학기 최우선 추천 대상
+
+    왜 도구가 주는가: 예전엔 프롬프트가 "get_graduation_progress의 전공기초 remaining과
+    completed_courses와 학과 커리큘럼을 대조해서 누락된 저학년 필수를 먼저 추천해라"라고
+    시켰다. LLM이 세 소스를 크로스체크해야 해서 자주 놓쳤고, 그걸 보완하려고 넣은 구체적
+    예시("이산수학 미이수면...")는 **이미 이수한 학생에게도 그대로 복사**되는 환각을 낳았다.
+    예시를 빼자 이번엔 규칙 준수가 무너졌다(케이스 12가 0/3).
+    → 크로스체크를 도구로 내리고 프롬프트는 "이 목록을 먼저 추천해라"만 말하게 한다.
+    """
+    critical_ids = {
+        c["course_id"] for c in
+        _compute_critical_missing_required(db, user, roadmap_id, reference_semester)
+    }
+
+    def _norm(n: str | None) -> str:
+        if not n:
+            return ""
+        roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+        t = "".join(roman.get(ch, ch) for ch in n)
+        return t.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+    completed_norms: set[str] = set()
+    for r in db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
+    ).all():
+        completed_norms.add(_norm(r.raw_course_name))
+    if roadmap_id is not None:
+        for it in db.scalars(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == roadmap_id,
+                CourseRoadmapItem.status == "completed",
+            )
+        ).all():
+            completed_norms.add(_norm(it.course_name))
+
+    ref_char = str(reference_semester).replace("학기", "").strip()
+
+    # **활성 프로그램 전부**를 훑는다. 주전공만 보면 복수·부전공 학생의 목록에 그 프로그램
+    # 과목이 하나도 안 들어가고, 규칙이 "이 목록을 앞에 배치해라"라고 시키는 탓에 답변이
+    # 주전공으로만 채워져 **사용자가 물어본 프로그램이 통째로 빠진다**
+    # (골든 케이스 09: "복수전공 수학과 뭐부터?"에 정컴 과목만 답해서 3/3 → 1/3).
+    programs = db.scalars(
+        select(UserAcademicProgram).where(
+            UserAcademicProgram.user_id == user.id,
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
+        )
+    ).all()
+    scopes = [(p.department_id, p.major_id, p.program_type) for p in programs if p.department_id]
+    if not scopes:
+        scopes = [(user.department_id, user.major_id, "primary")]
+
+    available: list[dict] = []
+    seen_ids: set[int] = set()
+    for dept_id, major_id, program_type in scopes:
+        q = select(Course).where(
+            Course.department_id == dept_id,
+            Course.category.in_(["전공필수", "전공기초"]),
+        )
+        if major_id is not None:
+            q = q.where(or_(Course.major_id == major_id, Course.major_id.is_(None)))
+        for c in db.scalars(q).all():
+            if c.id in critical_ids or c.id in seen_ids:
+                continue
+            if _norm(c.course_name) in completed_norms:
+                continue
+            # 그 학기에 열리는 것만: 해당 학기 전용이거나 학기 무관 개설.
+            if not (c.semester == ref_char or c.semester in ("1,2", "전학기")):
+                continue
+            seen_ids.add(c.id)
+            available.append({
+                "course_id": c.id,
+                "course_name": c.course_name,
+                "category": c.category,
+                "credits": float(c.credits) if c.credits is not None else None,
+                "grade": c.year,
+                # 어느 프로그램 요건인지 밝힌다 — 안 밝히면 LLM이 전부 주전공으로 뭉뚱그린다.
+                "program_type": program_type,
+                "program_label": _PROGRAM_TYPE_LABELS.get(program_type, program_type),
+            })
+    return available
+
+
 # 부산대 재수강 규정 상 C+(2.5) 이하만 재수강 가능. 학사 규정이 바뀌면 이 값만 수정.
 # 실제 규정 근거: 학사관리규정 재수강 조항 (기준은 대학·연도별 조금씩 다를 수 있음).
 _RETAKE_GRADE_POINT_THRESHOLD = 2.5
@@ -1355,6 +1448,9 @@ class _ToolContext:
             # 졸업 위험 감지: 학과 필수인데 미이수 + 개설학기가 다음 학기와 어긋난 목록.
             # 비어있지 않으면 LLM이 finish_response에서 사용자에게 위험을 반드시 알려야 한다.
             "critical_missing_required": self._critical_missing_required(f"{ns}학기"),
+            "missing_required_available": _compute_missing_required_available(
+                self.db, self.user, self.roadmap.id, f"{ns}학기"
+            ),
             # 재수강 후보 (성적 낮은 이수 과목). **권유 정보**로 노출 — 학생이 GPA 개선
             # 관심 표하거나 명시적으로 재수강 물을 때만 제시. 물어보지 않았는데 매번
             # 강권하지 마라.
@@ -2233,6 +2329,22 @@ def apply_pending_changes(
     is_confirmed=true로 저장한다(승인 자체가 확정 행위라 이중 확정을 요구하지 않는다).
     거절된 항목은 그냥 status="rejected"로 남기고 버린다.
     """
+    def _owned_item(db: Session, item_id: int | None, roadmap_id: int) -> CourseRoadmapItem | None:
+        """이 로드맵에 속한 항목일 때만 돌려준다. 아니면 None.
+
+        `change` 자체는 위에서 `change.roadmap_id != roadmap.id`로 걸러지지만,
+        `change.item_id`는 그 검사에 포함되지 않는다. 지금은 propose_change가 제안을
+        만들 때 항목 소유권을 확인하므로 남의 item_id가 담긴 행이 생기지 않지만,
+        **승인은 남의 로드맵 항목을 수정/삭제하는 경로**라 한 겹 위에서만 지키기엔
+        위험하다. 반영 직전에 다시 확인한다 (defense in depth).
+        """
+        if item_id is None:
+            return None
+        item = db.get(CourseRoadmapItem, item_id)
+        if item is None or item.roadmap_id != roadmap_id:
+            return None
+        return item
+
     applied: list[int] = []
     rejected: list[int] = []
 
@@ -2259,7 +2371,7 @@ def apply_pending_changes(
             )
             db.add(item)
         elif change.action == "update":
-            item = db.get(CourseRoadmapItem, change.item_id)
+            item = _owned_item(db, change.item_id, roadmap.id)
             if item is not None:
                 if change.course_id is not None:
                     course = db.get(Course, change.course_id)
@@ -2280,7 +2392,7 @@ def apply_pending_changes(
                 item.source = "ai"
                 item.is_confirmed = True
         elif change.action == "delete":
-            item = db.get(CourseRoadmapItem, change.item_id)
+            item = _owned_item(db, change.item_id, roadmap.id)
             if item is not None:
                 # pending_roadmap_changes.item_id가 이 item을 가리키고 있으면(이번
                 # change 자신 포함, 같은 item을 겨냥한 다른 미해결 제안도 포함) FK
