@@ -16,6 +16,17 @@
 
 ## 2026-08-13 (blackest21) — 백엔드 전수 점검 + 보안 P0 구현
 
+- **[fix] portal-sync가 모르는 균형교양 영역명을 그대로 써서 학점을 잃던 문제 (`app/api/portal_sync.py`)**:
+  아래 ①을 고치고 나서 sync 경로를 점검하다 찾았다. `_refine_liberal_area_categories`는
+  One-Stop이 준 영역명을 **검증 없이** `category`에 쓰는데, 판정 엔진의 롤업은 고정된 7개
+  이름 목록(`BALANCED_LIBERAL_AREAS`)으로 동작한다. 원문이 조금만 달라도(예: '사상과 역사'
+  처럼 공백 하나) 롤업이 못 알아보고 **그 학점이 교양선택 집계에서 통째로 사라진다** —
+  방금 고친 버그가 그대로 재발한다.
+  → `_match_known_liberal_area()`로 공백 차이는 흡수하고, 아는 이름일 때만 덮어쓴다.
+  모르는 이름이면 '교양선택'을 유지하고 warning 로그를 남긴다(집계 정확성이 세부영역
+  조언보다 우선). portal-sync에는 테스트가 하나도 없었어서
+  `tests/test_portal_sync_liberal_area.py`로 쓰는 쪽·되돌리는 쪽을 함께 고정했다(8건).
+
 - **[fix] ⚠️ 졸업요건 판정 버그 2건 (`app/domains/academics/graduation_progress.py`)**:
   백엔드 전수 점검에서 나온 P0. 둘 다 학생에게 잘못된 판정이 보이거나 아예 에러가 났다.
 
