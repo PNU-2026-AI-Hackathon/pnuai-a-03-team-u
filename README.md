@@ -56,34 +56,35 @@
 ### 2. 상세설계
 #### 2.1. 시스템 구성도
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph FRONT["🖥️ 프론트엔드 — React SPA · Netlify(예정)"]
-        FE["회원가입 · Home · 내 정보<br/>성장 로드맵 · 시간표 작성"]
+        FE["회원가입 · Home · 내 정보 · 성장 로드맵 · 시간표 작성"]
     end
 
     subgraph BACK["⚙️ 백엔드 — FastAPI · Railway(예정)"]
-        API["REST API<br/>인증(JWT) · 프로필<br/>로드맵 · 시간표 · 검색"]
+        API["REST API<br/>인증(JWT) · 프로필 · 로드맵<br/>시간표 · 학과/강좌 검색"]
         RULE["규칙 기반 검증 엔진<br/>졸업요건 판정<br/>시간표 충돌 검사"]
-        AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>human-in-the-loop"]
+        AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>규칙 엔진을 도구로 호출"]
         CRAWL["Playwright 크롤러<br/>학적 · 이수내역<br/>수강편람 · 교과목개요"]
     end
 
     subgraph DATA["🗄️ Supabase PostgreSQL"]
         PG[("관계형 테이블<br/>학사 계층 · 강좌<br/>졸업요건 · 로드맵")]
-        VEC[("pgvector<br/>교육과정 임베딩<br/>RAG")]
+        VEC[("pgvector<br/>교육과정 임베딩 · RAG")]
     end
 
-    LLM["🤖 OpenAI API"]
-    PNU["🏫 PNU 학생지원시스템"]
+    subgraph EXT["🌐 외부 서비스"]
+        LLM["🤖 OpenAI API"]
+        PNU["🏫 PNU 학생지원시스템"]
+    end
 
     FE -->|HTTPS / JSON| API
     API --> RULE
     API --> AGENT
     API --> CRAWL
-    AGENT -->|판정 · 검색 도구| RULE
-    AGENT -->|유사도 검색| VEC
+    RULE --> PG
+    AGENT -->|RAG 검색| VEC
     AGENT --> LLM
-    API --> PG
     CRAWL --> PG
     CRAWL --> PNU
 
@@ -91,10 +92,12 @@ flowchart LR
     classDef back fill:#fef9c3,stroke:#ca8a04,color:#713f12
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef ext fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef band fill:transparent,stroke:#94a3b8,color:#64748b
     class FE front
     class API,RULE,AGENT,CRAWL back
     class PG,VEC data
     class LLM,PNU ext
+    class FRONT,BACK,DATA,EXT band
 ```
 <br/>
 
