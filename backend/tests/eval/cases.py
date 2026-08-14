@@ -128,19 +128,23 @@ def case_freshman_backend() -> EvalCase:
 def case_cs_junior_ai() -> EvalCase:
     """2: 정컴 3학년 완료, 진로=AI. '4학년 뭐 들으면 좋아요?' """
     depts, majors = _cs_hierarchy()
+    # 3학년까지 이수한 학생. 연도를 전부 "2025"로 두면 2학기치 기록밖에 없는 셈이 되고,
+    # 마지막 이수가 2025-2라 엇학기로 잘못 잡힌다. 6학기(2024-2 ~ 2026-1)에 분산한다.
+    _c2_courses = [
+        ("컴퓨터프로그래밍(I)", "전공기초"), ("컴퓨터프로그래밍(II)", "전공기초"),
+        ("이산수학", "전공기초"), ("자료구조", "전공필수"),
+        ("알고리즘", "전공필수"), ("컴퓨터구조", "전공필수"),
+        ("운영체제", "전공선택"), ("시스템프로그래밍", "전공선택"),
+        ("데이터베이스", "전공선택"),
+    ]
+    _c2_terms = _terms_ending_at_last_completed(6)
+    # 마지막 과목이 마지막 학기(2026-1)에 오도록 균등 분배한다.
     completed = [
-        RecordSpec(raw_course_name=name, category=cat, year="2025", semester=sem)
-        for (name, cat, sem) in [
-            ("컴퓨터프로그래밍(I)", "전공기초", "1학기"),
-            ("컴퓨터프로그래밍(II)", "전공기초", "2학기"),
-            ("이산수학", "전공기초", "2학기"),
-            ("자료구조", "전공필수", "1학기"),
-            ("알고리즘", "전공필수", "2학기"),
-            ("컴퓨터구조", "전공필수", "2학기"),
-            ("운영체제", "전공선택", "1학기"),
-            ("시스템프로그래밍", "전공선택", "1학기"),
-            ("데이터베이스", "전공선택", "2학기"),
-        ]
+        RecordSpec(raw_course_name=name, category=cat,
+                   year=_c2_terms[i * (len(_c2_terms) - 1) // (len(_c2_courses) - 1)][0],
+                   semester=_c2_terms[i * (len(_c2_terms) - 1) // (len(_c2_courses) - 1)][1],
+                   grade="B+", grade_point=3.5)
+        for i, (name, cat) in enumerate(_c2_courses)
     ]
     persona = PersonaSpec(
         id="cs-junior-ai", label="정컴 3학년 완료 / AI",
@@ -688,9 +692,13 @@ def case_biz_senior_finance() -> EvalCase:
         ],
         # 3학년까지 이수한 척
         records=[
-            RecordSpec(raw_course_name="회계원리", category="전공필수", year="2023"),
-            RecordSpec(raw_course_name="재무관리", category="전공필수", year="2024"),
-            RecordSpec(raw_course_name="투자론", category="전공선택", year="2025"),
+            # 마지막 이수가 2026-1이어야 정상 재학생으로 잡힌다 (엇학기 판정 기준).
+            RecordSpec(raw_course_name=n, category=cat, year=y, semester=sem,
+                       grade="B+", grade_point=3.5)
+            for (n, cat), (y, sem) in zip(
+                [("회계원리", "전공필수"), ("재무관리", "전공필수"), ("투자론", "전공선택")],
+                _terms_ending_at_last_completed(3),
+            )
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
@@ -742,8 +750,10 @@ def case_ee_junior_semiconductor() -> EvalCase:
                        category="전공선택", credits=3, year="4", semester="1"),
         ],
         records=[
-            RecordSpec(raw_course_name="회로이론", category="전공필수", year="2024"),
-            RecordSpec(raw_course_name="전자회로", category="전공필수", year="2025"),
+            RecordSpec(raw_course_name=n, category="전공필수", year=y, semester=sem,
+                       grade="B+", grade_point=3.5)
+            for n, (y, sem) in zip(["회로이론", "전자회로"],
+                                    _terms_ending_at_last_completed(2))
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name="회로이론", planned_grade=2, status="completed"),
@@ -1000,11 +1010,19 @@ def case_last_semester_1st_only_gap() -> EvalCase:
                        category="전공선택", credits=3, year="3", semester="1"),
         ],
         # 컴퓨터구조 빼고 다 이수함
+        # 6개 학기를 이수한 상태여야 다음 학기가 커리큘럼상 4학년 2학기가 된다.
+        # 기록이 4학기치면 도구가 "3학년 2학기"라고 알려주는데, 프롬프트의 "4학년"과
+        # 어긋나서 LLM이 모순된 컨텍스트를 받는다 (2026-08-14 관측).
+        # 컴퓨터구조는 일부러 빼둔다 — 이 케이스가 검증하는 critical_missing 대상이다.
         records=[
-            RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초", year="2023"),
-            RecordSpec(raw_course_name="자료구조", category="전공필수", year="2024"),
-            RecordSpec(raw_course_name="알고리즘", category="전공필수", year="2024"),
-            RecordSpec(raw_course_name="운영체제", category="전공선택", year="2025"),
+            RecordSpec(raw_course_name=n, category=cat, year=y, semester=sem,
+                       grade="B+", grade_point=3.5)
+            for (n, cat), (y, sem) in zip(
+                [("컴퓨터프로그래밍(I)", "전공기초"), ("자료구조", "전공필수"),
+                 ("알고리즘", "전공필수"), ("운영체제", "전공선택"),
+                 ("고전읽기와토론", "교양필수"), ("과학과기술", "교양선택")],
+                _terms_ending_at_last_completed(6),
+            )
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
@@ -1014,7 +1032,7 @@ def case_last_semester_1st_only_gap() -> EvalCase:
     )
     return EvalCase(
         slug="13-last-sem-gap", persona=persona, agent="roadmap",
-        prompt="4학년 2학기예요. 다음 학기 뭐 들어야 졸업할 수 있어요?",
+        prompt="이제 4학년인데 다음 학기 뭐 들어야 졸업할 수 있어요?",
         expectations=[
             ExpectedBehavior("tool_called", "get_roadmap_items",
                              reason="critical_missing_required는 이 도구로만 확인"),
@@ -1204,6 +1222,41 @@ def _pending_has_course(result, course_id: int) -> bool:
     return any(c.get("course_id") == course_id for c in result.pending_changes)
 
 
+# --- 이수 기록 연도 기준 -----------------------------------------------------
+#
+# 평가 실행은 `_current_academic_term`을 (2026, 2)로 고정한다. 그러면:
+#   - 지금 진행 중인 학기 = 2026-2
+#   - **정상적으로 다니고 있는 학생이 마지막으로 "이수 완료"한 학기 = 2026-1**
+#   - 다음 배치 가능 학기 = 2027-1
+#
+# 엇학기 판정은 "마지막 이수 학기와 현재 학기 사이에 공백이 있는가"로 한다. 그래서
+# 정상 학생 페르소나의 이수 기록이 2025-1에서 끊겨 있으면 **전부 엇학기로 잡힌다.**
+# 실제로 그런 상태였다 — 케이스 02·03·04·13·22·23과 `_cs_lower_year_records`가
+# 2025-1 또는 2025-2에서 끝나 있었다.
+#
+# 그래서 정상 학생 페르소나는 이 헬퍼로 **2026-1에서 끝나도록 역순 배치**한다.
+# 엇학기를 의도한 케이스(10·19)만 예외로 과거에서 끊어둔다.
+
+_EVAL_CURRENT_TERM = (2026, 2)          # run_live가 패치하는 값
+_LAST_COMPLETED_TERM = (2026, 1)        # 정상 학생이 마지막으로 이수 완료한 학기
+
+
+def _terms_ending_at_last_completed(count: int) -> list[tuple[str, str]]:
+    """마지막 이수 학기(2026-1)에서 거꾸로 `count`개 학기를 만든다 (오름차순).
+
+    예: count=3 → [("2025", "1학기"), ("2025", "2학기"), ("2026", "1학기")]
+    """
+    year, sem = _LAST_COMPLETED_TERM
+    terms: list[tuple[str, str]] = []
+    for _ in range(count):
+        terms.append((str(year), f"{sem}학기"))
+        sem -= 1
+        if sem == 0:
+            sem = 2
+            year -= 1
+    return list(reversed(terms))
+
+
 def _cs_lower_year_records() -> list[RecordSpec]:
     """정컴 1·2학년 전공기초·전공필수를 전부 이수한 상태.
 
@@ -1211,17 +1264,20 @@ def _cs_lower_year_records() -> list[RecordSpec]:
     이산수학·알고리즘·컴퓨터구조)이 줄줄이 잡혀서, 그 졸업 위험 경고가 답변을 지배한다 —
     정작 검증하려는 행동(학점 상한 대응, 계절수업 제외, 요청 범위 준수)이 노이즈에 묻힌다.
     """
+    courses = [
+        ("컴퓨터프로그래밍(I)", "전공기초"),
+        ("컴퓨터프로그래밍(II)", "전공기초"),
+        ("이산수학", "전공기초"),
+        ("자료구조", "전공필수"),
+        ("알고리즘", "전공필수"),
+        ("컴퓨터구조", "전공필수"),
+    ]
+    # 6과목을 6개 학기에 하나씩 — 2024-2 ~ 2026-1. 마지막이 2026-1이라 엇학기로 안 잡힌다.
+    terms = _terms_ending_at_last_completed(len(courses))
     return [
         RecordSpec(raw_course_name=n, category=cat, year=y, semester=sem,
                    grade="B+", grade_point=3.5)
-        for (n, cat, y, sem) in [
-            ("컴퓨터프로그래밍(I)", "전공기초", "2024", "1학기"),
-            ("컴퓨터프로그래밍(II)", "전공기초", "2024", "2학기"),
-            ("이산수학", "전공기초", "2024", "2학기"),
-            ("자료구조", "전공필수", "2025", "1학기"),
-            ("알고리즘", "전공필수", "2025", "2학기"),
-            ("컴퓨터구조", "전공필수", "2025", "2학기"),
-        ]
+        for (n, cat), (y, sem) in zip(courses, terms)
     ]
 
 
@@ -1246,16 +1302,18 @@ def case_retake_request() -> EvalCase:
             required_major_required=30, required_major_elective=27,
         )],
         courses=_cs_catalog(),
+        # 자료구조만 C0(2.0) — 재수강 후보. 나머지는 B0 이상이라 후보 아님.
+        # 연도는 2026-1에서 끝나야 정상 재학생으로 잡힌다 (엇학기 판정 기준).
         records=[
-            # 자료구조만 C0(2.0) — 재수강 후보. 나머지는 B0 이상이라 후보 아님.
-            RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초",
-                       year="2024", grade="B+", grade_point=3.5),
-            RecordSpec(raw_course_name="컴퓨터프로그래밍(II)", category="전공기초",
-                       year="2024", grade="A0", grade_point=4.0),
-            RecordSpec(raw_course_name="자료구조", category="전공필수",
-                       year="2025", grade="C0", grade_point=2.0),
-            RecordSpec(raw_course_name="알고리즘", category="전공필수",
-                       year="2025", grade="B0", grade_point=3.0),
+            RecordSpec(raw_course_name=n, category=cat, year=y, semester=sem,
+                       grade=g, grade_point=gp)
+            for (n, cat, g, gp), (y, sem) in zip(
+                [("컴퓨터프로그래밍(I)", "전공기초", "B+", 3.5),
+                 ("컴퓨터프로그래밍(II)", "전공기초", "A0", 4.0),
+                 ("자료구조", "전공필수", "C0", 2.0),
+                 ("알고리즘", "전공필수", "B0", 3.0)],
+                _terms_ending_at_last_completed(4),
+            )
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name=n, planned_grade=g, status="completed")
@@ -1308,10 +1366,12 @@ def case_prereq_blocked_request() -> EvalCase:
         courses=catalog,
         # 자료구조는 이수하지 않았다 — 그래서 운영체제가 prereq_blocked에 오른다.
         records=[
-            RecordSpec(raw_course_name="컴퓨터프로그래밍(I)", category="전공기초",
-                       year="2025", grade="B0", grade_point=3.0),
-            RecordSpec(raw_course_name="컴퓨터프로그래밍(II)", category="전공기초",
-                       year="2025", grade="B+", grade_point=3.5),
+            RecordSpec(raw_course_name=n, category="전공기초", year=y, semester=sem,
+                       grade=g, grade_point=gp)
+            for (n, g, gp), (y, sem) in zip(
+                [("컴퓨터프로그래밍(I)", "B0", 3.0), ("컴퓨터프로그래밍(II)", "B+", 3.5)],
+                _terms_ending_at_last_completed(2),
+            )
         ],
         roadmap_items=[
             RoadmapItemSpec(course_name="컴퓨터프로그래밍(I)", planned_grade=1, status="completed"),

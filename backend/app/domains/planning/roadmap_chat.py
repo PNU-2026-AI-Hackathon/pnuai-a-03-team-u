@@ -44,7 +44,9 @@ from app.domains.planning.models import (
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
-from app.domains.users.admission import TRANSFER_ENTRY_GRADE, is_transfer
+from app.domains.users.admission import (
+    PRE_ADMISSION_SEMESTERS, TRANSFER_ENTRY_GRADE, is_transfer,
+)
 from app.domains.users.models import User
 
 _DEFAULT_CURRICULUM_YEAR = 2026
@@ -396,6 +398,38 @@ def _looks_like_narrow_scope_request(message: str | None) -> bool:
     return any(marker.replace(" ", "") in compact for marker in _NARROW_SCOPE_MARKERS)
 
 
+def _has_term_gap(db: Session, user: User) -> bool:
+    """마지막 이수 학기와 현재 학기 사이에 공백이 있으면 True (= 엇학기).
+
+    현재 학기가 2026-2라면:
+      마지막 이수 2026-1 → 간격 1학기 = 정상 (직전 학기까지 이수)
+      마지막 이수 2026-2 → 간격 0     = 정상 (이번 학기 기록이 벌써 들어온 경우)
+      마지막 이수 2024-1 → 간격 5학기 = 휴학 이력 → 엇학기
+
+    이수 기록이 없으면(신입·편입·미동기화) 판정하지 않는다 — 근거가 없다.
+    '입학전성적'처럼 학기를 특정할 수 없는 lump-sum 기록도 제외한다.
+    """
+    rows = db.execute(
+        select(StudentCourseRecord.year, StudentCourseRecord.semester).where(
+            StudentCourseRecord.user_id == user.id,
+            StudentCourseRecord.year.is_not(None),
+            StudentCourseRecord.semester.not_in(list(PRE_ADMISSION_SEMESTERS)),
+        )
+    ).all()
+
+    absolute_terms = []
+    for year, semester in rows:
+        sem_int = _semester_str_to_int(semester)
+        if sem_int is None or not str(year).isdigit():
+            continue  # 계절수업·전학기 등은 순번을 매길 수 없다
+        absolute_terms.append(int(year) * 2 + sem_int)
+    if not absolute_terms:
+        return False
+
+    cy, cs = _current_academic_term()
+    return (cy * 2 + cs) - max(absolute_terms) >= 2
+
+
 def _select_applicable_rules(db: Session, user: User, message: str | None = None) -> list[str]:
     """학생 상태를 cheap probe로 확인해 활성화할 조건부 규칙 키 목록 반환.
 
@@ -424,43 +458,17 @@ def _select_applicable_rules(db: Session, user: User, message: str | None = None
     if is_transfer(user.admission_type):
         applicable.append("transfer_student")
 
-    # 3. 엇학기 (SCR '입학전성적' 없이 curriculum_year와 실제 이수 순번 misalign)
+    # 3. 엇학기 — 마지막 이수 학기와 현재 학기 사이에 공백이 있는가.
     #
-    #    ⚠️ 이 판정은 현재 **사실상 죽어 있다**. 조건이 "최신 SCR 연도 - curriculum_year >= 4"
-    #    인데, 이건 엇학기가 아니라 "입학한 지 오래됐나"를 재는 것이다. 정작 이 규칙이 필요한
-    #    대상(한 학기 휴학한 학생)은 gap이 2~3이라 걸리지 않는다 — 골든 케이스 10
-    #    (2022 입학, 2024-2 휴학)이 그래서 규칙을 한 번도 못 받고 3/3 실패한다.
+    #    옛 판정은 "최신 SCR 연도 - curriculum_year >= 4"였는데, 이건 엇학기가 아니라
+    #    "입학한 지 오래됐나"를 재는 것이라 정작 대상인 한 학기 휴학생이 안 걸렸다
+    #    (골든 케이스 10이 규칙을 한 번도 못 받고 3/3 실패).
     #
-    #    2026-08-13에 고치려다 되돌렸다. 조사 결과 두 가지가 걸림돌이다:
-    #    (a) `project_curriculum_term`은 미래 학기에 대해 "쉬지 않고 다닌다"고 가정하고
-    #        마지막 기록에 달력 거리를 더한다. 그래서 "다음 학기의 커리큘럼 좌표"와
-    #        "쉬지 않았을 때의 좌표"는 **구조적으로 항상 같아진다** — 비교 근거가 안 된다.
-    #    (b) 올바른 지표는 (이수한 정규 학기 수) < (입학 후 경과 학기 수)인데, 이걸 적용하면
-    #        골든 페르소나 7개가 엇학기로 잡힌다. 페르소나 데이터가 자기모순이기 때문이다 —
-    #        예: 케이스 02는 "3학년까지 다 이수" 설정인데 이수 기록이 2학기치뿐이고
-    #        전부 curriculum_year(2024)보다 뒤인 2025년으로 찍혀 있다.
-    #
-    #    → 제대로 고치려면 페르소나의 이수 기록 연도부터 정합하게 만들고(21개 케이스 데이터
-    #      작업), 그 뒤에 위 (b) 지표로 교체한 다음 N=3 스윕으로 검증해야 한다.
-    scr_years = db.scalars(
-        select(StudentCourseRecord.year).where(
-            StudentCourseRecord.user_id == user.id,
-            StudentCourseRecord.year.is_not(None),
-            StudentCourseRecord.semester != "입학전성적",
-        )
-    ).all()
-    if scr_years:
-        try:
-            year_ints = [int(y) for y in scr_years if str(y).isdigit()]
-            primary_prog = db.scalars(
-                select(UserAcademicProgram).filter_by(user_id=user.id, program_type="primary")
-            ).first()
-            if primary_prog and primary_prog.curriculum_year:
-                cy = int(str(primary_prog.curriculum_year))
-                if year_ints and (max(year_ints) - cy) >= 4:
-                    applicable.append("staggered_semester")
-        except (TypeError, ValueError):
-            pass
+    #    "이수한 학기 수 < 경과 학기 수"도 안 된다 — 포털 미동기화나 부분 동기화로 기록이
+    #    비어 있는 학생이 전부 걸린다. **마지막 이수 학기**만 보는 게 맞다:
+    #    정상 재학생은 직전 학기까지 이수해 있고, 휴학했다면 그 지점에서 끊긴다.
+    if _has_term_gap(db, user):
+        applicable.append("staggered_semester")
 
     # 4. 자동 판정 필드들 — 실제 계산해서 비어있지 않은 경우만 규칙 추가
     #    (get_roadmap_items가 매 대화 첫 턴에 어차피 이 값들을 다시 계산하니 double-compute

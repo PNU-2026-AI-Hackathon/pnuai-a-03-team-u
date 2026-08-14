@@ -1657,6 +1657,62 @@ class NarrowScopeRequestProbeTest(unittest.TestCase):
         self.assertNotIn("narrow_scope_request", rules_broad)
 
 
+class TermGapProbeTest(unittest.TestCase):
+    """엇학기 판정 — 마지막 이수 학기와 현재 학기 사이 공백.
+
+    옛 판정은 "최신 SCR 연도 - curriculum_year >= 4"라 **정작 대상인 한 학기 휴학생이
+    안 걸렸다** (골든 케이스 10이 규칙을 한 번도 못 받고 3/3 실패).
+    "이수 학기 수 < 경과 학기 수"도 부적절하다 — 포털 미동기화/부분 동기화 학생이 전부
+    걸린다. 마지막 이수 학기만 보는 게 맞다.
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        db = sessionmaker(bind=engine, autoflush=False)()
+        db.add(User(id=1, email="t@x.com", password_hash="x", name="테스트", department_id=10))
+        db.flush()
+        return db
+
+    def probe_with(self, terms):
+        """terms: [(year, semester), ...] 이수 기록을 깔고 판정 (현재 학기 2026-2 고정)."""
+        db = self.make_db()
+        for i, (year, sem) in enumerate(terms):
+            db.add(StudentCourseRecord(user_id=1, raw_course_name=f"과목{i}",
+                                       category="전공선택", credits=3,
+                                       year=year, semester=sem))
+        db.commit()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 2)):
+            return roadmap_chat_mod._has_term_gap(db, db.get(User, 1))
+
+    def test_previous_semester_is_normal(self):
+        """직전 학기까지 이수 = 정상 재학생."""
+        self.assertFalse(self.probe_with([("2025", "2학기"), ("2026", "1학기")]))
+
+    def test_current_semester_record_is_normal(self):
+        """이번 학기 기록이 벌써 들어온 경우도 정상."""
+        self.assertFalse(self.probe_with([("2026", "2학기")]))
+
+    def test_one_semester_gap_is_staggered(self):
+        """한 학기 휴학 — 옛 판정이 못 잡던 바로 그 케이스."""
+        self.assertTrue(self.probe_with([("2025", "1학기"), ("2025", "2학기")]))
+
+    def test_long_gap_is_staggered(self):
+        self.assertTrue(self.probe_with([("2022", "1학기"), ("2024", "1학기")]))
+
+    def test_no_records_is_not_judged(self):
+        """신입·편입·포털 미동기화는 근거가 없어 판정하지 않는다."""
+        self.assertFalse(self.probe_with([]))
+
+    def test_pre_admission_credits_are_ignored(self):
+        """'입학전성적'은 학기를 특정할 수 없는 lump-sum이라 제외한다."""
+        self.assertFalse(self.probe_with([("2026", "1학기"), ("2026", "입학전성적")]))
+
+    def test_seasonal_terms_are_ignored_for_gap(self):
+        """계절수업은 정규 학기 순번을 매길 수 없다."""
+        self.assertFalse(self.probe_with([("2026", "1학기"), ("2026", "여름계절수업")]))
+
+
 class CareerMismatchProbeTest(unittest.TestCase):
     """`_career_looks_mismatched` — 진로-전공 mismatch 규칙을 붙일지 판정하는 probe.
 

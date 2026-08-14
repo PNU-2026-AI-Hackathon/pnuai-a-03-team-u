@@ -188,26 +188,13 @@ def _select_timetable_rules(db: Session, user: User, target_semester: str) -> li
     ):
         applicable.append("non_primary_programs")
 
-    # 엇학기 힌트 — SCR 최신 연도가 curriculum_year + 4 이상 지났으면 휴학 가능성
-    scr_years = db.scalars(
-        select(StudentCourseRecord.year).where(
-            StudentCourseRecord.user_id == user.id,
-            StudentCourseRecord.year.is_not(None),
-            StudentCourseRecord.semester != "입학전성적",
-        )
-    ).all()
-    if scr_years:
-        try:
-            year_ints = [int(y) for y in scr_years if str(y).isdigit()]
-            primary_prog = db.scalars(
-                select(UserAcademicProgram).filter_by(user_id=user.id, program_type="primary")
-            ).first()
-            if primary_prog and primary_prog.curriculum_year and year_ints:
-                cy = int(str(primary_prog.curriculum_year))
-                if (max(year_ints) - cy) >= 4:
-                    applicable.append("staggered_semester")
-        except (TypeError, ValueError):
-            pass
+    # 엇학기 — 로드맵 챗과 같은 판정을 쓴다 (마지막 이수 학기와 현재 학기 사이 공백).
+    # 예전엔 "최신 SCR 연도 - curriculum_year >= 4"라는 다른 식이 여기 복제돼 있었고,
+    # 그 식은 정작 한 학기 휴학생을 못 잡았다. 판정이 두 곳에 갈리면 로드맵과 시간표가
+    # 서로 다른 안내를 하게 되므로 단일 출처로 모은다.
+    from app.domains.planning.roadmap_chat import _has_term_gap
+    if _has_term_gap(db, user):
+        applicable.append("staggered_semester")
 
     # 자동 판정 필드 3개 — get_student_context가 어차피 계산하는 값이라 double-compute
     # 감수 (사용자당 로드맵 1개, 쿼리 저렴).
