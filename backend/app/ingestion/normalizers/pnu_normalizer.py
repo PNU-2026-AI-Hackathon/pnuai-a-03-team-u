@@ -215,6 +215,7 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
             record.category = normalized_category
             record.credits = _to_float(credits)
             record.grade = grade or None
+            record.grade_point = _grade_to_point(grade)
             record.is_retake = _is_retake_eligible(grade)
             db.add(record)
             saved.append(record)
@@ -240,6 +241,23 @@ _ALLOWED_CATEGORIES = {
 # 성적을 다시 받을 수 있는 과목이라는 뜻으로 is_retake를 True로 표시한다.
 _RETAKE_ELIGIBLE_GRADES = {"C+", "C0", "C", "D+", "D0", "D", "F"}
 
+# 성적등급 → 평점(4.5 만점). 부산대 표기 기준.
+#
+# **이걸 안 채우면 재수강 기능이 통째로 죽는다.** `roadmap_chat._compute_retake_candidates`
+# 가 `grade_point is None`인 행을 "판단 불가"로 전부 제외하기 때문이다. 2026-08-14 실측:
+# 운영 DB 87개 이수기록 전부 grade는 있는데 grade_point가 NULL이라(채우는 코드가 아예
+# 없었다) 재수강 후보가 항상 빈 목록이었다 — 감지도, 안내도, propose_change도 동작한 적이 없다.
+#
+# 'S'(Pass)처럼 평점이 없는 등급은 None으로 남긴다. 그래야 "성적이 나빠서 재수강 후보"와
+# "평점 자체가 없는 과목"이 섞이지 않는다.
+_GRADE_TO_POINT: dict[str, float] = {
+    "A+": 4.5, "A0": 4.0, "A": 4.0,
+    "B+": 3.5, "B0": 3.0, "B": 3.0,
+    "C+": 2.5, "C0": 2.0, "C": 2.0,
+    "D+": 1.5, "D0": 1.0, "D": 1.0,
+    "F": 0.0,
+}
+
 # 학교마다/학과마다 다르게 표기되지만 실제로는 허용 카테고리 중 하나와 같은 의미인 이름들.
 _CATEGORY_ALIASES = {
     "기초교양": "교양선택",
@@ -248,6 +266,11 @@ _CATEGORY_ALIASES = {
 
 def _is_retake_eligible(grade: str) -> bool:
     return (grade or "").strip().upper() in _RETAKE_ELIGIBLE_GRADES
+
+
+def _grade_to_point(grade: str | None) -> float | None:
+    """성적등급 문자열 → 평점. 평점이 없는 등급(S/P/NP 등)은 None."""
+    return _GRADE_TO_POINT.get((grade or "").strip().upper())
 
 
 def _normalize_category(category: str) -> str | None:

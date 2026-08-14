@@ -16,6 +16,31 @@
 
 ## 2026-08-13 (blackest21) — 백엔드 전수 점검 + 보안 P0 구현
 
+- **[fix] ⚠️ 재수강 기능이 한 번도 동작한 적이 없었다 (`app/ingestion/normalizers/pnu_normalizer.py`)**:
+  normalizer 테스트를 쓰다 발견했다. `map_grades`가 `grade`("C0")만 저장하고 **`grade_point`를
+  채우지 않았다** — 채우는 코드가 코드베이스 어디에도 없었다. 그런데
+  `roadmap_chat._compute_retake_candidates`는 `grade_point is None`인 행을 "판단 불가"로
+  전부 제외한다. 실측: 운영 DB 이수기록 87건 전부 grade는 있고 grade_point는 NULL →
+  **재수강 후보가 항상 빈 목록**이었다. 감지도, 프롬프트 안내도, `propose_change(is_retake=True)`도
+  실사용에서 한 번도 발동한 적이 없다(골든 케이스 22는 시드에 grade_point를 직접 넣어서 통과했다).
+  → `_GRADE_TO_POINT`(부산대 4.5 만점) 추가. 'S'(Pass)처럼 평점 없는 등급은 NULL로 남긴다 —
+  0.0으로 채우면 재수강 후보로 잘못 잡힌다. 기존 데이터는 `scripts/backfill_grade_points.py`로
+  채웠다(60건 반영, S 27건은 NULL 유지). **결과: 재수강 후보 6건이 처음으로 잡힌다.**
+
+- **[fix] my.pusan normalizer가 한 호출 안에서 중복 저장하던 버그 (`my_pusan_normalizer.py`)**:
+  `db.add()` 후 flush하지 않아 같은 루프의 다음 조회에 그 행이 안 보인다 — 크롤 결과에 같은
+  자격증/어학성적/활동이 두 번 오면 그대로 중복 저장됐다. 자격증·어학·비교과 3곳에 flush 추가.
+  **이 버그는 테스트 세션 설정 때문에 숨어 있었다**: 기본 `sessionmaker`는 `autoflush=True`라
+  재현되지 않고, 운영 `SessionLocal`만 `autoflush=False`다. 그래서 normalizer 테스트를
+  **운영과 같은 `autoflush=False`로 만들도록 통일**했다.
+
+- **[test] normalizer 테스트 42건 신규 (`tests/test_pnu_normalizer.py`, `tests/test_my_pusan_normalizer.py`)**:
+  졸업요건 판정의 입력을 만드는 경로인데 테스트가 하나도 없었다. 학적부 '소속학과' 분해,
+  이수구분 정규화·별칭, 성적등급→평점, 소계/헤더 행 스킵, 재실행 멱등성, 학적신청 라벨 매핑,
+  단과대 표기 없을 때 기존 학과 재사용, 날짜·기간 파싱, 한 호출 안 중복 방지까지.
+  휴학 시 `status='휴학'`이 되어 `compute_graduation_progress`(status='active'만 집계)에서
+  빠지는 현재 동작도 테스트로 고정해뒀다 — 정책 판단이 필요하면 이 테스트가 먼저 깨진다.
+
 - **[fix] portal-sync가 모르는 균형교양 영역명을 그대로 써서 학점을 잃던 문제 (`app/api/portal_sync.py`)**:
   아래 ①을 고치고 나서 sync 경로를 점검하다 찾았다. `_refine_liberal_area_categories`는
   One-Stop이 준 영역명을 **검증 없이** `category`에 쓰는데, 판정 엔진의 롤업은 고정된 7개
