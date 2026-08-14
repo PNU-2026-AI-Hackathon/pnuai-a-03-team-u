@@ -5,7 +5,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     PROJECT_NAME: str = "Plan U Backend"
-    ENV: str = "local"
+
+    # 보안 가드의 기준값이다 — 개발 편의 기능(비밀번호 재설정 링크 로그 출력,
+    # 크롤러의 .env 개인계정 폴백)은 이 값이 local/dev일 때만 열린다.
+    # **기본값이 "production"인 건 의도적이다.** 예전 기본값은 "local"이었는데,
+    # 배포 설정 어디에서도 ENV를 지정하지 않아 운영에서도 local로 평가됐다 —
+    # 가드가 전부 열린 채였다(fail-open). 안전한 쪽을 기본으로 두면, 설정을
+    # 빠뜨렸을 때 로컬에서 눈에 띄게 실패하지 조용히 운영이 노출되지 않는다.
+    # 로컬 개발자는 `.env`에 ENV=local을 넣는다 (`.env.example` 참고).
+    ENV: str = "production"
 
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/planu"
 

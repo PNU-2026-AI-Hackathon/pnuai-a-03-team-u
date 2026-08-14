@@ -55,7 +55,8 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
 
 ### P0 — 이번 스프린트 (외부 공개 전 필수)
 
-> **상태 (2026-08-13): P0 4건 모두 구현 완료.** 회귀 테스트는
+> **상태 (2026-08-14): P0 6건 모두 구현 완료.** P0-5·P0-6은 2026-08-14 코드 감사에서
+> 새로 발견한 것이다(계획서에 없던 항목). 회귀 테스트는
 > `backend/tests/test_security_hardening.py`. 아래 각 항목에 실제로 어떻게 막았는지 적었다.
 
 **P0-1. 레이트 리밋이 전혀 없다** — ✅ 구현 완료
@@ -121,12 +122,33 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
   중첩 리소스(`_get_owned_item`은 부모 소유권 + `item.roadmap_id` 일치 둘 다 검사),
   pending change 승인/거절 경로 모두 스코프가 걸려 있다.
 
+**P0-6. ENV 기반 보안 가드가 fail-open이었다** — ✅ 구현 완료 (2026-08-14 감사에서 발견)
+- P0-4(재설정 링크 로그)와 P1-4(크롤러 폴백)는 둘 다 `settings.ENV`가 local/dev일 때만
+  개발 편의 기능을 연다. 그런데 **`ENV` 기본값이 `"local"`이었고, 배포 설정 어디에서도
+  ENV를 지정하지 않았다**(`infra/`, CI, Dockerfile 전부 없음). 즉 운영에서도 local로
+  평가돼 **두 가드가 전부 열린 채**였다 — 각 항목을 "구현 완료"로 적어놨지만 실제
+  운영에서는 동작하지 않았다.
+- `.env.example`에 `ENV` 항목 자체가 없어서 팀원이 존재를 알 방법도 없었다.
+- **구현**: 기본값을 `"production"`으로 뒤집었다(fail-closed). 설정을 빠뜨리면 로컬에서
+  눈에 띄게 실패하지, 운영이 조용히 노출되지 않는다. `.env.example`에 `ENV=local`을
+  설명과 함께 추가. 회귀 테스트 `EnvDefaultFailsClosedTest` 2건.
+- **교훈**: 환경 스위치에 보안을 걸 때는 **그 스위치가 실제 배포에서 세팅되는지**까지
+  확인해야 한다. 안 그러면 문서에는 완료로 남고 운영은 열려 있다.
+
 ### P1 — 다음 스프린트
 
-**P1-1. 계정 삭제 목록이 수동 관리라 새 테이블 추가 시 누락된다**
-- `_ACCOUNT_DELETE_STEPS`는 하드코딩 리스트. 새 개인 데이터 테이블이 생기면 조용히 남는다
-- 조치: 테스트 추가 — SQLAlchemy 메타데이터에서 `user_id` 컬럼(또는 user FK)을 가진 모든
-  테이블을 뽑아 삭제 목록에 있는지 검증. 누락되면 CI 실패
+**P1-1. 계정 삭제 목록이 수동 관리라 새 테이블 추가 시 누락된다** — ✅ 구현 완료
+- **감사 결과 현재 누락은 없다.** 매핑된 28개 테이블 중 직접 소유 10개 + 자식 6개 =
+  16개가 전부 `_ACCOUNT_DELETE_STEPS`에 있다. 즉 **수정이 아니라 회귀 가드**다.
+- **구현**: `AccountDeleteCoverageTest` — SQLAlchemy 메타데이터에서 `user_id` 컬럼이나
+  users FK를 가진 테이블을 뽑고, FK를 따라 자식까지 전이 폐포를 구해 삭제 목록과 대조.
+  메타데이터가 불완전하면 검사가 조용히 통과하므로 `app/**/models.py` 전부가 import되는지도
+  함께 검증한다. 테이블명 오타도 잡는다 — `profile.py`가 `information_schema`에 없는
+  이름을 조용히 건너뛰어서, 오타 하나면 데이터가 남은 채 200이 나간다.
+- 변이 테스트로 공허하지 않음을 확인: 테이블명에 오타를 넣으면 3건이 실패한다.
+- 참고: 옛 마이그레이션의 `graduation_audits` 등 user 스코프 테이블 3개는 삭제 목록에
+  없지만, 현재 head 체인의 후속 마이그레이션이 전부 drop한다(마이그레이션 DAG로만 확인,
+  공유 Supabase 조회 안 함).
 
 **P1-2. 탈퇴 후 Langfuse trace가 남는다**
 - DB는 지워지지만 Langfuse의 해시 user_id trace + 마스킹된 대화 원문은 남는다
@@ -139,14 +161,25 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
 - 조치: `pip freeze > constraints.txt` 방식으로 핀 고정(직접 의존성은 `requirements.txt`에
   범위, 전이 의존성은 constraints), CI에 `pip-audit` + `gitleaks` 워크플로 추가
 
-**P1-4. 개발자 개인 학교 계정이 크롤러 기본값으로 폴백된다**
+**P1-4. 개발자 개인 학교 계정이 크롤러 기본값으로 폴백된다** — ✅ 구현 완료
 - `crawlers/pnu_session.py:103` — 인자 없으면 `settings.PNU_LOGIN_ID/PW` 사용.
   `.env`가 팀 채널로 공유되면 개인 부산대 계정이 그대로 노출된다
-- 조치: 폴백을 `ENV == "local"`일 때만 허용하고, 아니면 명시적 인자 필수로 변경
+- **구현**: `_resolve_credentials()`가 **아이디·비밀번호 둘 다 안 넘어왔을 때만**
+  `.env` 폴백을 적용하고, 그것도 `ENV`가 local/dev일 때만이다. 한쪽만 넘기면 어느
+  환경에서도 거절한다 — 예전 `login_id or settings.PNU_LOGIN_ID` 방식은 "호출자 아이디 +
+  **개발자 비밀번호**" 조합을 조용히 만들 수 있었다. 검증은 `browser.new_context()`
+  **전에** 하므로 거절된 호출은 원격 사이트에 아무 요청도 보내지 않는다.
+- 운영 경로 영향 없음: `api/portal_sync.py`는 항상 사용자가 입력한 두 값을 넘긴다.
+- ⚠️ 이 가드는 `ENV`에 의존한다 — 실제로 동작하려면 **P0-6**이 함께 있어야 한다.
 
-**P1-5. CORS 설정 완화 여지**
+**P1-5. CORS 설정 완화 여지** — ✅ `allow_credentials=False` 적용
 - `allow_credentials=True`인데 인증은 Authorization 헤더(localStorage 토큰)로 하고 쿠키를
   쓰지 않는다 → `False`로 낮춰도 동작에 영향 없고 공격면만 줄어든다
+- **검증 후 적용**: 백엔드 전체에 `set_cookie`/`request.cookies`/`SessionMiddleware`/
+  `Cookie(...)` 사용 0건, 프론트에 `withCredentials`/`document.cookie`/`credentials:
+  'include'` 0건을 확인하고 나서 `main.py`를 `allow_credentials=False`로 바꿨다.
+  회귀 테스트가 응답에 `access-control-allow-credentials`가 없고 `Set-Cookie`도
+  안 나가는 걸 검사한다. 쿠키 세션을 도입하면 CSRF 대책과 함께 다시 켜야 한다.
 - `CORS_ORIGIN_REGEX`가 Vercel preview 전체(`...-*.vercel.app`)를 허용한다.
   현재는 수용하되, 운영 도메인 확정 후 프로덕션 백엔드에서는 preview 패턴 제거
 
@@ -155,6 +188,7 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
   일정에는 과하다
 - 대신 최소 조치: 응답에 CSP 헤더 추가(인라인 스크립트 차단), `rememberLogin=false`일 때
   sessionStorage를 쓰는 현재 동작 유지, 의존성에 알려진 XSS 취약점 없는지 `npm audit`
+
 
 ### P2 — 서비스 공개 전
 

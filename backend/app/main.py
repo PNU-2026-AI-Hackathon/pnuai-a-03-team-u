@@ -76,7 +76,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_origin_regex=settings.CORS_ORIGIN_REGEX,
-    allow_credentials=True,
+    # 인증은 Authorization: Bearer 헤더로만 한다 — 백엔드 어디에서도 쿠키를 굽거나
+    # 읽지 않고(2026-08-14 확인), 프론트 axios 클라이언트도 withCredentials를 쓰지
+    # 않는다. 따라서 credentials 허용은 동작에 필요 없고 공격면만 넓힌다
+    # (security-privacy-plan.md P1-5). 쿠키 세션을 도입하게 되면 CSRF 대책과 함께
+    # 다시 켜야 한다.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
