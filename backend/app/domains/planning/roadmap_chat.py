@@ -68,6 +68,17 @@ from app.domains.academics.program_status import (
 _BALANCED_LIBERAL_AREAS = BALANCED_LIBERAL_AREAS
 
 
+# program_type → 사용자에게 보여줄 한글 명칭. 컨텍스트 블록과 도구 응답이 같은 값을 써야
+# LLM이 한쪽 표기만 보고 다른 이름으로 부르지 않는다.
+# `UserAcademicProgram.program_type`의 실제 값과 정확히 맞춘다 (auth._VALID_PROGRAM_TYPES).
+_PROGRAM_TYPE_LABELS: dict[str, str] = {
+    "primary": "주전공",
+    "dual": "복수전공",
+    "minor": "부전공",
+    "interdisciplinary": "융합·연계전공",
+}
+
+
 def _current_academic_term() -> tuple[int, int]:
     """오늘 날짜 기준 (학년도, 학기). portal_sync._current_academic_term과 같은 규칙:
     1~2월=전년도 2학기, 3~8월=당해 1학기, 9~12월=당해 2학기.
@@ -1106,6 +1117,10 @@ class _ToolContext:
             "programs": [
                 {
                     "program_type": p.program_type,
+                    # 한글 명칭을 같이 준다. 영문 코드만 주면 LLM이 추측해서 연계전공(48학점)을
+                    # "부전공"이라 부르는 일이 있었다 — 부전공은 21학점이라 학생이 요구 학점을
+                    # 오해한다 (골든 케이스 06에서 관측).
+                    "program_label": _PROGRAM_TYPE_LABELS.get(p.program_type, p.program_type),
                     "department_id": p.department_id,
                     "major_id": p.major_id,
                     "requirement_found": p.requirement_found,
@@ -1784,6 +1799,19 @@ def _load_history(db: Session, session_id: int) -> list[CourseRoadmapChatMessage
     return list(reversed(latest))
 
 
+def _program_required_credits(db: Session, program: UserAcademicProgram) -> int | None:
+    """이 학적 프로그램의 졸업 요구 총학점. 없으면 None.
+
+    프로필 블록에 실어 LLM이 프로그램 유형만 보고 학점을 추측하지 않게 한다 —
+    융합·연계전공은 21(SW융합트랙)·36(복수전공)·42·48(정식 연계전공)로 갈리는데,
+    이름만으로는 구분이 안 돼 실제로 오인이 관측됐다.
+    """
+    from app.domains.academics.graduation_progress import _find_requirement
+
+    requirement = _find_requirement(db, program)
+    return requirement.required_total_credits if requirement else None
+
+
 def _build_student_context_block(db: Session, user: User) -> str:
     """이 학생의 진로/전공/부전공/이수기록을 요약해 시스템 프롬프트에 붙일 블록으로 만든다.
     LLM이 매 턴 이 정보를 보고 진로에 맞는 과목·부족한 이수구분·이미 이수한 과목을
@@ -1802,17 +1830,18 @@ def _build_student_context_block(db: Session, user: User) -> str:
         # (auth._VALID_PROGRAM_TYPES). 예전엔 "double"/"teaching"처럼 존재하지 않는
         # 키가 적혀 있어서 복수전공 학생이 LLM에게 "dual: OO학과"로 전달됐다.
         # SW융합트랙·연계전공·융합전공은 전부 interdisciplinary로 들어온다.
-        label = {
-            "primary": "주전공",
-            "dual": "복수전공",
-            "minor": "부전공",
-            "interdisciplinary": "융합·연계전공",
-        }.get(p.program_type or "", p.program_type or "unknown")
+        label = _PROGRAM_TYPE_LABELS.get(p.program_type or "", p.program_type or "unknown")
         line = f"  - {label}: {dept_name}"
         if major_name:
             line += f" / {major_name}"
         if p.curriculum_year:
             line += f" ({p.curriculum_year} 교육과정)"
+        # 요구 학점을 여기 같이 실어준다. 이게 없으면 LLM이 도구를 호출하고도 "48학점
+        # 연계전공"을 21학점 SW융합트랙으로 오인하는 일이 있었다 (골든 케이스 06).
+        # 프로그램 유형만으로는 21/36/42/48이 구분되지 않기 때문이다.
+        required = _program_required_credits(db, p)
+        if required is not None:
+            line += f" — 요구 {required}학점"
         program_lines.append(line)
     if not program_lines:
         program_lines.append("  - (등록된 학적 프로그램 없음)")
@@ -1909,8 +1938,11 @@ def _build_student_context_block(db: Session, user: User) -> str:
 
 - **학적 프로그램(전공/부전공 등)**:
 {chr(10).join(program_lines)}
-  → 복수전공/부전공이 있으면 그쪽 이수학점 요건도 병행해 챙겨야 한다. 없으면 주전공 요건만
-    본다. get_graduation_progress는 현재 주전공 기준으로만 답한다는 걸 감안해라.
+  → 복수전공/부전공/연계전공이 있으면 **그 프로그램의 요구 학점도 반드시 함께 안내해라**.
+    위에 학점이 적혀 있으면 그게 그 프로그램의 졸업 요구 학점이다 — 주전공 요건만 답하고
+    넘어가면 학생이 다전공 이수 계획을 통째로 놓친다.
+    `get_graduation_progress`는 **활성 프로그램 전부**(주전공·부전공·복수전공·융합)의 남은
+    학점을 함께 돌려준다. 그룹별 세부 규칙까지 필요하면 `get_program_evaluations`를 더 불러라.
 
 - **이수 완료 과목(성적표 원문 표기, 학과 커리큘럼 표기와 차이 있을 수 있음)**:
 {chr(10).join(completed_lines)}

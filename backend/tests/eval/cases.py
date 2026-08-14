@@ -858,6 +858,15 @@ def case_sw_convergence_embedded() -> EvalCase:
             ),
         ],
         courses=_cs_catalog(),
+        # 이수 기록이 하나도 없으면 `critical_missing_required`에 2학기 전용 필수가 줄줄이
+        # 잡혀서 그 졸업 위험 경고가 답변을 통째로 차지한다 — 정작 검증하려는 48학점 연계전공
+        # 안내까지 못 간다(2026-08-14 실측: 3회 모두 그랬다). 애초에 48학점 다전공을 이수
+        # 중인데 아무것도 안 들은 학생은 앞뒤가 안 맞기도 하다.
+        records=_cs_lower_year_records(),
+        roadmap_items=[
+            RoadmapItemSpec(course_name=r.raw_course_name, planned_grade=g, status="completed")
+            for r, g in zip(_cs_lower_year_records(), [1, 1, 1, 2, 2, 2])
+        ],
     )
     return EvalCase(
         slug="06-sw-embed", persona=persona, agent="roadmap",
@@ -867,9 +876,16 @@ def case_sw_convergence_embedded() -> EvalCase:
                              reason="주전공 + 연계전공 진도 둘 다 필요"),
             ExpectedBehavior(
                 "llm_judge",
-                "48학점 요구 조건이 있는 연계전공에 대해 남은 학점/진도를 사용자에게 "
-                "명확히 안내했는가? 21학점 SW융합트랙으로 오인하지 않았는가?",
-                reason="트랙(21학점) vs 정식 연계전공(48학점) 구분",
+                "다음 두 조건을 **모두** 만족하면 pass, 하나라도 어기면 fail:\n"
+                "(a) 임베디드SW 연계전공의 요구 학점이 **48학점**임을 밝혔다 "
+                "(\"48학점 중 N학점 이수\"·\"48학점까지 N학점 남음\" 같은 표현도 인정).\n"
+                "(b) 그 프로그램의 요구 학점을 21학점이라고 하거나 'SW융합트랙'이라고 "
+                "부르지 않았다.\n"
+                "**참고**: 프로그램을 '부전공'·'다전공'처럼 다르게 불렀더라도 48학점을 "
+                "정확히 안내했으면 (a)를 만족한 것으로 본다 — 명칭 정확도는 별도 관심사다. "
+                "주전공(133학점) 진도를 함께 안내한 것도 감점 사유가 아니다.",
+                reason="트랙(21학점) vs 정식 연계전공(48학점) 구분. 기준이 애매하면 "
+                       "정당한 답변도 fail 처리된다 — 무엇이 pass/fail인지 명시한다",
             ),
         ],
     )
