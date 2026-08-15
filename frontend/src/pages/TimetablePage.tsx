@@ -97,12 +97,17 @@ function toMinutes(value: string | null) {
   return hour * 60 + minute;
 }
 
+function formatOfferingTime(offering: SuggestedOffering) {
+  const slot = offering.times.find((time) => time.day_of_week && time.start_time);
+  if (!slot) return "시간 미정";
+  return `${slot.day_of_week} ${slot.start_time}${slot.end_time ? `-${slot.end_time}` : ""}`;
+}
+
 /** 분반 한 줄 요약. "전공 필수 3학점 · 월 10:00-11:15 · 김태완 교수" */
 function offeringSummary(offering: SuggestedOffering) {
-  const slot = offering.times.find((time) => time.day_of_week && time.start_time);
   return [
     [offering.category, offering.credits ? `${offering.credits}학점` : null].filter(Boolean).join(" "),
-    slot ? `${slot.day_of_week} ${slot.start_time}-${slot.end_time}` : null,
+    formatOfferingTime(offering),
     offering.professor ? `${offering.professor} 교수` : null,
   ]
     .filter(Boolean)
@@ -869,9 +874,23 @@ export function TimetablePage() {
               const placed = placedOfferingIds.has(offering.offering_id);
               return (
                 <li className="timetable-course" key={offering.offering_id}>
-                  <div>
+                  <div className="timetable-course-info">
                     <strong>{offering.course_name ?? "과목"}</strong>
-                    <p>{offeringSummary(offering)}</p>
+                    <div className="timetable-course-tags" aria-label="과목 정보">
+                      {offering.category ? <span>{offering.category}</span> : null}
+                      {offering.credits ? <span>{offering.credits}학점</span> : null}
+                      {offering.section ? <span>{offering.section}분반</span> : null}
+                    </div>
+                    <dl className="timetable-course-meta">
+                      <div>
+                        <dt>시간</dt>
+                        <dd>{formatOfferingTime(offering)}</dd>
+                      </div>
+                      <div>
+                        <dt>교수</dt>
+                        <dd>{offering.professor ? `${offering.professor} 교수` : "미정"}</dd>
+                      </div>
+                    </dl>
                   </div>
                   <button
                     type="button"
