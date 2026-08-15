@@ -130,6 +130,67 @@ class RateLimitTest(unittest.TestCase):
         self.assertIsNotNone(r.headers.get("Retry-After"))
 
 
+@pytest.mark.ratelimit
+class LimiterSuccessPathTest(unittest.TestCase):
+    """리밋이 걸린 엔드포인트의 **성공 응답**이 살아 있는지.
+
+    이 테스트가 없어서 실제 사고가 났다. `Limiter(headers_enabled=True)`이면 slowapi가
+    엔드포인트 반환값이 starlette Response가 아닐 때 `kwargs["response"]`에 헤더를
+    주입하려 하고, 우리 엔드포인트는 Pydantic 모델을 반환하며 `response: Response`를
+    선언하지 않으므로 None이 넘어가 예외 → **정상 요청이 500**이 됐다.
+
+    위의 RateLimitTest가 이걸 못 잡은 이유: 401(인증 실패)과 429(리밋 초과)는 둘 다
+    헤더 주입 지점 **전에** 빠져나간다. 그래서 리밋 테스트가 전부 초록인데 정작
+    로그인 성공은 죽어 있는 상태가 만들어졌다.
+
+    그래서 여기서는 실제 DB나 계정에 기대지 않고, 우리 `limiter`를 그대로 쓰는 최소
+    앱을 세워 "Pydantic을 반환하는 리밋 엔드포인트가 200을 준다"는 계약만 본다.
+    새 리밋 엔드포인트가 늘어나도 이 계약은 그대로 유효하다.
+    """
+
+    def test_pydantic_returning_endpoint_still_returns_200(self):
+        from fastapi import FastAPI, Request
+        from pydantic import BaseModel
+
+        from app.core.ratelimit import limiter
+
+        class Probe(BaseModel):
+            ok: bool
+
+        probe_app = FastAPI()
+        probe_app.state.limiter = limiter
+
+        @probe_app.get("/probe", response_model=Probe)
+        @limiter.limit("30/minute")
+        def probe_endpoint(request: Request):  # noqa: ARG001 - slowapi가 요구하는 인자
+            return Probe(ok=True)
+
+        response = TestClient(probe_app).get("/probe")
+
+        self.assertEqual(
+            200,
+            response.status_code,
+            "리밋이 걸린 엔드포인트가 성공 경로에서 죽었다. "
+            "Limiter(headers_enabled=...)를 켰다면 리밋이 걸린 모든 엔드포인트에 "
+            f"`response: Response`가 필요하다. 응답: {response.text[:300]}",
+        )
+        self.assertEqual({"ok": True}, response.json())
+
+    def test_limiter_does_not_require_response_param(self):
+        """설정 자체를 못박아 둔다.
+
+        위 테스트가 근본 원인을 잡지만, 실패 메시지가 500 하나뿐이면 원인을 다시
+        추적해야 한다. 어떤 설정 때문인지 이름으로 바로 드러나게 한 줄 더 둔다.
+        """
+        from app.core.ratelimit import limiter
+
+        self.assertFalse(
+            limiter._headers_enabled,
+            "headers_enabled를 켜려면 리밋이 걸린 모든 엔드포인트 시그니처에 "
+            "`response: Response`를 먼저 추가해야 한다 (app/core/ratelimit.py 주석 참고).",
+        )
+
+
 class CrawlerCredentialFallbackTest(unittest.TestCase):
     """P1-4: `.env`의 개인 부산대 계정이 크롤러 기본 계정으로 쓰이지 않는지.
 

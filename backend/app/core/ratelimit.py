@@ -48,8 +48,23 @@ limiter = Limiter(
     key_func=_user_or_ip,
     storage_uri=settings.RATE_LIMIT_STORAGE_URI or None,
     enabled=settings.RATE_LIMIT_ENABLED,
-    # 헤더로 남은 횟수를 알려줘 프론트가 사용자에게 안내할 수 있게 한다.
-    headers_enabled=True,
+    # ⚠️ headers_enabled는 반드시 False로 둔다. True로 켜면 **성공 응답이 전부 500이 된다.**
+    #
+    # slowapi 0.1.10 `extension.py`의 sync/async wrapper는 엔드포인트 반환값이
+    # starlette Response가 아니면 `_inject_headers(kwargs.get("response"), ...)`를 부르고,
+    # `_inject_headers`는 `headers_enabled`가 켜져 있을 때 response가 Response가 아니면
+    # 예외를 던진다. 우리 엔드포인트는 전부 Pydantic 모델을 반환하고 `response: Response`
+    # 파라미터를 선언하지 않으므로 kwargs["response"]가 없다 → None → 예외 → 500.
+    #
+    # 즉 리밋이 걸린 /auth/login, /auth/signup, /auth/password-reset/request,
+    # /me/portal-sync, /rag/ingest, 로드맵 /chat, 시간표 /recommend 가 **정상 요청에서**
+    # 죽는다. 429 경로와 401 경로는 헤더 주입 전에 빠져나가서 멀쩡해 보이는 게 함정이다.
+    #
+    # 남은 횟수 헤더가 정말 필요해지면, 켜는 것만으로는 안 되고 리밋이 걸린 **모든**
+    # 엔드포인트 시그니처에 `response: Response`를 추가해야 한다. 하나라도 빠뜨리면 그
+    # 엔드포인트만 조용히 500이 되므로, 그때는 회귀 테스트도 엔드포인트별로 깔아야 한다.
+    # 지금 프론트는 이 헤더를 읽지 않으므로 끄는 쪽이 이득이다.
+    headers_enabled=False,
 )
 
 

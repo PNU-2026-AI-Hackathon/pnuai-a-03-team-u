@@ -395,6 +395,27 @@ _TOOLS = [
 
 _DAY_TOKENS = {"월": "월", "화": "화", "수": "수", "목": "목", "금": "금", "토": "토", "일": "일"}
 
+# 요일 표기 추출. 예전 정규식 `(?:[월화수목금토일](?:요일)?)+` 은 두 가지로 고장나 있었다.
+#
+# ① **평범한 낱말 속 글자를 요일로 읽었다.** 공백을 지운 문장 전체를 훑기 때문에
+#    '전공필수과목만' → 필'수'·과'목' → {수, 목}이 됐다. 이 제약은 이후
+#    `_attach_offerings`(후보에서 분반 제거) → `validate_timetable`
+#    (`time_constraint_violation`) → `finish_response`(시간표 삭제) 세 군데에서
+#    강제되므로, 사용자는 "왜 수·목 수업만 나오지" 또는 빈 시간표를 이유도 모르고 받는다.
+#    → 요일로 인정하는 조건: (a) '요일'이 명시됐거나, (b) 요일 글자가 2자 이상
+#      연달아 나올 때('월수', '화목'). 한 글자만 있는 건 무시한다.
+#
+# ② **'수요일'의 '일'을 일요일로 셌다.** 매치된 문자열 전체를 훑어서
+#    '월요일과 수요일만' → {월, 수, 일}이 됐다. 즉 '…요일'을 언급하는 거의 모든
+#    요청에 일요일이 섞여 들어갔다.
+#    → '요일' 접미사는 별도 그룹으로 빼서 글자 수집 대상에서 제외한다.
+#
+# 구분자에 '과'/'와'는 넣지 않는다. 넣으면 '필수과목'이 수-과-목으로 이어져 ①이 재발한다.
+# '월요일과 수요일'처럼 '과'로 이어진 표현은 각각 '요일'이 붙어 있어 따로 잡히므로 문제없다.
+_DAY_MENTION_RE = re.compile(
+    r"(?P<days>[월화수목금토일](?:[,/·~]?[월화수목금토일])*)(?P<explicit>요일)?"
+)
+
 # 오전/오후 경계. 12:00에 걸치는 수업은 어느 쪽으로도 단정하지 않고 통과시킨다(보수적).
 _NOON = datetime.time(12, 0)
 
@@ -421,16 +442,13 @@ def _parse_time_constraint(message: str | None) -> dict | None:
     # "빼고/제외"는 반대 의미라 지금은 다루지 않는다 (오파싱 위험) — 제약 없음으로 둔다.
     if "빼고" in text or "제외" in text:
         return None
-    day_run = re.findall(r"(?:[월화수목금토일](?:요일)?)+", text)
     days: set[str] = set()
-    for run in day_run:
-        for ch in run:
-            if ch in _DAY_TOKENS:
-                days.add(ch)
-    # '일'은 '일요일'뿐 아니라 '일단'·'수업일' 등에서도 나오므로, 다른 요일과 함께 잡힌
-    # 경우에만 신뢰한다.
-    if days == {"일"}:
-        days = set()
+    for match in _DAY_MENTION_RE.finditer(text):
+        chars = [ch for ch in match.group("days") if ch in _DAY_TOKENS]
+        # '요일'이 붙지 않은 한 글자짜리는 낱말의 일부일 가능성이 훨씬 높다.
+        if not match.group("explicit") and len(chars) < 2:
+            continue
+        days.update(chars)
     if days:
         constraint["days"] = days
 
@@ -912,25 +930,51 @@ class _TimeTableToolContext:
         """이번 학기에 개설 자체가 하나라도 있는지 (제약 필터 적용 후 기준).
 
         "조합을 만들 수 있었는데 안 만든 것"과 "정말 아무것도 없는 것"을 구분하는 데 쓴다.
+
+        예전 구현은 해당 학기 **전교 개설 분반을 전부 객체로 적재**한 다음
+        `CourseTime.offering_id.in_([...])`로 시간을 다시 긁었다. 두 가지가 문제였다:
+
+        - 존재 여부만 알면 되는데 전수 적재를 챗 턴마다 했다.
+        - `in_()`이 분반 하나당 bind 파라미터를 하나씩 만든다. 실제 수강편람은 학기당
+          수천~수만 분반이라 PostgreSQL의 bind 파라미터 상한(65535)에 걸려 **쿼리가
+          통째로 실패**할 수 있었다.
+
+        제약이 없으면 존재 확인 한 방이면 끝이고, 있으면 조인 한 번으로 (분반, 시간)을
+        받아 파이썬 판정 로직은 그대로 쓴다 — 판정 규칙을 SQL로 옮겨 적으면 후보 필터
+        쪽 로직과 갈라질 위험이 있어서 그대로 둔다.
         """
-        offerings = self.db.scalars(
-            select(CourseOffering).where(
+        if not self.time_constraint:
+            return (
+                self.db.scalar(
+                    select(CourseOffering.id)
+                    .where(
+                        CourseOffering.year == self.year,
+                        CourseOffering.semester == self.semester,
+                    )
+                    .limit(1)
+                )
+                is not None
+            )
+
+        times_by_off: dict[int, list[CourseTime]] = {}
+        rows = self.db.execute(
+            select(CourseOffering.id, CourseTime)
+            .outerjoin(CourseTime, CourseTime.offering_id == CourseOffering.id)
+            .where(
                 CourseOffering.year == self.year,
                 CourseOffering.semester == self.semester,
             )
         ).all()
-        if not offerings:
-            return False
-        if not self.time_constraint:
-            return True
-        times_by_off: dict[int, list[CourseTime]] = {o.id: [] for o in offerings}
-        for t in self.db.scalars(
-            select(CourseTime).where(CourseTime.offering_id.in_([o.id for o in offerings]))
-        ).all():
-            times_by_off.setdefault(t.offering_id, []).append(t)
+        for offering_id, course_time in rows:
+            bucket = times_by_off.setdefault(offering_id, [])
+            # outer join이라 시간표가 없는 분반은 course_time이 None으로 온다.
+            # 그 경우도 "시간 정보 없음"으로 판정에 넘겨야 기존 동작과 같다.
+            if course_time is not None:
+                bucket.append(course_time)
+
         return any(
-            _times_violate_constraint(times_by_off.get(o.id, []), self.time_constraint) is None
-            for o in offerings
+            _times_violate_constraint(times, self.time_constraint) is None
+            for times in times_by_off.values()
         )
 
     def schedules_violating_constraint(self, schedules: list[dict]) -> list[dict]:

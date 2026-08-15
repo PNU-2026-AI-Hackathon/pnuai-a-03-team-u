@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from playwright.sync_api import Browser, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from app.core.config import settings
+from app.core.config import is_dev_environment, settings
 
 _logger = logging.getLogger(__name__)
 
@@ -18,15 +18,18 @@ class PnuLoginError(Exception):
     pass
 
 
-# `.env`의 PNU_LOGIN_ID/PW로 자동 폴백해도 되는 환경.
-# 이 값은 개발자 본인의 부산대 계정이고 `.env`는 팀 채널로 공유되므로, 배포 환경에서
-# 폴백을 허용하면 개인 학교 계정이 크롤러의 기본 계정이 된다
-# (security-privacy-plan.md P1-4). 로컬 개발 편의만 남기고 그 외에는 금지한다.
-_FALLBACK_ALLOWED_ENVS = frozenset({"local", "dev", "development"})
-
-
 def _fallback_allowed() -> bool:
-    return (settings.ENV or "").strip().lower() in _FALLBACK_ALLOWED_ENVS
+    """`.env`의 PNU_LOGIN_ID/PW로 자동 폴백해도 되는 환경인가.
+
+    이 값은 개발자 본인의 부산대 계정이고 `.env`는 팀 채널로 공유되므로, 배포 환경에서
+    폴백을 허용하면 개인 학교 계정이 크롤러의 기본 계정이 된다
+    (security-privacy-plan.md P1-4). 로컬 개발 편의만 남기고 그 외에는 금지한다.
+
+    판단은 `core.config.is_dev_environment()` 하나로 한다 — 예전에는 여기와
+    `core/mailer.py`가 각자 다른 방식으로 ENV를 비교해서, 같은 "개발 환경인가"
+    질문에 서로 다른 답을 내놨다.
+    """
+    return is_dev_environment()
 
 
 def _resolve_credentials(

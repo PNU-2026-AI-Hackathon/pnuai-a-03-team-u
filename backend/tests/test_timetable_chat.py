@@ -535,6 +535,44 @@ class TimeConstraintParseTest(unittest.TestCase):
         """"화요일 빼고"는 의미가 반대라 지금은 제약으로 잡지 않는다 (오파싱 위험)."""
         self.assertIsNone(self.parse("화요일 빼고 짜주세요"))
 
+    def test_day_letters_inside_ordinary_words_are_not_days(self):
+        """'과목'·'필수'의 목·수를 요일로 읽으면 안 된다.
+
+        실제로 그렇게 동작했다. '만'/'위주'만 있으면 문장 전체에서 요일 글자를 긁어서
+        '전공필수과목만 넣어줘' → {수, 목}이 됐고, 그 제약이 후보 필터·검증·최종 응답
+        세 군데에서 강제돼 사용자는 이유 없이 수·목 수업만 받거나 빈 시간표를 받았다.
+        '만'은 한국어 요청에 워낙 흔해서 사실상 상시 발동하는 상태였다.
+        """
+        for msg in [
+            "전공 과목만 3개 추천해줘",
+            "전공필수만 추천해주세요",
+            "전공필수과목만 넣어줘",
+            "가볍게 3과목만 듣고 싶어요",
+            "졸업요건에 필요한 과목만 넣어줘",
+            "교양과목만 추천",
+            "수업만 3개 넣어줘",
+        ]:
+            parsed = self.parse(msg)
+            self.assertIsNone(
+                (parsed or {}).get("days"),
+                f"낱말 속 글자를 요일로 읽었다: {msg!r} -> {parsed}",
+            )
+
+    def test_yoil_suffix_does_not_add_sunday(self):
+        """'수요일'의 '일'이 일요일로 잡히면 안 된다.
+
+        예전에는 매치 문자열 전체를 훑어서 '…요일'을 언급하는 거의 모든 요청에
+        일요일이 섞여 들어갔다.
+        """
+        self.assertEqual({"월", "수"}, self.parse("월요일과 수요일만 넣어주세요")["days"])
+        self.assertEqual({"월", "수"}, self.parse("월/수요일에만 수업 넣어줘")["days"])
+        self.assertEqual({"금"}, self.parse("금요일 위주로 짜줘")["days"])
+
+    def test_explicit_single_day_still_works(self):
+        """한 글자짜리를 무시하되, '요일'이 붙으면 하루짜리 제약도 살아 있어야 한다."""
+        self.assertEqual({"월"}, self.parse("월요일만 수업 넣어줘")["days"])
+        self.assertEqual({"월", "수", "금"}, self.parse("월수금만 듣게 해줘")["days"])
+
 
 class TimeConstraintEnforcementTest(unittest.TestCase):
     """제약 위반 분반이 후보·검증·최종 응답 어디서도 통과하지 못하는지.
