@@ -2,7 +2,7 @@
 #### 1.1. 개발배경 및 필요성
 최근 고등교육 환경에서는 학생 개인의 학사 데이터와 AI를 결합해 필요한 학업·진로 행동을 선제적으로 제안하는 '학생 성공(Student Success)' 패러다임이 확산되고 있다. 북미의 Stellic, Advisor.AI, Civitas Learning 등은 수강계획·졸업요건·진로 데이터를 통합해 학생 맞춤형 학사 지원을 제공하고 있으며, 국내 대학들도 교과·비교과·진로 데이터를 연계한 AI 기반 맞춤형 추천 시스템을 고도화하고 있다.
 
-부산대학교 역시 학생지원시스템, 학생역량지원시스템, 취업전략과 등 다양한 디지털 지원 체계를 운영하고 있다. 그러나 학생 관점에서는 학사 정보, 비교과 정보, 취업·프로그램, 자격증·어학 시험 정보가 여러 시스템과 외부 사이트에 분산되어 있어 필요한 정보를 한 번에 파악하기 어렵다. 실제 설문조사(N=93)에서도 졸업요건·이수학점·필수과목 확인·계산이 어렵다는 응답이 63.4%, 비교과·튜터링·캡스톤·특강 등 정보를 제때 알지 못해 기회를 놓친 경험이 있다는 응답이 71.0%로 나타나 정보 분산 문제가 확인되었다.
+부산대학교 역시 학생지원시스템, 학생역량지원시스템, 취업전략과 등 다양한 디지털 지원 체계를 운영하고 있다. 그러나 학생 관점에서는 학사 정보, 비교과 정보, 취업·프로그램, 자격증·어학 시험 정보가 여러 시스템과 외부 사이트에 분산되어 있어 필요한 정보를 한 번에 파악하기 어렵다. 실제 설문조사(N=93)에서도 졸업요건·이수학점·필수과목 확인·계산이 어렵다는 응답이 63.4%에 달했고, 매 학기 수강 계획을 세울 때 얼마나 어렵게 느끼는지 묻는 문항에서는 '어렵다'(38.7%)와 '매우 어렵다'(5.4%)를 합쳐 44.1%가 어려움을 호소했으며, '보통이다'(35.5%)까지 더하면 5명 중 4명이 수강 계획 수립을 쉽지 않은 일로 인식했다. 학사 정보를 찾는 일부터 학기 계획을 세우는 일까지, 학사 설계 전 과정이 학생에게 부담이라는 점이 확인된 것이다.
 
 부산대학교가 운영하는 산지니 AI는 범용 AI 활용 환경과 교내 정보 접근성 향상에 초점이 있을 뿐, 학생 개인의 이수 과목·성적·졸업요건·다중전공 여부 등을 구조화해 다음 학기 수강계획을 설계하는 서비스와는 목적이 다르다. 따라서 기존 시스템을 대체하기보다는, 학생이 흩어진 정보를 해석하고 자신의 졸업요건과 수강 목표에 맞게 실행 가능한 수강계획을 세울 수 있도록 돕는 별도의 개인화 의사결정 지원 서비스가 필요하다. 본 프로젝트는 이 가운데 가장 반복적이고 정확성이 중요한 '졸업요건 분석'과 '수강계획 추천 및 시간표 AI 추천'을 우선 과제로 삼는다.
 <br/>
@@ -56,34 +56,35 @@
 ### 2. 상세설계
 #### 2.1. 시스템 구성도
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph FRONT["🖥️ 프론트엔드 — React SPA · Netlify(예정)"]
-        FE["회원가입 · Home · 내 정보<br/>성장 로드맵 · 시간표 작성"]
+        FE["회원가입 · Home · 내 정보 · 성장 로드맵 · 시간표 작성"]
     end
 
     subgraph BACK["⚙️ 백엔드 — FastAPI · Railway(예정)"]
-        API["REST API<br/>인증(JWT) · 프로필<br/>로드맵 · 시간표 · 검색"]
+        API["REST API<br/>인증(JWT) · 프로필 · 로드맵<br/>시간표 · 학과/강좌 검색"]
         RULE["규칙 기반 검증 엔진<br/>졸업요건 판정<br/>시간표 충돌 검사"]
-        AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>human-in-the-loop"]
+        AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>규칙 엔진을 도구로 호출"]
         CRAWL["Playwright 크롤러<br/>학적 · 이수내역<br/>수강편람 · 교과목개요"]
     end
 
     subgraph DATA["🗄️ Supabase PostgreSQL"]
         PG[("관계형 테이블<br/>학사 계층 · 강좌<br/>졸업요건 · 로드맵")]
-        VEC[("pgvector<br/>교육과정 임베딩<br/>RAG")]
+        VEC[("pgvector<br/>교육과정 임베딩 · RAG")]
     end
 
-    LLM["🤖 OpenAI API"]
-    PNU["🏫 PNU 학생지원시스템"]
+    subgraph EXT["🌐 외부 서비스"]
+        LLM["🤖 OpenAI API"]
+        PNU["🏫 PNU 학생지원시스템"]
+    end
 
     FE -->|HTTPS / JSON| API
     API --> RULE
     API --> AGENT
     API --> CRAWL
-    AGENT -->|판정 · 검색 도구| RULE
-    AGENT -->|유사도 검색| VEC
+    RULE --> PG
+    AGENT -->|RAG 검색| VEC
     AGENT --> LLM
-    API --> PG
     CRAWL --> PG
     CRAWL --> PNU
 
@@ -91,10 +92,12 @@ flowchart LR
     classDef back fill:#fef9c3,stroke:#ca8a04,color:#713f12
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef ext fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef band fill:transparent,stroke:#94a3b8,color:#64748b
     class FE front
     class API,RULE,AGENT,CRAWL back
     class PG,VEC data
     class LLM,PNU ext
+    class FRONT,BACK,DATA,EXT band
 ```
 <br/>
 
@@ -265,7 +268,7 @@ $ npm run dev                     # http://localhost:5173
 | 이도원 | 조현우 | 안선주 | 한고은 | 이민석 |
 |:-------:|:-------:|:-------:|:-------:|:-------:|
 | ldwlee03@gmail.com | blackest21@gmail.com | pusanju83@pusan.ac.kr | hge7317@naver.com | leems060811@gmail.com |
-| 백엔드 · PM | 백엔드 · AI 기능 구현 | UI/UX 디자인 | PM · 프론트엔드 | 데이터분석 · 프론트엔드 |
+| 백엔드 · PM · 팀장 | 백엔드 · AI 기능 구현 | UI/UX 디자인 | 프론트엔드 | 프론트엔드 |
 <br/>
 
 ### 7. 해커톤 참여 후기
