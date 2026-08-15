@@ -8363,7 +8363,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-grid {
   display: grid;
-  grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+  grid-template-columns: 48px repeat(5, minmax(92px, 1fr));
   /* 1행은 요일 머리글이라 따로 높이를 준다. 아래 칸이 5분 단위로 잘게 쪼개져
      있어서 grid-auto-rows를 그대로 받으면 머리글이 눌린다. */
   grid-template-rows: 40px;
@@ -8375,7 +8375,7 @@ body.theme-dark .topnav .theme-mode-button {
   grid-auto-rows: calc(72px / 12);
   border: 1px solid var(--gray-line);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .timetable-grid-corner,
@@ -8389,6 +8389,9 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-grid-corner,
 .timetable-grid-day {
   display: grid;
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--line);
   color: var(--muted);
   font-size: 12px;
@@ -8398,6 +8401,9 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-grid-hour {
   display: grid;
+  position: sticky;
+  left: 0;
+  z-index: 2;
   grid-column: 1;
   /* 정시 선에 맞춰 위로 붙인다. 수업이 10:30처럼 시간 중간에 시작하니
      라벨이 칸 한가운데 있으면 어느 선이 10시인지 읽기 어렵다. */
@@ -8412,24 +8418,33 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-block {
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   overflow: hidden;
   margin: 2px;
   padding: 6px 8px;
   border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 .timetable-block strong {
-  display: block;
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 12px;
   line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .timetable-block span {
   display: block;
-  margin-top: 2px;
-  font-size: 11px;
+  overflow: hidden;
+  font-size: 10.5px;
   line-height: 1.2;
-  opacity: 0.75;
+  opacity: 0.78;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tone-base {
