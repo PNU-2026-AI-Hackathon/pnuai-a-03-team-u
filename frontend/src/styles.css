@@ -8260,10 +8260,26 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .timetable-empty {
+  display: grid;
+  gap: 4px;
   margin: 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--shell-line);
+  border-radius: 12px;
+  background: var(--shell-canvas);
   color: var(--shell-dim);
   font-size: 14px;
   line-height: 1.6;
+}
+
+.timetable-empty strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.timetable-empty span {
+  color: var(--shell-dim);
+  font-size: 13px;
 }
 
 .timetable-course {
