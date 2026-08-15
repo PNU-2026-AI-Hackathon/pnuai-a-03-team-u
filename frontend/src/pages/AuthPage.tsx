@@ -262,31 +262,10 @@ export function AuthPage() {
 
         {mode === "signup" ? <SignupStepper current={1} /> : null}
 
-        {/* 로그인은 단일 패널 + 탭. 회원가입은 스텝 2(학사정보 불러오기)와 같은
-            와이드 2컬럼(onboarding-columns) — 좁은 외줄 폼이 스텝 2·3과 딴
-            화면처럼 보이던 원인이라 구성 자체를 맞춘다. */}
+        {/* 로그인은 단일 패널, 회원가입은 스텝 2와 같은 와이드 2컬럼. 화면 전환은
+            양쪽 모두 폼 하단 링크("회원가입"/"로그인")가 담당 — 탭은 두지 않는다. */}
         {mode === "login" ? (
           <div className="auth-panel">
-            <div className="auth-tabs" role="tablist" aria-label="인증 방식 선택">
-              <button
-                className="selected"
-                type="button"
-                role="tab"
-                aria-selected={true}
-                onClick={() => setMode("login")}
-              >
-                로그인
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={false}
-                onClick={() => setMode("signup")}
-              >
-                회원가입
-              </button>
-            </div>
-
             <form className="auth-form" onSubmit={handleLogin}>
               <div className="auth-title">
                 <p className="eyebrow">Welcome Back</p>
