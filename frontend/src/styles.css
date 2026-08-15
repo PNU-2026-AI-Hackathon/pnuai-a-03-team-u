@@ -9294,13 +9294,18 @@ body.theme-dark .roadmap-head-stats span {
 .override-clear-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 20px;
   background: #e9edf3;
   color: #566274;
   font-size: 12px;
+  font-weight: 700;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .account-danger-card {
@@ -9314,13 +9319,24 @@ body.theme-dark .roadmap-head-stats span {
 .account-delete-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 20px;
   background: #fff0f1;
   color: #c84454;
   font-size: 13px;
+  font-weight: 700;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.account-delete-button:hover:not(:disabled) {
+  background: #c84454;
+  color: #fff;
 }
 
 .account-delete-button:disabled {
@@ -9388,9 +9404,11 @@ body.theme-dark .override-clear-button {
   justify-content: center;
   width: 28px;
   height: 28px;
+  border: 0;
   border-radius: 8px;
   background: #e9edf3;
   color: #566274;
+  cursor: pointer;
 }
 
 .roadmap-meta-editor {
@@ -9422,9 +9440,11 @@ body.theme-dark .override-clear-button {
   justify-content: center;
   width: 32px;
   height: 32px;
+  border: 0;
   border-radius: 8px;
   background: #e9edf3;
   color: #566274;
+  cursor: pointer;
 }
 
 .roadmap-meta-error {
