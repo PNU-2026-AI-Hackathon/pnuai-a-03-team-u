@@ -631,6 +631,21 @@ export function TimetablePage() {
           <p>시간표를 여러 개 만들어 비교하고, 마음에 드는 것을 로드맵에 반영하세요.</p>
         </div>
         <div className="timetable-head-actions">
+          <label className="timetable-select">
+            <span className="sr-only">시간표 선택</span>
+            <select
+              value={activeId ?? ""}
+              onChange={(event) => void handleSelectTimetable(Number(event.target.value))}
+              disabled={timetables.length === 0 || isRenaming}
+            >
+              {timetables.length === 0 ? <option value="">시간표 없음</option> : null}
+              {timetables.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.title} · {item.total_credits}학점
+                </option>
+              ))}
+            </select>
+          </label>
           {isRenaming ? (
             <form
               className="timetable-rename"
@@ -646,72 +661,55 @@ export function TimetablePage() {
                 maxLength={100}
                 onChange={(event) => setRenameDraft(event.target.value)}
               />
-              <button type="submit">확인</button>
-              <button type="button" onClick={() => setIsRenaming(false)}>취소</button>
+              <button className="timetable-rename-submit" type="submit">확인</button>
+              <button className="timetable-rename-cancel" type="button" onClick={() => setIsRenaming(false)}>취소</button>
             </form>
-          ) : (
-            <>
-              <label className="timetable-select">
-                <span className="sr-only">시간표 선택</span>
-                <select
-                  value={activeId ?? ""}
-                  onChange={(event) => void handleSelectTimetable(Number(event.target.value))}
-                  disabled={timetables.length === 0}
-                >
-                  {timetables.length === 0 ? <option value="">시간표 없음</option> : null}
-                  {timetables.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.title} · {item.total_credits}학점
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="timetable-tool"
-                type="button"
-                title="새 시간표 만들기"
-                aria-label="새 시간표 만들기"
-                onClick={() => void handleCreateTimetable()}
-              >
-                <Plus size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-tool"
-                type="button"
-                title="이름 바꾸기"
-                aria-label="이름 바꾸기"
-                disabled={detail === null}
-                onClick={() => {
-                  setRenameDraft(detail?.title ?? "");
-                  setIsRenaming(true);
-                  setIsConfirmingDelete(false);
-                }}
-              >
-                <Pencil size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-tool is-danger"
-                type="button"
-                title="시간표 삭제"
-                aria-label="시간표 삭제"
-                disabled={detail === null}
-                onClick={() => setIsConfirmingDelete(true)}
-              >
-                <Trash2 size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-save"
-                type="button"
-                title="이 시간표의 과목을 성장 로드맵에 반영합니다"
-                disabled={
-                  isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
-                }
-                onClick={() => void applyToRoadmap()}
-              >
-                {isApplying ? "처리 중…" : "로드맵에 반영"}
-              </button>
-            </>
-          )}
+          ) : null}
+          <button
+            className="timetable-tool"
+            type="button"
+            title="새 시간표 만들기"
+            aria-label="새 시간표 만들기"
+            disabled={isRenaming}
+            onClick={() => void handleCreateTimetable()}
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-tool"
+            type="button"
+            title="이름 바꾸기"
+            aria-label="이름 바꾸기"
+            disabled={detail === null || isRenaming}
+            onClick={() => {
+              setRenameDraft(detail?.title ?? "");
+              setIsRenaming(true);
+              setIsConfirmingDelete(false);
+            }}
+          >
+            <Pencil size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-tool is-danger"
+            type="button"
+            title="시간표 삭제"
+            aria-label="시간표 삭제"
+            disabled={detail === null || isRenaming}
+            onClick={() => setIsConfirmingDelete(true)}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-save"
+            type="button"
+            title="이 시간표의 과목을 성장 로드맵에 반영합니다"
+            disabled={
+              isRenaming || isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
+            }
+            onClick={() => void applyToRoadmap()}
+          >
+            {isApplying ? "처리 중…" : "로드맵에 반영"}
+          </button>
         </div>
       </header>
 
