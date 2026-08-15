@@ -263,26 +263,30 @@ export function AuthPage() {
         {mode === "signup" ? <SignupStepper current={1} /> : null}
 
         <div className="auth-panel">
-          <div className="auth-tabs" role="tablist" aria-label="인증 방식 선택">
-            <button
-              className={mode === "login" ? "selected" : ""}
-              type="button"
-              role="tab"
-              aria-selected={mode === "login"}
-              onClick={() => setMode("login")}
-            >
-              로그인
-            </button>
-            <button
-              className={mode === "signup" ? "selected" : ""}
-              type="button"
-              role="tab"
-              aria-selected={mode === "signup"}
-              onClick={() => setMode("signup")}
-            >
-              회원가입
-            </button>
-          </div>
+          {/* 탭은 로그인 화면에서만. 회원가입은 스테퍼가 진행을 보여주는 3단계
+              흐름의 STEP 1이라, 탭이 끼면 단계 2·3과 다른 화면처럼 보인다.
+              로그인으로 돌아가는 길은 폼 하단 "이미 계정이 있나요?" 링크가 담당. */}
+          {mode === "login" ? (
+            <div className="auth-tabs" role="tablist" aria-label="인증 방식 선택">
+              <button
+                className="selected"
+                type="button"
+                role="tab"
+                aria-selected={true}
+                onClick={() => setMode("login")}
+              >
+                로그인
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={false}
+                onClick={() => setMode("signup")}
+              >
+                회원가입
+              </button>
+            </div>
+          ) : null}
 
           {mode === "login" ? (
             <form className="auth-form" onSubmit={handleLogin}>
@@ -351,9 +355,13 @@ export function AuthPage() {
           ) : (
             <form className="auth-form" onSubmit={handleSignup}>
               <div className="auth-title">
-                <p className="eyebrow">Create account</p>
-                <h1>회원가입</h1>
-                <p>필수 계정 정보와 선택 전공 정보를 바탕으로 개인 로드맵을 만듭니다.</p>
+                <p className="eyebrow">STEP 1 · ACCOUNT</p>
+                <h1>계정 정보 입력</h1>
+                <p>
+                  필수 계정 정보와 전공 정보를 입력합니다.
+                  <br />
+                  다음 단계에서 학사정보를 자동으로 불러옵니다.
+                </p>
               </div>
 
               <div className={`auth-message${message ? " error" : ""}`} aria-live="assertive">
