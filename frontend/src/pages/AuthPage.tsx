@@ -483,7 +483,8 @@ export function AuthPage() {
                   <p className="auth-track-desc">
                     학과전공 {formatCreditRange(trackPreview.dept_credits, "12~15")}학점 +
                     AI융합공통 {formatCreditRange(trackPreview.ai_common_credits, "6~9")}학점,
-                    총 {trackPreview.total_credits}학점을 이수하면 졸업증명서에 과정명이 표기됩니다. 졸업요건과는 별개예요.
+                    총 {trackPreview.total_credits}학점 인증 과정입니다. 이수 중이라면 체크해 두세요 —
+                    남은 학점을 자동으로 계산해 드려요.
                   </p>
                   <label className="auth-track-check">
                     <input
@@ -491,7 +492,7 @@ export function AuthPage() {
                       checked={wantsTrack}
                       onChange={(event) => setWantsTrack(event.target.checked)}
                     />
-                    <span>가입하면서 이수 체크 시작하기 (내 정보에서 언제든 해제 가능)</span>
+                    <span>이 트랙을 이수하고 있어요 (내 정보에서 언제든 해제 가능)</span>
                   </label>
                 </div>
               ) : null}

@@ -1285,7 +1285,7 @@ export function InfoPage() {
               </div>
               <p className="track-hint">
                 졸업요건과 별개로, 이수하면 졸업증명서에 과정명이 표기되는 인증 과정입니다.
-                학과전공 12~15학점 + AI융합공통 6~9학점, 총 21학점.
+                이수 중이라면 체크해 두세요 — 남은 학점을 자동으로 계산합니다.
               </p>
               {trackError ? <p className="sync-error" role="alert">{trackError}</p> : null}
               <div className="profile-record-list">
