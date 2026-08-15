@@ -5152,6 +5152,15 @@ body.theme-dark .semester-course-status.status-completed {
   font-weight: 800;
 }
 
+.sync-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #a45b05;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .sync-note {
   grid-column: 1 / -1;
   margin: 0;
@@ -7653,6 +7662,19 @@ body.theme-dark .topnav .theme-mode-button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.onboarding-badge.is-partial {
+  background: #fdf1de;
+  color: #a45b05;
+}
+
+.onboarding-warning {
+  margin: 0;
+  color: #a45b05;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
 }
 
 .onboarding-note {

@@ -86,21 +86,92 @@ def _absolute_semester(year: str, semester: str) -> int:
     return int(year) * 2 + (0 if semester == "1학기" else 1)
 
 
+def _steps_to_target(last_abs: int, target_abs: int) -> int:
+    """마지막 이수 학기에서 target까지 **재학 학기가 몇 번 더 지나는지**.
+
+    커리큘럼 학년은 달력이 아니라 **실제 재학한 학기 수**로 올라간다. 그래서 휴학으로
+    비운 학기를 달력 거리로 세면 학년이 부풀려진다.
+
+    실제 사고(골든 케이스 10): 2022 입학 후 5학기 이수(→ 커리큘럼 3-1)하고 휴학한 학생의
+    다음 학기를 구할 때, 달력 거리 6을 더해 rank 11 → 6학년이 됐다. 6은 `1<=grade<=4`를
+    벗어나 함수가 `None`을 돌려줬고, 그래서 도구가 LLM에게 학년을 못 알려줘 LLM이
+    "1학년 1학기"라고 지어냈다.
+
+    구분 기준은 **지금까지 공백이 있었는가**다:
+      - 공백 없음(마지막 이수 = 직전 학기) → 지금도 재학 중이므로 달력 거리 그대로.
+      - 공백 있음 → 그 사이는 재학하지 않았다. 다음 배치 가능 학기(= 현재 학기의 다음)를
+        복학 첫 학기로 보고 거기서부터 센다.
+
+    앞으로 또 휴학할지는 알 수 없으므로 복학 이후로는 연속 재학을 가정한다(기존 방침 유지).
+
+    여기서 `_absolute_semester`가 실패하는 경우는 없다 — 입력이
+    `_current_academic_term()`이고, 그 함수는 반환 경로 세 개가 전부 학기를 `1` 또는 `2`
+    리터럴로 돌려주기 때문이다. 호출자가 넘기는 `last_abs`/`target_abs`는 이미 정수이고,
+    그 값들의 정규 학기 여부·연도 파싱은 `project_curriculum_term`이 먼저 거른다.
+    (예전에는 여기에 `current_abs is None` 체크가 있었는데, `_absolute_semester`는
+    `int(year) * 2 + ...`라 None을 돌려줄 수 없어서 한 번도 참이 된 적이 없었다.)
+    """
+    current_abs = _absolute_semester(*_current_academic_term_strings())
+    if current_abs - last_abs <= 1:
+        return target_abs - last_abs
+    next_plannable_abs = current_abs + 1
+    return max(1, 1 + (target_abs - next_plannable_abs))
+
+
+def _absolute_for_step(last_abs: int, steps: int) -> int:
+    """`_steps_to_target`의 역방향 — 마지막 이수 학기 뒤 `steps`번째 재학 학기의 달력 위치.
+
+    `project_calendar_term`이 쓴다. 정방향이 휴학 공백을 건너뛰는데 역방향이 달력 거리만
+    쓰면 두 함수가 서로의 역함수가 아니게 된다. 실제로 그랬다: 2022 입학 후 5학기 이수하고
+    휴학한 학생(현재 2026-2)에게
+
+        정방향  달력 2027-1학기 → 커리큘럼 3학년 2학기
+        역방향  커리큘럼 3학년 2학기 → 달력 **2024년 2학기**
+
+    가 나왔다. 2024-2는 그 학생이 휴학으로 다니지 않은 **과거** 학기다. 사용자가 로드맵의
+    "3학년 2학기" 칸에 과목을 끌어다 놓으면 planned_year가 2024로 찍힌다는 뜻이다.
+
+    분기 기준은 정방향과 같다:
+      - 공백 없음 → 지금도 재학 중이므로 마지막 이수 학기에서 달력으로 그대로 센다.
+      - 공백 있음 → 복학 첫 학기(= 현재 학기의 다음)가 steps=1이므로 `current_abs + steps`.
+        `_steps_to_target`이 steps를 최소 1로 자르므로 결과는 항상 현재 학기보다 뒤다 —
+        계획 학기가 과거로 떨어지지 않는다.
+    """
+    current_abs = _absolute_semester(*_current_academic_term_strings())
+    if current_abs - last_abs <= 1:
+        return last_abs + steps
+    return current_abs + steps
+
+
+def _current_academic_term_strings() -> tuple[str, str]:
+    """`roadmap_chat._current_academic_term`을 (year, "N학기") 문자열로.
+
+    roadmap_chat에서 가져오는 이유: 평가 하니스가 그 함수를 패치해 현재 학기를 고정하는데,
+    여기서 따로 날짜를 계산하면 그 패치가 안 먹어 테스트와 실행이 어긋난다.
+    """
+    from app.domains.planning.roadmap_chat import _current_academic_term
+
+    year, semester = _current_academic_term()
+    return str(year), f"{semester}학기"
+
+
 def project_curriculum_term(
     db: Session, user_id: int, year: str, semester: str
 ) -> tuple[int | None, str | None]:
     """아직 이수하지 않은 학기가 커리큘럼상 몇 학년 몇 학기인지 추정한다.
 
-    시간표 추천을 로드맵에 반영할 때 쓴다. 이수 기록이 없는 미래 학기라
-    _build_semester_rank만으로는 순번을 매길 수 없어서, 마지막으로 등록한 학기의
-    순번에 달력상 거리를 더해 이어 붙인다.
+    시간표 추천을 로드맵에 반영할 때, 그리고 챗이 "다음 학기는 N학년 M학기입니다"라고
+    말할 때 쓴다. 이수 기록이 없는 미래 학기라 `_build_semester_rank`만으로는 순번을
+    매길 수 없어서, 마지막으로 등록한 학기의 순번에 **재학 학기 수**를 더해 이어 붙인다
+    (달력 거리가 아니다 — `_steps_to_target` 참고).
 
     커리큘럼 축으로 환산할 수 없으면 (None, None)이다. planned_grade를 채우지
     않으면 로드맵 화면이 그 항목을 학년 슬롯에 넣지 못하고 "2026년 2학기" 같은
-    기타 칸으로 떨어뜨린다.
+    기타 칸으로 떨어뜨린다. 챗에서는 더 나빠서, 학년을 못 받은 LLM이
+    "1학년 1학기입니다"처럼 **지어낸다** (골든 케이스 10에서 실제 관측).
 
-    앞으로 휴학할지는 알 수 없으므로 쉬지 않고 다닌다고 본다. 실제로 휴학하면
-    다음 포털 동기화가 이수 기록 기준으로 다시 계산해 바로잡는다.
+    복학 이후로는 쉬지 않고 다닌다고 본다. 실제로 또 휴학하면 다음 포털 동기화가
+    이수 기록 기준으로 다시 계산해 바로잡는다.
     """
     if semester not in _REGULAR_SEMESTERS:
         return None, None
@@ -118,11 +189,11 @@ def project_curriculum_term(
     if rank is None:
         if semester_rank:
             last_key = max(semester_rank, key=lambda key: _semester_order(*key))
-            steps = target - _absolute_semester(*last_key)
-            if steps <= 0:
+            last_abs = _absolute_semester(*last_key)
+            if target - last_abs <= 0:
                 # 기록된 학기보다 과거인데 기록이 없다 — 근거가 없어 비워 둔다.
                 return None, None
-            rank = semester_rank[last_key] + steps
+            rank = semester_rank[last_key] + _steps_to_target(last_abs, target)
         else:
             # 이수 기록이 아예 없으면 이번이 첫 학기다.
             rank = 1
@@ -140,7 +211,9 @@ def project_calendar_term(
 
     로드맵 화면은 "4학년 1학기" 같은 커리큘럼 슬롯만 보여주므로, 사용자가 거기에
     과목을 끌어다 놓으면 그게 달력상 몇 년 몇 학기인지는 서버가 알아야 한다.
-    쉬지 않고 다닌다는 가정은 정방향과 같다.
+    휴학 공백 처리와 "복학 이후로는 쉬지 않고 다닌다"는 가정 모두 정방향과 같다
+    (`_absolute_for_step` 참고 — 여기서 달력 거리를 그대로 쓰면 계획 학기가 휴학으로
+    비운 과거로 떨어진다).
     """
     if grade is None or curriculum_semester not in _REGULAR_SEMESTERS:
         return None, None
@@ -166,7 +239,7 @@ def project_calendar_term(
     if steps <= 0:
         # 등록 기록 사이에 뚫린 순번 — 휴학 배치를 알 수 없어 비워 둔다.
         return None, None
-    absolute = _absolute_semester(*last_key) + steps
+    absolute = _absolute_for_step(_absolute_semester(*last_key), steps)
     return str(absolute // 2), "1학기" if absolute % 2 == 0 else "2학기"
 
 

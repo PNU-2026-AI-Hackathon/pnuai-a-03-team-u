@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -6,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.db import Base
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.courses.models import Course
+from app.domains.planning import roadmap_chat as roadmap_chat_mod
 from app.domains.planning.history import (
     project_calendar_term,
     project_curriculum_term,
@@ -267,8 +269,12 @@ class ProjectCurriculumTermTest(unittest.TestCase):
     def test_커리큘럼_학기를_달력으로_되돌린다(self):
         """로드맵 화면은 커리큘럼 슬롯만 안다 — 달력 학기는 서버가 되돌려야 한다.
 
-        위 엇학기 학생과 같은 이력. 사용자가 "4학년 2학기" 칸에 과목을 놓으면
-        그건 달력상 2026년 1학기다.
+        위 엇학기 학생과 같은 이력. 마지막 기록이 2025-2이고 지금이 2026-1이면 공백이
+        없으므로(= 지금 재학 중) "4학년 2학기"는 달력상 2026년 1학기다.
+
+        현재 학기를 patch하는 이유: `project_calendar_term`은 휴학 공백 판정에 오늘
+        날짜를 쓴다. 고정하지 않으면 9월이 되는 순간 현재 학기가 2026-2로 넘어가면서
+        같은 데이터가 "공백 있음"으로 바뀌어 이 테스트가 달력만 보고 깨진다.
         """
         db = self.make_db()
         self._add_terms(db, [
@@ -277,16 +283,128 @@ class ProjectCurriculumTermTest(unittest.TestCase):
             ("2024", "1학기"),
             ("2025", "1학기"), ("2025", "2학기"),
         ])
-        # 이미 등록한 학기는 추정하지 않고 실제 달력값을 돌려준다.
-        self.assertEqual(("2025", "2학기"), project_calendar_term(db, 1, 4, "1학기"))
-        # 아직 안 다닌 학기는 마지막 등록 학기 뒤로 이어 붙인다.
-        self.assertEqual(("2026", "1학기"), project_calendar_term(db, 1, 4, "2학기"))
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            # 이미 등록한 학기는 추정하지 않고 실제 달력값을 돌려준다.
+            self.assertEqual(("2025", "2학기"), project_calendar_term(db, 1, 4, "1학기"))
+            # 아직 안 다닌 학기는 마지막 등록 학기 뒤로 이어 붙인다.
+            self.assertEqual(("2026", "1학기"), project_calendar_term(db, 1, 4, "2학기"))
 
     def test_계절수업은_달력으로_되돌릴_수_없다(self):
         db = self.make_db()
         self._add_terms(db, [("2025", "1학기")])
         self.assertEqual((None, None), project_calendar_term(db, 1, 1, "여름계절수업"))
         self.assertEqual((None, None), project_calendar_term(db, 1, None, "1학기"))
+
+
+class ProjectCurriculumTermGapTest(unittest.TestCase):
+    """휴학 공백이 있는 학생의 다음 커리큘럼 학기.
+
+    커리큘럼 학년은 달력이 아니라 **재학한 학기 수**로 오른다. 달력 거리로 세면 휴학
+    기간만큼 학년이 부풀려지고, 4학년을 넘으면 함수가 None을 돌려줘 **챗이 학년을
+    지어낸다** — 골든 케이스 10에서 "다음 학기는 1학년 1학기입니다"로 관측됐다.
+    """
+
+    def make_db(self, terms, admission_type="freshman"):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_TABLES)
+        db = sessionmaker(bind=engine, autoflush=False)()
+        db.add(User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    admission_type=admission_type))
+        db.flush()
+        for i, (year, sem) in enumerate(terms):
+            db.add(StudentCourseRecord(user_id=1, raw_course_name=f"과목{i}",
+                                       category="전공선택", credits=3,
+                                       year=year, semester=sem))
+        db.commit()
+        return db
+
+    def project(self, terms, target=("2027", "1학기"), admission_type="freshman"):
+        db = self.make_db(terms, admission_type)
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 2)):
+            return project_curriculum_term(db, 1, *target)
+
+    def test_gap_does_not_inflate_grade(self):
+        """2022 입학, 5학기 이수(→3-1) 후 휴학. 다음 재학 학기는 3-2다."""
+        terms = [("2022", "1학기"), ("2022", "2학기"),
+                 ("2023", "1학기"), ("2023", "2학기"), ("2024", "1학기")]
+        self.assertEqual((3, "2학기"), self.project(terms))
+
+    def test_continuous_student_uses_calendar_distance(self):
+        """공백이 없으면 현재 학기도 재학 중이므로 달력 거리가 맞다.
+
+        5학기 이수(마지막 2026-1) + 지금 2026-2 재학 중 → 다음 2027-1은 7번째 = 4-1.
+        """
+        terms = [("2024", "1학기"), ("2024", "2학기"),
+                 ("2025", "1학기"), ("2025", "2학기"), ("2026", "1학기")]
+        self.assertEqual((4, "1학기"), self.project(terms))
+
+    def test_no_records_starts_at_first_term(self):
+        self.assertEqual((1, "1학기"), self.project([]))
+
+    def test_transfer_student_starts_at_third_grade(self):
+        self.assertEqual((3, "1학기"), self.project([], admission_type="transfer"))
+
+    def test_long_gap_still_within_grade_range(self):
+        """공백이 아무리 길어도 학년은 재학 학기 수로만 오른다 (None이 되면 안 된다)."""
+        terms = [("2018", "1학기"), ("2018", "2학기")]
+        grade, semester = self.project(terms)
+        self.assertEqual((2, "1학기"), (grade, semester))
+
+
+class CalendarTermRoundTripTest(unittest.TestCase):
+    """`project_curriculum_term`과 `project_calendar_term`은 서로의 역함수여야 한다.
+
+    한쪽만 휴학 공백을 반영하면 역방향이 **학생이 다니지 않은 과거 학기**를 돌려준다.
+    실제로 그랬다: 아래 학생에게 정방향은 2027-1학기 → 3학년 2학기를 주는데, 역방향은
+    3학년 2학기 → 2024년 2학기(휴학한 학기)를 줬다. 로드맵의 "3학년 2학기" 칸에 과목을
+    놓으면 planned_year가 2024로 저장된다는 뜻이다.
+    """
+
+    # 2022 입학, 5학기 이수(→ 커리큘럼 3학년 1학기) 후 휴학. 현재는 2026년 2학기.
+    TERMS = [("2022", "1학기"), ("2022", "2학기"),
+             ("2023", "1학기"), ("2023", "2학기"), ("2024", "1학기")]
+    NOW = (2026, 2)
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_TABLES)
+        db = sessionmaker(bind=engine, autoflush=False)()
+        db.add(User(id=1, email="t@x.com", password_hash="x", name="테스트",
+                    admission_type="freshman"))
+        db.flush()
+        for index, (year, semester) in enumerate(self.TERMS):
+            db.add(StudentCourseRecord(user_id=1, raw_course_name=f"과목{index}",
+                                       category="전공선택", credits=3,
+                                       year=year, semester=semester))
+        db.commit()
+        return db
+
+    def test_휴학_학생도_왕복이_성립한다(self):
+        db = self.make_db()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=self.NOW):
+            forward = project_curriculum_term(db, 1, "2027", "1학기")
+            self.assertEqual((3, "2학기"), forward)
+            self.assertEqual(("2027", "1학기"), project_calendar_term(db, 1, *forward))
+
+    def test_계획_학기는_현재_학기보다_뒤여야_한다(self):
+        """휴학 중인 학생의 어떤 커리큘럼 슬롯도 과거 달력으로 떨어지면 안 된다."""
+        db = self.make_db()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=self.NOW):
+            for grade, semester in [(3, "2학기"), (4, "1학기"), (4, "2학기")]:
+                with self.subTest(grade=grade, semester=semester):
+                    year, sem = project_calendar_term(db, 1, grade, semester)
+                    self.assertIsNotNone(year)
+                    self.assertGreater(
+                        (int(year), 1 if sem == "1학기" else 2), self.NOW,
+                        f"{grade}학년 {semester} → {year}년 {sem}는 이미 지난 학기다",
+                    )
+
+    def test_공백_없는_학생은_달력_거리를_그대로_쓴다(self):
+        """지금도 재학 중이면(마지막 기록 = 직전 학기) 휴학 보정이 끼어들면 안 된다."""
+        db = self.make_db()
+        # 마지막 기록 2024-1 바로 다음이 현재 학기인 상황.
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2024, 2)):
+            self.assertEqual(("2024", "2학기"), project_calendar_term(db, 1, 3, "2학기"))
 
 
 if __name__ == "__main__":

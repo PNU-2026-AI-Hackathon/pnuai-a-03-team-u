@@ -1,0 +1,70 @@
+# gitleaks 설정 — 보안 계획 P1-3.
+#
+# 기본 룰셋을 그대로 쓰고, 확인된 오탐만 좁게 허용한다.
+# 허용 항목을 추가할 땐 "왜 시크릿이 아닌지"를 반드시 같이 적을 것. 이유 없는
+# 허용이 쌓이면 이 게이트는 통과 도장으로만 남고 실제 유출을 못 잡는다.
+#
+# 로컬에서 돌려보기:
+#   gitleaks git . --no-banner --redact
+#
+# 2026-08-15 기준 히스토리 422커밋 전체 스캔 결과 = 실제 시크릿 0건.
+
+[extend]
+useDefault = true
+
+# ── 프로젝트 전용 룰 ───────────────────────────────────────────────────────
+# 2026-08-15 검증: 기본 룰셋만으로는 **이 프로젝트가 실제로 쓰는 시크릿 3종이
+# 전부 안 잡혔다**(무작위 값으로 심어서 확인). 기본 룰은 AWS/GitHub PAT/Slack은
+# 잡지만 아래 셋은 못 잡는다. `.env.example`에 있는 이름들이 곧 위험 목록이다.
+
+[[rules]]
+id = "planu-openai-api-key"
+description = "OpenAI API 키 (sk-... / sk-proj-... / sk-svcacct-...)"
+regex = '''\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|\bsk-[A-Za-z0-9]{32,}\b'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "planu-anthropic-api-key"
+description = "Anthropic API 키 (sk-ant-...)"
+# `sk-ant-api03-<95자>` 형태. 가운데 버전 세그먼트가 5자(api03)라 {6,}로 잡으면
+# 정작 실제 키를 놓친다 — 실제로 그렇게 한 번 놓쳤다.
+regex = '''\bsk-ant-[A-Za-z0-9]{2,}-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "planu-postgres-uri-password"
+description = """
+비밀번호가 들어간 Postgres 접속 URI. 팀 공유 Supabase DATABASE_URL이 커밋되는 것을
+막는 게 목적이다 (CLAUDE.md 절대원칙 4 — 비밀번호는 팀 채널로만 공유).
+로컬 docker 기본값(postgres:postgres@localhost)은 아래 allowlist에서 빠진다.
+"""
+regex = '''postgres(?:ql)?(?:\+[a-z0-9_]+)?://[A-Za-z0-9._%-]+:[^@\s"'`]{6,}@[A-Za-z0-9.-]+'''
+keywords = ["postgres://", "postgresql://"]
+
+[[allowlists]]
+description = """
+API 문서의 잘린 JWT 예시. `eyJhbGciOiJIUzI1NiIs...` 처럼 헤더 앞부분만 적고 말줄임표로
+끊은 값이라 서명부가 없어 토큰으로 쓸 수 없다. 실제 토큰은 말줄임표로 끝나지 않으므로
+"eyJ로 시작하고 ...로 끝남" 조건은 진짜 토큰을 통과시키지 않는다.
+"""
+regexTarget = "secret"
+regexes = ['''eyJ[A-Za-z0-9_/+=-]*\.\.\.''']
+
+[[allowlists]]
+description = """
+.env.example 은 값 없이 변수 이름만 두는 파일이다(CLAUDE.md 절대원칙 4). 값이 실제로
+들어가면 그건 규칙 위반이므로 파일 통째 허용은 위험하다 — 그래서 `=` 뒤가 비어 있거나
+설명용 플레이스홀더인 줄만 허용한다.
+"""
+paths = ['''(^|/)\.env\.example$''']
+regexTarget = "line"
+regexes = ['''^[A-Z0-9_]+=\s*$''', '''^[A-Z0-9_]+=(local|dev|development|production|your-.*|<.*>|changeme|xxx+)$''']
+
+[[allowlists]]
+description = """
+로컬 docker-compose Postgres의 기본 계정(postgres/postgres, localhost). CLAUDE.md에
+문서화된 로컬 개발 전용 값이고 외부에서 닿지 않는다. 팀 공유 Supabase 자격증명은
+.env(gitignore)로만 다루므로 여기 해당 없음.
+"""
+regexTarget = "match"
+regexes = ['''postgres(ql)?(\+[a-z0-9_]+)?://postgres:postgres@(localhost|127\.0\.0\.1|db)(:\d+)?/''']

@@ -5,7 +5,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     PROJECT_NAME: str = "Plan U Backend"
-    ENV: str = "local"
+
+    # 보안 가드의 기준값이다 — 개발 편의 기능(비밀번호 재설정 링크 로그 출력,
+    # 크롤러의 .env 개인계정 폴백)은 이 값이 local/dev일 때만 열린다.
+    # **기본값이 "production"인 건 의도적이다.** 예전 기본값은 "local"이었는데,
+    # 배포 설정 어디에서도 ENV를 지정하지 않아 운영에서도 local로 평가됐다 —
+    # 가드가 전부 열린 채였다(fail-open). 안전한 쪽을 기본으로 두면, 설정을
+    # 빠뜨렸을 때 로컬에서 눈에 띄게 실패하지 조용히 운영이 노출되지 않는다.
+    # 로컬 개발자는 `.env`에 ENV=local을 넣는다 (`.env.example` 참고).
+    ENV: str = "production"
 
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/planu"
 
@@ -73,6 +81,26 @@ class Settings(BaseSettings):
         r"^https://pnuai-a-03-team-u(?:-[a-z0-9-]+)?\.vercel\.app$"
     )
 
+    # --- 레이트 리밋 (docs/backend/security-privacy-plan.md P0-1) ---
+    #
+    # 형식은 slowapi/limits 문법: "5/minute", 여러 개면 세미콜론으로 "10/minute;100/day".
+    # 로컬에서 반복 테스트할 때만 RATE_LIMIT_ENABLED=false로 끈다 — 배포에서 끄면
+    # 로그인 brute force와 챗 LLM 비용 폭탄에 그대로 노출된다.
+    RATE_LIMIT_ENABLED: bool = True
+    # 비면 in-memory. 워커가 여러 개면 프로세스별로 따로 세므로 스케일아웃 시 redis:// 지정.
+    RATE_LIMIT_STORAGE_URI: str | None = None
+
+    RATE_LIMIT_LOGIN: str = "5/minute;30/hour"
+    RATE_LIMIT_SIGNUP: str = "5/hour"
+    RATE_LIMIT_PASSWORD_RESET: str = "3/hour;10/day"
+    # 챗이 가장 빡빡하다 — 요청당 LLM 비용이 나가고 정상 사용자는 이 이상 쓸 이유가 없다.
+    RATE_LIMIT_CHAT: str = "10/minute;100/day"
+    # Playwright 크롤이라 서버 자원도 많이 쓴다.
+    RATE_LIMIT_PORTAL_SYNC: str = "5/hour"
+    # RAG 인제스트는 전체 청크 재구축 + OpenAI 임베딩 호출이다. 정상 사용자가 부를 일이
+    # 없는 운영 작업인데 인증만 통과하면 누구나 부를 수 있어, 비용 남용 경로였다.
+    RATE_LIMIT_RAG_INGEST: str = "2/hour;5/day"
+
     # --- Langfuse (LLM 관측/평가) ---
     # 셋 다 값이 있어야 실제 trace 전송된다. 하나라도 비면 콜백은 no-op.
     # 개인 Cloud 프로젝트 `planu-backend` API 키를 팀 채널에서 공유.
@@ -85,3 +113,22 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# 개발 편의 기능을 열어도 되는 환경인지 판단하는 **단일 기준**.
+#
+# 이 판단이 두 군데에 각자 구현돼 서로 달랐다: 크롤러 폴백 가드(P1-4)는
+# `ENV.strip().lower() in {local, dev, development}`였고, 재설정 링크 로그 가드(P0-4)는
+# `ENV == "local"` 정확 일치였다. 그래서 `.env`에 `ENV=dev`를 쓴 개발자는 크롤러
+# 폴백은 열리는데 재설정 링크는 안 찍히고, 로그에는 "배포 환경에서 시도됐다"는
+# error가 남았다. `ENV=Local`이나 뒤에 공백이 붙은 경우도 마찬가지로 갈렸다.
+#
+# 두 가드는 "여기는 개발자 로컬인가"라는 **같은 질문**을 하므로 기준도 하나여야 한다.
+# 새로 개발 전용 우회를 추가할 때도 반드시 이 함수를 쓴다 — 직접 `settings.ENV`를
+# 비교하지 말 것.
+_DEV_ENVS = frozenset({"local", "dev", "development"})
+
+
+def is_dev_environment() -> bool:
+    """`ENV`가 개발 환경(local/dev/development)인가. 대소문자·앞뒤 공백 무시."""
+    return (settings.ENV or "").strip().lower() in _DEV_ENVS

@@ -442,5 +442,220 @@ class ClearChatMessagesTest(unittest.TestCase):
         self.assertIsNone(clear_chat_messages(db, user, other.id))
 
 
+class OfferingLookupTest(unittest.TestCase):
+    """개설 조회가 `courses` 행 하나가 아니라 실제 `course_offerings`를 근거로 하는지.
+
+    실측 배경 (2026-08, 운영 DB): 같은 과목이 여러 course 행으로 중복돼 있고(506개 과목명),
+    개설이 그 행들에 흩어져 붙는다. '공학작문및발표'는 5개 행 중 1326에 2026-2학기 분반이
+    24개 달려 있는데 그 행의 카탈로그 semester가 '1'이라 2학기 검색에서 빠지고, 살아남은
+    6166은 개설 0이라 "이번 학기 미개설"로 답했다. 실제로는 28개 분반이 열려 있었다.
+    """
+
+    def _seed_duplicate_course(self, db):
+        # 같은 교양 과목이 두 행으로 중복 (department_id=None). 개설은 '1학기' 행에만 달림.
+        db.add(Course(id=1326, course_name="공학작문및발표", category="효원핵심교양",
+                      credits=3.0, year="2", semester="1", department_id=None))
+        db.add(Course(id=6166, course_name="공학작문및발표", category="효원핵심교양",
+                      credits=3.0, year="3", semester="2", department_id=None))
+        db.add(CourseOffering(id=6675, course_id=1326, year="2026", semester="2학기",
+                              section="001", professor="교수"))
+        db.add(CourseTime(offering_id=6675, day_of_week="월",
+                          start_time=datetime.time(9, 0), end_time=datetime.time(10, 30)))
+        db.flush()
+
+    def test_offerings_found_across_duplicate_course_rows(self):
+        db = _make_db()
+        user = _make_student(db, department_id=100)
+        self._seed_duplicate_course(db)
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        # 검색이 6166(개설 0)을 집어와도 형제 행 1326의 분반을 찾아야 한다.
+        attached = ctx._attach_offerings({"course_id": 6166, "course_name": "공학작문및발표"})
+        self.assertEqual([6675], [s["offering_id"] for s in attached["offered_sections"]])
+
+    def test_sibling_merge_does_not_cross_categories(self):
+        """이수구분이 다르면 같은 과목명·전공이라도 합치지 않는다.
+
+        실제 사례: 컴퓨터공학전공(major=36) 안에 이산수학이 두 항목이다 —
+        CB1501027(1-1, 전공기초) / CB2001104(2-2, 전공선택). 분반을 합쳐 보여주면
+        학생이 어느 요건을 채우는지 오인한다(졸업요건 집계가 이수구분 기준).
+        """
+        db = _make_db()
+        _make_student(db, department_id=108, major_id=36)
+        db.add(Course(id=6445, course_name="이산수학", category="전공기초", credits=3.0,
+                      year="1", semester="1", department_id=108, major_id=36))
+        db.add(Course(id=6469, course_name="이산수학", category="전공선택", credits=3.0,
+                      year="2", semester="2", department_id=108, major_id=36))
+        db.add(CourseOffering(id=7001, course_id=6469, year="2026", semester="2학기",
+                              section="001"))
+        db.flush()
+        user = db.get(User, 1)
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        # 전공기초 쪽을 조회했는데 전공선택 쪽 분반이 딸려오면 안 된다.
+        attached = ctx._attach_offerings({"course_id": 6445, "course_name": "이산수학"})
+        self.assertEqual([], attached["offered_sections"])
+        # 전공선택 쪽은 자기 분반을 그대로 본다.
+        attached2 = ctx._attach_offerings({"course_id": 6469, "course_name": "이산수학"})
+        self.assertEqual([7001], [s["offering_id"] for s in attached2["offered_sections"]])
+
+    def test_sibling_merge_does_not_cross_departments(self):
+        """학과가 다른 동명 과목의 분반까지 합치면 남의 시간표를 보여주게 된다."""
+        db = _make_db()
+        _make_student(db, department_id=100)
+        db.add(Course(id=201, course_name="자료구조", category="전공필수", credits=3.0,
+                      year="2", semester="1", department_id=100))
+        db.add(Course(id=202, course_name="자료구조", category="전공필수", credits=3.0,
+                      year="2", semester="1", department_id=999))
+        db.add(CourseOffering(id=301, course_id=202, year="2026", semester="2학기",
+                              section="001"))
+        db.flush()
+        user = db.get(User, 1)
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+        attached = ctx._attach_offerings({"course_id": 201, "course_name": "자료구조"})
+        self.assertEqual([], attached["offered_sections"])
+
+
+class NotOfferedSeparationTest(unittest.TestCase):
+    """미개설 과목이 `results`에 섞이지 않고 별도 필드로 나오는지.
+
+    골든 케이스 21: `offered_sections: []`를 LLM이 "존재하는 과목"으로 읽고 미개설 사실을
+    안 알리거나(관측), 심지어 시간표에 넣었다고 거짓 주장했다.
+    """
+
+    def test_not_offered_course_is_separated_and_flagged(self):
+        db = _make_db()
+        user = _make_student(db, department_id=100)
+        # 개설 있는 과목 1개 + 카탈로그에만 있는 과목 1개(다른 학기 표기 → semester 필터로 숨음)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="데이터베이스",
+                                  credits=3.0, day="월", start="09:00", end="10:30")
+        db.add(Course(id=9001, course_name="공학작문", category="교양필수", credits=2.0,
+                      year="2", semester="1", department_id=100))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        r = ctx.list_offered_courses(query="공학작문")
+
+        self.assertNotIn("공학작문", [x["course_name"] for x in r["results"]])
+        self.assertIn("공학작문",
+                      [x["course_name"] for x in r["matched_but_not_offered_this_term"]])
+        self.assertIn("개설되지 않았습니다", r["not_offered_note"])
+
+
+class TimeConstraintParseTest(unittest.TestCase):
+    """사용자 메시지에서 요일·시간대 제약 파싱.
+
+    오탐(제약이 없는데 있다고 판단)은 정상 후보를 지워버리므로 놓치는 것보다 나쁘다 —
+    확신이 높은 표현만 잡고 나머지는 제약 없음으로 둔다.
+    """
+
+    def parse(self, msg):
+        return timetable_chat_mod._parse_time_constraint(msg)
+
+    def test_day_and_period(self):
+        c = self.parse("이번 학기 시간표 짜주세요. 조건 있어요 — 월수 오전에만 수업 넣어주세요.")
+        self.assertEqual({"월", "수"}, c["days"])
+        self.assertEqual("morning", c["period"])
+
+    def test_period_only(self):
+        self.assertEqual("afternoon", self.parse("오후에만 수업 듣고 싶어요")["period"])
+
+    def test_days_only(self):
+        self.assertEqual({"화", "목"}, self.parse("화목만 넣어주세요")["days"])
+
+    def test_plain_request_has_no_constraint(self):
+        for msg in ["이번 학기 시간표 짜주세요", "정컴 3학년인데 추천해줘", "월요일에 뭐 열려요?", None, ""]:
+            self.assertIsNone(self.parse(msg), msg)
+
+    def test_negative_form_is_not_guessed(self):
+        """"화요일 빼고"는 의미가 반대라 지금은 제약으로 잡지 않는다 (오파싱 위험)."""
+        self.assertIsNone(self.parse("화요일 빼고 짜주세요"))
+
+    def test_day_letters_inside_ordinary_words_are_not_days(self):
+        """'과목'·'필수'의 목·수를 요일로 읽으면 안 된다.
+
+        실제로 그렇게 동작했다. '만'/'위주'만 있으면 문장 전체에서 요일 글자를 긁어서
+        '전공필수과목만 넣어줘' → {수, 목}이 됐고, 그 제약이 후보 필터·검증·최종 응답
+        세 군데에서 강제돼 사용자는 이유 없이 수·목 수업만 받거나 빈 시간표를 받았다.
+        '만'은 한국어 요청에 워낙 흔해서 사실상 상시 발동하는 상태였다.
+        """
+        for msg in [
+            "전공 과목만 3개 추천해줘",
+            "전공필수만 추천해주세요",
+            "전공필수과목만 넣어줘",
+            "가볍게 3과목만 듣고 싶어요",
+            "졸업요건에 필요한 과목만 넣어줘",
+            "교양과목만 추천",
+            "수업만 3개 넣어줘",
+        ]:
+            parsed = self.parse(msg)
+            self.assertIsNone(
+                (parsed or {}).get("days"),
+                f"낱말 속 글자를 요일로 읽었다: {msg!r} -> {parsed}",
+            )
+
+    def test_yoil_suffix_does_not_add_sunday(self):
+        """'수요일'의 '일'이 일요일로 잡히면 안 된다.
+
+        예전에는 매치 문자열 전체를 훑어서 '…요일'을 언급하는 거의 모든 요청에
+        일요일이 섞여 들어갔다.
+        """
+        self.assertEqual({"월", "수"}, self.parse("월요일과 수요일만 넣어주세요")["days"])
+        self.assertEqual({"월", "수"}, self.parse("월/수요일에만 수업 넣어줘")["days"])
+        self.assertEqual({"금"}, self.parse("금요일 위주로 짜줘")["days"])
+
+    def test_explicit_single_day_still_works(self):
+        """한 글자짜리를 무시하되, '요일'이 붙으면 하루짜리 제약도 살아 있어야 한다."""
+        self.assertEqual({"월"}, self.parse("월요일만 수업 넣어줘")["days"])
+        self.assertEqual({"월", "수", "금"}, self.parse("월수금만 듣게 해줘")["days"])
+
+
+class TimeConstraintEnforcementTest(unittest.TestCase):
+    """제약 위반 분반이 후보·검증·최종 응답 어디서도 통과하지 못하는지.
+
+    골든 케이스 18에서 3/3 재현된 실패를 막는 가드다: LLM이 화·목 14:00 분반을 조합에
+    넣고 rationale에는 "월수 오전에 진행되는"이라고 거짓 설명을 붙였다.
+    """
+
+    def setup_ctx(self, constraint):
+        db = _make_db()
+        user = _make_student(db)
+        # 월수 오전 (제약 부합) / 화목 오후 (위반)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="데이터베이스",
+                                  credits=3.0, day="월", start="09:00", end="10:30")
+        _add_course_with_offering(db, course_id=2, offering_id=103, name="머신러닝",
+                                  credits=3.0, day="화", start="14:00", end="15:30")
+        db.flush()
+        return _TimeTableToolContext(db, user, year="2026", semester="2학기",
+                                     time_constraint=constraint)
+
+    def test_validate_rejects_violating_offering(self):
+        ctx = self.setup_ctx({"days": {"월", "수"}, "period": "morning"})
+        result = ctx.validate_timetable(offering_ids=[101, 103])
+        self.assertFalse(result["ok"])
+        self.assertEqual("time_constraint_violation", result["reason"])
+        self.assertEqual([103], [v["offering_id"] for v in result["violations"]])
+
+    def test_validate_accepts_conforming_offering(self):
+        ctx = self.setup_ctx({"days": {"월", "수"}, "period": "morning"})
+        self.assertTrue(ctx.validate_timetable(offering_ids=[101])["ok"])
+
+    def test_no_constraint_keeps_old_behaviour(self):
+        ctx = self.setup_ctx(None)
+        self.assertTrue(ctx.validate_timetable(offering_ids=[101, 103])["ok"])
+
+    def test_finish_response_schedules_are_screened(self):
+        ctx = self.setup_ctx({"days": {"월", "수"}, "period": "morning"})
+        bad = ctx.schedules_violating_constraint(
+            [{"offering_ids": [101, 103], "rationale": "월수 오전에 진행되는 과목입니다"}]
+        )
+        self.assertEqual([103], [b["offering_id"] for b in bad])
+
+    def test_finish_response_screening_is_noop_without_constraint(self):
+        ctx = self.setup_ctx(None)
+        self.assertEqual([], ctx.schedules_violating_constraint(
+            [{"offering_ids": [101, 103]}]
+        ))
+
+
 if __name__ == "__main__":
     unittest.main()

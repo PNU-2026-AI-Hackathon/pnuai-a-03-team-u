@@ -40,12 +40,14 @@ import {
 import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
 import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
+import { MY_PUSAN_SYNC_FAILED_MESSAGE, isMyPusanSyncFailed } from "../api/portal";
 import { useAuth } from "../auth/AuthContext";
 import {
   COURSE_RECORDS_KEY,
   GRADUATION_OVERRIDE_KEY,
   PROFILE_OVERRIDES_KEY,
   STUDENT_RECORD_KEY,
+  SYNC_WARNING_KEY,
   getDistinctProgramNames,
   normalizeAcademicYear,
   notifyStudentProfileUpdated,
@@ -275,6 +277,16 @@ export function InfoPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGraduationLoading, setIsGraduationLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  // 직전 동기화가 남긴 1회성 경고(주로 my.pusan 실패). 리로드를 건너온 값이다.
+  const [syncWarning, setSyncWarning] = useState(() => {
+    try {
+      const saved = window.sessionStorage.getItem(SYNC_WARNING_KEY);
+      if (saved) window.sessionStorage.removeItem(SYNC_WARNING_KEY);
+      return saved ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [certifications, setCertifications] = useState<CertificationRecord[]>([]);
   const [languageScores, setLanguageScores] = useState<LanguageScoreRecord[]>([]);
@@ -390,6 +402,16 @@ export function InfoPage() {
         window.sessionStorage.setItem(STUDENT_RECORD_KEY, JSON.stringify(result.student_record));
       }
       setPortalPassword("");
+      // 학지시(학적·성적)는 됐는데 my.pusan(비교과·자격증·어학)만 실패한 경우.
+      // 백엔드가 이걸 200으로 돌려주므로, 안 보면 사용자는 전부 성공한 줄 안다.
+      if (isMyPusanSyncFailed(result)) {
+        try {
+          window.sessionStorage.setItem(SYNC_WARNING_KEY, MY_PUSAN_SYNC_FAILED_MESSAGE);
+        } catch {
+          // 저장이 막힌 브라우저면 리로드 전에라도 보여준다.
+          setSyncWarning(MY_PUSAN_SYNC_FAILED_MESSAGE);
+        }
+      }
       if (!isMockStudentDataEnabled) await refreshUser();
       window.location.reload();
     } catch (error) {
@@ -814,6 +836,7 @@ export function InfoPage() {
             {isLoading ? "불러오는 중..." : "교과 활동 불러오기"}
           </button>
           {errorMessage ? <p className="sync-error" role="alert">{errorMessage}</p> : null}
+          {syncWarning ? <p className="sync-warning" role="status">{syncWarning}</p> : null}
         </form>
         <div className="sync-hint">
           <strong>불러올 항목 예시</strong>

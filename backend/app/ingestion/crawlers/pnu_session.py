@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from playwright.sync_api import Browser, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from app.core.config import settings
+from app.core.config import is_dev_environment, settings
 
 _logger = logging.getLogger(__name__)
 
@@ -16,6 +16,51 @@ _LOGIN_FORM_TIMEOUT_MS = 12_000
 
 class PnuLoginError(Exception):
     pass
+
+
+def _fallback_allowed() -> bool:
+    """`.env`의 PNU_LOGIN_ID/PW로 자동 폴백해도 되는 환경인가.
+
+    이 값은 개발자 본인의 부산대 계정이고 `.env`는 팀 채널로 공유되므로, 배포 환경에서
+    폴백을 허용하면 개인 학교 계정이 크롤러의 기본 계정이 된다
+    (security-privacy-plan.md P1-4). 로컬 개발 편의만 남기고 그 외에는 금지한다.
+
+    판단은 `core.config.is_dev_environment()` 하나로 한다 — 예전에는 여기와
+    `core/mailer.py`가 각자 다른 방식으로 ENV를 비교해서, 같은 "개발 환경인가"
+    질문에 서로 다른 답을 내놨다.
+    """
+    return is_dev_environment()
+
+
+def _resolve_credentials(
+    login_id: str | None, login_pw: str | None
+) -> tuple[str, str]:
+    """호출자가 넘긴 자격증명을 검증하고, 로컬 개발에서만 `.env` 값으로 폴백한다.
+
+    폴백은 **아이디와 비밀번호 둘 다 안 넘어왔을 때만** 적용한다. 한쪽만 넘기면
+    남은 한쪽이 `.env`의 개인 계정 값으로 채워져 "넘긴 아이디 + 개발자 비밀번호"
+    같은 조합이 조용히 만들어지는데, 그건 어느 환경에서도 의도된 동작이 아니다.
+    """
+    if login_id is None and login_pw is None:
+        if not _fallback_allowed():
+            raise PnuLoginError(
+                "One-Stop 자격증명이 전달되지 않았습니다. "
+                f"ENV={settings.ENV!r} 환경에서는 .env의 PNU_LOGIN_ID/PNU_LOGIN_PW로 "
+                "폴백하지 않습니다 — login_id/login_pw를 명시적으로 넘겨주세요."
+            )
+        login_id = settings.PNU_LOGIN_ID
+        login_pw = settings.PNU_LOGIN_PW
+        if not login_id or not login_pw:
+            raise PnuLoginError(
+                "PNU_LOGIN_ID / PNU_LOGIN_PW가 설정되지 않았습니다 (.env 확인)."
+            )
+        return login_id, login_pw
+
+    if not login_id or not login_pw:
+        raise PnuLoginError(
+            "One-Stop 자격증명이 불완전합니다 — login_id와 login_pw를 함께 넘겨주세요."
+        )
+    return login_id, login_pw
 
 
 def _evaluate_stable(page: Page, script: str, attempts: int = 3):
@@ -99,11 +144,12 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
     이 Page는 닫지 않고 그대로 재사용해야 한다 — 메뉴 이동이 selectMenu() JS
     호출(AJAX)로 이루어지고, 새 URL로 직접 navigate하면 세션이 끊겨 로그인
     페이지로 리다이렉트된다.
+
+    자격증명은 로컬 개발 환경에서만 `.env`로 폴백한다 (`_resolve_credentials` 참고).
     """
-    login_id = login_id or settings.PNU_LOGIN_ID
-    login_pw = login_pw or settings.PNU_LOGIN_PW
-    if not login_id or not login_pw:
-        raise PnuLoginError("PNU_LOGIN_ID / PNU_LOGIN_PW가 설정되지 않았습니다 (.env 확인).")
+    # 브라우저 컨텍스트를 만들기 전에 검증한다 — 자격증명이 없거나 폴백이 금지된
+    # 환경이면 원격 사이트에 아무 요청도 보내지 않고 바로 실패해야 한다.
+    login_id, login_pw = _resolve_credentials(login_id, login_pw)
 
     context = browser.new_context()
     page = context.new_page()
