@@ -127,6 +127,29 @@ class EnrollmentTest(unittest.TestCase):
         self.assertEqual(1, len(enrolled))
         self.assertEqual(66, enrolled[0].major_id)
 
+    def test_enrolled_progress_counts_name_matched_records(self):
+        """course_id가 비어 있는 이수 기록은 과목명으로 매칭해 진도에 넣는다.
+
+        실데이터의 student_course_records는 course_id가 대부분 NULL이라 이
+        fallback이 항상 탄다. 예전엔 존재하지 않는 `course_name` 속성을 읽어
+        기록이 하나라도 있으면 트랙 API 전체가 500이었다(raw_course_name이 맞다).
+        """
+        db = _make_db(); _seed(db); user = _make_user(db, dept_id=18)
+        db.add(Course(id=500, course_name="AI융합입문", department_id=18, credits=3))
+        db.add(ProgramCourse(department_id=18, major_id=66, course_id=500,
+                              requirement_group="AI융합공통", curriculum_year=None))
+        # course_id 없이 이름만 있는 크롤링 이수 기록 — name fallback 대상
+        db.add(StudentCourseRecord(user_id=user.id, raw_course_name="AI융합입문",
+                                    category="전공선택", credits=3,
+                                    year="2026", semester="1학기"))
+        db.commit()
+
+        enroll_track(EnrollRequest(major_id=66), current_user=user, db=db)
+        enrolled = list_enrolled_tracks(current_user=user, db=db)
+
+        self.assertEqual(1, len(enrolled))
+        self.assertEqual(3.0, enrolled[0].earned_credits)
+
     def test_enroll_wrong_dept_track_rejected(self):
         """심리학과 학생이 사회학과 트랙 등록 시도 → 404."""
         db = _make_db(); _seed(db); user = _make_user(db, dept_id=18); db.commit()

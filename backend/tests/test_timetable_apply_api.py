@@ -163,15 +163,20 @@ class TimetableApplyApiTest(unittest.TestCase):
         result = self._call([200])  # grade 안 넘김
 
         self.assertEqual(2, result.applied[0].planned_grade)
+        # 달력 축은 요청한 학기 그대로, 커리큘럼 축은 이수 순번에서 환산한 값.
+        # 여기서는 2026 2학기가 마침 2학년 2학기라 두 값이 같다.
         self.assertEqual("2026", result.applied[0].planned_year)
-        # planned_year는 달력 연도, planned_semester는 커리큘럼 학기다.
         self.assertEqual("2학기", result.applied[0].planned_semester)
+        self.assertEqual("2학기", result.applied[0].curriculum_semester)
 
     def test_planned_grade_defaults_to_first_term_without_records(self):
         """이수 기록이 아예 없으면 이번이 첫 학기라고 본다."""
         result = self._call([200])
         self.assertEqual(1, result.applied[0].planned_grade)
-        self.assertEqual("1학기", result.applied[0].planned_semester)
+        # 요청은 달력 2026 2학기지만, 첫 재학 학기이므로 커리큘럼상 1학년 1학기다.
+        # 두 축을 한 컬럼에 섞던 시절에는 이 차이가 통째로 사라졌다.
+        self.assertEqual("2학기", result.applied[0].planned_semester)
+        self.assertEqual("1학기", result.applied[0].curriculum_semester)
 
     def test_removes_future_semester_duplicate_when_applying(self):
         """이번 학기(2026 2학기)에 자료구조를 저장할 때, 로드맵의 2027 1학기에 같은
