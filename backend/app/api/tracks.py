@@ -32,6 +32,10 @@ from app.domains.users.models import User
 
 router = APIRouter(prefix="/me/tracks", tags=["tracks"])
 
+# 회원가입 화면용 공개 라우터. 가입은 로그인 전이라 /me/*를 못 쓴다 —
+# 학과 자동완성(/departments/search)과 같은 이유로 인증 없이 연다.
+public_router = APIRouter(prefix="/tracks", tags=["tracks"])
+
 
 # --- Response models ---------------------------------------------------------
 
@@ -88,6 +92,51 @@ def _is_track(gr: GraduationRequirement) -> bool:
 
 
 # --- Endpoints ---------------------------------------------------------------
+
+
+class TrackPreview(BaseModel):
+    """회원가입 홍보 카드 한 장 분량 — 등록 여부 같은 사용자 종속 정보는 없다."""
+
+    department_id: int
+    department_name: str
+    major_id: int
+    track_name: str
+    total_credits: int
+    dept_credits: dict
+    ai_common_credits: dict
+
+
+@public_router.get("/preview", response_model=list[TrackPreview])
+def preview_tracks(department: str, db: Session = Depends(get_db)) -> list[TrackPreview]:
+    """학과 이름으로 그 학과의 AI융합트랙을 조회한다 (비로그인).
+
+    회원가입에서 학부/학과를 고르는 순간 "이 학과는 트랙 대상"이라고 알려주기
+    위한 것. 이름은 자동완성에서 고른 정식 편제 명칭이 온다는 전제라 완전
+    일치로만 찾는다 — 부분 일치를 허용하면 오타 입력에도 카드가 떠서 오히려
+    잘못된 안내가 된다.
+    """
+    name = department.strip()
+    if not name:
+        return []
+    dept = db.scalars(select(Department).where(Department.name == name)).first()
+    if dept is None:
+        return []
+    out: list[TrackPreview] = []
+    for gr in _find_tracks_for_dept(db, dept.id):
+        if not _is_track(gr) or gr.major_id is None:
+            continue
+        m = db.get(Major, gr.major_id)
+        rules = gr.special_rules or {}
+        out.append(TrackPreview(
+            department_id=dept.id,
+            department_name=dept.name,
+            major_id=gr.major_id,
+            track_name=m.name if m else "?",
+            total_credits=gr.required_total_credits or 21,
+            dept_credits=rules.get("dept_credits", {}),
+            ai_common_credits=rules.get("ai_common_credits", {}),
+        ))
+    return out
 
 
 @router.get("/available", response_model=list[AvailableTrack])

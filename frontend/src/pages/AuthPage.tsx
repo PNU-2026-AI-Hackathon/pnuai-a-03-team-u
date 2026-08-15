@@ -12,6 +12,8 @@ import { useAuth } from "../auth/AuthContext";
 import type { AcademicProgramInput, AdmissionType } from "../api/auth";
 import { PNU_EMAIL_DOMAIN, toPnuEmail } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
+import { enrollTrack, previewTracks } from "../api/tracks";
+import type { TrackPreview } from "../api/tracks";
 
 type AuthMode = "login" | "signup";
 type MessageKind = "error" | "success";
@@ -67,6 +69,15 @@ function majorOptionsFor(
     .map((major) => ({ value: major, hint: matched.name }));
 }
 
+/** {min:12, max:15} → "12~15", {min:15, max:15} → "15". 값이 없으면 안내용 기본 범위. */
+function formatCreditRange(range: { min?: number; max?: number } | undefined, fallback: string) {
+  const min = range?.min;
+  const max = range?.max;
+  if (min == null && max == null) return fallback;
+  if (min != null && max != null) return min === max ? String(min) : `${min}~${max}`;
+  return String(min ?? max);
+}
+
 export function AuthPage() {
   const navigate = useNavigate();
   const { loginWithEmail, signupWithEmail } = useAuth();
@@ -93,10 +104,41 @@ export function AuthPage() {
   const [dualMajor, setDualMajor] = useState("");
   const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(false);
 
+  // 대상 학과를 고르면 뜨는 AI융합트랙 홍보 카드. 트랙은 학과에 1:1이라
+  // 고르는 UI가 아니라 안내 + 체크(가입 직후 이수 추적 시작)로 충분하다.
+  const [trackPreview, setTrackPreview] = useState<TrackPreview | null>(null);
+  const [wantsTrack, setWantsTrack] = useState(false);
+
   // 학과 3개(주전공/부전공/복수전공)는 각자 따로 검색한다.
   const primaryResults = useDepartmentOptions(department);
   const minorResults = useDepartmentOptions(minorDepartment);
   const dualResults = useDepartmentOptions(dualDepartment);
+
+  useEffect(() => {
+    const name = department.trim();
+    if (!name) {
+      setTrackPreview(null);
+      setWantsTrack(false);
+      return;
+    }
+    let cancelled = false;
+    // 서버가 정식 학과명 완전 일치로만 응답하므로 타이핑 중간값은 빈 배열이 온다.
+    const timer = window.setTimeout(() => {
+      previewTracks(name)
+        .then((previews) => {
+          if (cancelled) return;
+          setTrackPreview(previews[0] ?? null);
+          if (!previews.length) setWantsTrack(false);
+        })
+        .catch(() => {
+          if (!cancelled) setTrackPreview(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [department]);
 
   const primaryMajorOptions = useMemo(
     () => majorOptionsFor(primaryResults, department, primaryMajor),
@@ -187,6 +229,11 @@ export function AuthPage() {
       });
       isAccountCreated = true;
       await loginWithEmail(email, signupPassword, false);
+      if (wantsTrack && trackPreview) {
+        // 트랙 등록 실패가 가입 완주를 막으면 안 된다 — 내 정보에서 언제든
+        // 다시 시작할 수 있으므로 조용히 넘어간다.
+        await enrollTrack(trackPreview.major_id).catch(() => undefined);
+      }
       window.location.replace("/onboarding");
     } catch (error) {
       if (isAccountCreated) {
@@ -412,6 +459,26 @@ export function AuthPage() {
                   department.trim() ? "이 학부는 세부전공 구분이 없습니다" : "학부를 먼저 고르세요"
                 }
               />
+              {trackPreview ? (
+                <div className="auth-track-card">
+                  <p className="auth-track-title">
+                    🎓 {trackPreview.department_name}는 <strong>{trackPreview.track_name}</strong> 대상 학과예요
+                  </p>
+                  <p className="auth-track-desc">
+                    학과전공 {formatCreditRange(trackPreview.dept_credits, "12~15")}학점 +
+                    AI융합공통 {formatCreditRange(trackPreview.ai_common_credits, "6~9")}학점,
+                    총 {trackPreview.total_credits}학점을 이수하면 졸업증명서에 과정명이 표기됩니다. 졸업요건과는 별개예요.
+                  </p>
+                  <label className="auth-track-check">
+                    <input
+                      type="checkbox"
+                      checked={wantsTrack}
+                      onChange={(event) => setWantsTrack(event.target.checked)}
+                    />
+                    <span>가입하면서 이수 추적 시작하기 (내 정보에서 언제든 취소 가능)</span>
+                  </label>
+                </div>
+              ) : null}
               <label className="auth-field">
                 <span>진로 입력</span>
                 <input

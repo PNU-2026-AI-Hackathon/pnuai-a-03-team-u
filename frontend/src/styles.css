@@ -9459,3 +9459,51 @@ body.theme-dark .roadmap-meta-editor > button {
   background: #2c3644;
   color: #aab6c6;
 }
+
+/* --- 회원가입 AI융합트랙 홍보 카드 -------------------------------------- */
+
+.auth-track-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #c7d7fe;
+  border-radius: 14px;
+  background: var(--blue-soft, #eef2ff);
+}
+
+.auth-track-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-track-title strong {
+  color: var(--blue, #2563eb);
+}
+
+.auth-track-desc {
+  margin: 0;
+  color: var(--muted, #64748b);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.auth-track-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-track-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue, #2563eb);
+}
+
+body.theme-dark .auth-track-card {
+  border-color: #33415e;
+  background: #1d2536;
+}
