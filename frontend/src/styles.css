@@ -9260,3 +9260,182 @@ body.theme-dark .roadmap-head-stats span {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* --- AI융합트랙 · 회원 탈퇴 (내 정보) ----------------------------------- */
+
+.track-hint {
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.track-row {
+  align-items: flex-start;
+}
+
+.track-row-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.track-row-body .track-progress {
+  margin-top: 2px;
+  max-width: 320px;
+}
+
+.graduation-title-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.override-clear-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  background: #e9edf3;
+  color: #566274;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.account-danger-card {
+  border-color: #f3c2c8;
+}
+
+.account-danger-card h3 {
+  color: #c84454;
+}
+
+.account-delete-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  background: #fff0f1;
+  color: #c84454;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.account-delete-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.account-delete-confirm {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.account-delete-confirm label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.account-delete-confirm input {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #f3c2c8;
+  border-radius: 10px;
+}
+
+body.theme-dark .account-danger-card {
+  border-color: #6b3a41;
+}
+
+body.theme-dark .account-delete-button,
+body.theme-dark .profile-record-actions button.danger {
+  background: #46262b;
+  color: #ff9aa5;
+}
+
+body.theme-dark .override-clear-button {
+  background: #2c3644;
+  color: #aab6c6;
+}
+
+/* --- 로드맵 메타(제목·목표 졸업연도) 편집 -------------------------------- */
+
+.roadmap-meta-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.roadmap-meta-target {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.roadmap-meta-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #e9edf3;
+  color: #566274;
+}
+
+.roadmap-meta-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.roadmap-meta-editor input {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.roadmap-meta-title-input {
+  min-width: 240px;
+}
+
+.roadmap-meta-year-input {
+  width: 120px;
+}
+
+.roadmap-meta-editor > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #e9edf3;
+  color: #566274;
+}
+
+.roadmap-meta-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #c84454;
+  font-size: 12px;
+}
+
+body.theme-dark .roadmap-meta-edit-button,
+body.theme-dark .roadmap-meta-editor > button {
+  background: #2c3644;
+  color: #aab6c6;
+}

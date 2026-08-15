@@ -77,9 +77,9 @@ def _resolve_completed_courses(db: Session, user_id: int) -> dict[int, Course]:
                 result[course.id] = course
                 continue
         # name fallback (department 무관 first-match — 보수적 매칭)
-        if r.course_name:
+        if r.raw_course_name:
             course = db.execute(
-                select(Course).where(Course.course_name == r.course_name).limit(1)
+                select(Course).where(Course.course_name == r.raw_course_name).limit(1)
             ).scalar_one_or_none()
             if course:
                 result[course.id] = course
