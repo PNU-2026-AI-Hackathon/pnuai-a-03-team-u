@@ -252,7 +252,7 @@ export function AuthPage() {
 
   return (
     <main className="auth-screen">
-      <section className={`auth-shell${mode === "signup" ? " is-signup" : ""}`}>
+      <section className={`auth-shell${mode === "signup" ? " is-signup is-wide" : ""}`}>
         <Link className="auth-logo" to="/" aria-label="Plan U 홈">
           <BrandMark id="plan-u-face-auth" />
           <span>
@@ -262,11 +262,11 @@ export function AuthPage() {
 
         {mode === "signup" ? <SignupStepper current={1} /> : null}
 
-        <div className="auth-panel">
-          {/* 탭은 로그인 화면에서만. 회원가입은 스테퍼가 진행을 보여주는 3단계
-              흐름의 STEP 1이라, 탭이 끼면 단계 2·3과 다른 화면처럼 보인다.
-              로그인으로 돌아가는 길은 폼 하단 "이미 계정이 있나요?" 링크가 담당. */}
-          {mode === "login" ? (
+        {/* 로그인은 단일 패널 + 탭. 회원가입은 스텝 2(학사정보 불러오기)와 같은
+            와이드 2컬럼(onboarding-columns) — 좁은 외줄 폼이 스텝 2·3과 딴
+            화면처럼 보이던 원인이라 구성 자체를 맞춘다. */}
+        {mode === "login" ? (
+          <div className="auth-panel">
             <div className="auth-tabs" role="tablist" aria-label="인증 방식 선택">
               <button
                 className="selected"
@@ -286,9 +286,7 @@ export function AuthPage() {
                 회원가입
               </button>
             </div>
-          ) : null}
 
-          {mode === "login" ? (
             <form className="auth-form" onSubmit={handleLogin}>
               <div className="auth-title">
                 <p className="eyebrow">Welcome Back</p>
@@ -352,20 +350,18 @@ export function AuthPage() {
                 </button>
               </p>
             </form>
+          </div>
           ) : (
-            <form className="auth-form" onSubmit={handleSignup}>
+            <form className="onboarding-columns signup-columns" onSubmit={handleSignup}>
+              <div className="auth-panel">
               <div className="auth-title">
                 <p className="eyebrow">STEP 1 · ACCOUNT</p>
                 <h1>계정 정보 입력</h1>
                 <p>
-                  필수 계정 정보와 전공 정보를 입력합니다.
+                  필수 계정 정보를 입력합니다.
                   <br />
                   다음 단계에서 학사정보를 자동으로 불러옵니다.
                 </p>
-              </div>
-
-              <div className={`auth-message${message ? " error" : ""}`} aria-live="assertive">
-                {message}
               </div>
 
               <div className="auth-field-row">
@@ -444,6 +440,18 @@ export function AuthPage() {
                   required
                 />
               </label>
+              </div>
+
+              <div className="auth-panel">
+              <div className="auth-title">
+                <p className="eyebrow">Major &amp; Career</p>
+                <h2>전공 · 진로 정보</h2>
+                <p>
+                  학과를 입력하면 세부전공 선택이 열립니다.
+                  <br />
+                  전공 정보는 졸업요건 분석과 로드맵의 기준이 돼요.
+                </p>
+              </div>
               <FieldAutocomplete
                 label="학과 또는 학부 입력"
                 placeholder="예 : 의생명융합공학부"
@@ -561,20 +569,24 @@ export function AuthPage() {
                   </div>
                 ) : null}
               </section>
+              </div>
 
-              <button className="auth-submit" type="submit" disabled={isSignupSubmitting}>
-                {isSignupSubmitting ? "가입 중..." : "다음"}
-              </button>
-
-              <p className="auth-switch">
-                이미 계정이 있나요?{" "}
-                <button type="button" onClick={() => setMode("login")}>
-                  로그인
+              <div className="signup-columns-footer">
+                <div className={`auth-message${message ? " error" : ""}`} aria-live="assertive">
+                  {message}
+                </div>
+                <button className="auth-submit" type="submit" disabled={isSignupSubmitting}>
+                  {isSignupSubmitting ? "가입 중..." : "다음"}
                 </button>
-              </p>
+                <p className="auth-switch">
+                  이미 계정이 있나요?{" "}
+                  <button type="button" onClick={() => setMode("login")}>
+                    로그인
+                  </button>
+                </p>
+              </div>
             </form>
           )}
-        </div>
       </section>
 
     </main>

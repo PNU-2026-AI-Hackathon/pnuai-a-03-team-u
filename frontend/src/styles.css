@@ -9507,3 +9507,38 @@ body.theme-dark .auth-track-card {
   border-color: #33415e;
   background: #1d2536;
 }
+
+/* --- 회원가입 STEP 1 — 스텝 2와 같은 2컬럼 배치 -------------------------- */
+
+.signup-columns > .auth-panel:first-child {
+  min-height: 0;
+}
+
+.signup-columns .auth-title h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.signup-columns-footer {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.signup-columns-footer .auth-message {
+  min-height: 0;
+}
+
+.signup-columns-footer .auth-submit {
+  width: 100%;
+  max-width: 480px;
+}
+
+@media (max-width: 900px) {
+  .signup-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
