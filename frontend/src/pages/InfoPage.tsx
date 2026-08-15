@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { isAxiosError } from "axios";
-import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import {
   createActivity,
   createCertification,
   createLanguageScore,
+  deleteAccount,
   deleteActivity,
   deleteCertification,
   deleteLanguageScore,
@@ -27,6 +29,7 @@ import type {
 import { entryGrade, updateMyProfile } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import {
+  clearGraduationOverride,
   getCourseRecords,
   getGraduationProgress,
   isMockStudentDataEnabled,
@@ -34,6 +37,8 @@ import {
   saveGraduationOverride,
   syncPortalData,
 } from "../api/studentInfo";
+import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
+import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { MY_PUSAN_SYNC_FAILED_MESSAGE, isMyPusanSyncFailed } from "../api/portal";
 import { useAuth } from "../auth/AuthContext";
@@ -248,7 +253,8 @@ function creditsMatch(left: number, right: number) {
 }
 
 export function InfoPage() {
-  const { user, isAuthenticated, refreshUser } = useAuth();
+  const { user, isAuthenticated, refreshUser, logoutUser } = useAuth();
+  const navigate = useNavigate();
   const [loginId, setLoginId] = useState("");
   const [portalPassword, setPortalPassword] = useState("");
   const [courses, setCourses] = useState<CourseRecord[]>(() => isMockStudentDataEnabled ? readStoredCourses() : []);
@@ -294,6 +300,17 @@ export function InfoPage() {
   const [editingLanguageId, setEditingLanguageId] = useState<number | "new" | null>(null);
   const [languageDraft, setLanguageDraft] = useState<LanguageScorePayload>(emptyLanguageDraft);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  // AI융합트랙 — 학생 학과가 대상이 아니면 available이 비고, 섹션 자체를 숨긴다.
+  const [availableTracks, setAvailableTracks] = useState<AvailableTrack[]>([]);
+  const [enrolledTracks, setEnrolledTracks] = useState<EnrolledTrack[]>([]);
+  const [isTrackSaving, setIsTrackSaving] = useState(false);
+  const [trackError, setTrackError] = useState("");
+  // 회원 탈퇴 — hard delete라 확인 문구 입력을 요구한다.
+  const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false);
+  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState("");
+  const [isOverrideClearing, setIsOverrideClearing] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated && !isMockStudentDataEnabled) return;
@@ -326,6 +343,20 @@ export function InfoPage() {
       })
       .catch((error) => setProfileError(getProfileErrorMessage(error)))
       .finally(() => setIsProfileLoading(false));
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    Promise.all([listAvailableTracks(), listEnrolledTracks()])
+      .then(([available, enrolled]) => {
+        setAvailableTracks(available);
+        setEnrolledTracks(enrolled);
+      })
+      .catch(() => {
+        // 트랙은 부가 정보 — 실패해도 페이지의 다른 섹션을 막지 않는다.
+        setAvailableTracks([]);
+        setEnrolledTracks([]);
+      });
   }, [isAuthenticated]);
 
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
@@ -724,6 +755,66 @@ export function InfoPage() {
     }
   }
 
+  async function reloadTracks() {
+    const [available, enrolled] = await Promise.all([listAvailableTracks(), listEnrolledTracks()]);
+    setAvailableTracks(available);
+    setEnrolledTracks(enrolled);
+  }
+
+  async function handleTrackEnroll(track: AvailableTrack) {
+    setIsTrackSaving(true);
+    setTrackError("");
+    try {
+      await enrollTrack(track.major_id);
+      await reloadTracks();
+    } catch (error) {
+      setTrackError(getErrorMessage(error));
+    } finally {
+      setIsTrackSaving(false);
+    }
+  }
+
+  async function handleTrackCancel(track: EnrolledTrack) {
+    setIsTrackSaving(true);
+    setTrackError("");
+    try {
+      await cancelTrack(track.enrollment_id);
+      await reloadTracks();
+    } catch (error) {
+      setTrackError(getErrorMessage(error));
+    } finally {
+      setIsTrackSaving(false);
+    }
+  }
+
+  async function handleClearGraduationOverride() {
+    setIsOverrideClearing(true);
+    try {
+      await clearGraduationOverride();
+      const data = await getGraduationProgress();
+      setGraduation(data.programs.find((program) => program.program_type === "primary") ?? data.programs[0] ?? null);
+    } catch (error) {
+      setGraduationEditError(getErrorMessage(error));
+    } finally {
+      setIsOverrideClearing(false);
+    }
+  }
+
+  async function handleAccountDelete() {
+    if (deleteAccountConfirmText.trim() !== "탈퇴") return;
+    setIsDeletingAccount(true);
+    setDeleteAccountError("");
+    try {
+      await deleteAccount();
+      // 서버 세션 저장소가 없으므로 토큰을 지워야 로그아웃이 완성된다.
+      logoutUser();
+      navigate("/", { replace: true });
+    } catch (error) {
+      setDeleteAccountError(getErrorMessage(error));
+      setIsDeletingAccount(false);
+    }
+  }
+
   return (
     <section className="info-page">
       <section className="info-sync-panel">
@@ -832,11 +923,25 @@ export function InfoPage() {
                 <p className="eyebrow">Graduation</p>
                 <h3>졸업 요건</h3>
               </div>
-              {!isProfileEditing ? <strong>
-                {displayedGraduation && totalCredits !== null && totalCredits !== undefined
-                  ? `${formatCredit(displayedGraduation.earned_total_credits)}/${totalCredits}학점`
-                  : "동기화 필요"}
-              </strong> : null}
+              <div className="graduation-title-tools">
+                {!isProfileEditing && (graduation?.warnings ?? []).some((warning) => warning.includes("보정값이 적용")) ? (
+                  <button
+                    className="override-clear-button"
+                    type="button"
+                    onClick={() => void handleClearGraduationOverride()}
+                    disabled={isOverrideClearing}
+                    title="수동 보정을 지우고 이수 기록 기준 자동 계산으로 되돌립니다"
+                  >
+                    <RotateCcw size={14} aria-hidden="true" />
+                    {isOverrideClearing ? "되돌리는 중..." : "보정 해제"}
+                  </button>
+                ) : null}
+                {!isProfileEditing ? <strong>
+                  {displayedGraduation && totalCredits !== null && totalCredits !== undefined
+                    ? `${formatCredit(displayedGraduation.earned_total_credits)}/${totalCredits}학점`
+                    : "동기화 필요"}
+                </strong> : null}
+              </div>
             </div>
             {!isProfileEditing && displayedGraduation && totalCredits ? (
               <div
@@ -1195,7 +1300,104 @@ export function InfoPage() {
               ))}
             </div>
           </article>
+
+          {availableTracks.length > 0 || enrolledTracks.length > 0 ? (
+            <article className="card info-section-card">
+              <div className="card-title profile-section-title">
+                <div><p className="eyebrow">AI Track</p><h3>AI융합트랙</h3></div>
+              </div>
+              <p className="track-hint">
+                졸업요건과 별개로, 이수하면 졸업증명서에 과정명이 표기되는 인증 과정입니다.
+                학과전공 12~15학점 + AI융합공통 6~9학점, 총 21학점.
+              </p>
+              {trackError ? <p className="sync-error" role="alert">{trackError}</p> : null}
+              <div className="profile-record-list">
+                {enrolledTracks.map((track) => (
+                  <div className="profile-record-row track-row" key={`enrolled-${track.enrollment_id}`}>
+                    <div className="track-row-body">
+                      <strong>{track.track_name}</strong>
+                      <span>
+                        {track.completed
+                          ? "이수 완료 🎉"
+                          : `${formatCredit(track.earned_credits)}/${track.total_credits}학점 · ${formatCredit(track.remaining_credits)}학점 남음`}
+                      </span>
+                      <div className="graduation-total-bar track-progress" aria-label={`트랙 진행률 ${Math.round((track.earned_credits / track.total_credits) * 100)}%`}>
+                        <span style={{ width: `${Math.min(100, (track.earned_credits / track.total_credits) * 100)}%` }} />
+                      </div>
+                    </div>
+                    <div className="profile-record-actions">
+                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 취소`} title="이수 취소"><Trash2 size={15} aria-hidden="true" /></button>
+                    </div>
+                  </div>
+                ))}
+                {availableTracks.filter((track) => !track.is_enrolled).map((track) => (
+                  <div className="profile-record-row" key={`available-${track.track_program_id}`}>
+                    <div>
+                      <strong>{track.track_name}</strong>
+                      <span>
+                        총 {track.total_credits}학점
+                        {track.dept_credits?.min ? ` · 학과전공 ${track.dept_credits.min}~${track.dept_credits.max ?? track.dept_credits.min}` : ""}
+                        {track.ai_common_credits?.min ? ` · AI공통 ${track.ai_common_credits.min}~${track.ai_common_credits.max ?? track.ai_common_credits.min}` : ""}
+                      </span>
+                    </div>
+                    <button className="profile-add-button" type="button" onClick={() => void handleTrackEnroll(track)} disabled={isTrackSaving}>
+                      <Plus size={15} aria-hidden="true" />이수 시작
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ) : null}
         </div>
+      </section>
+
+      <section className="card account-danger-card">
+        <div className="card-title">
+          <div>
+            <p className="eyebrow">Danger Zone</p>
+            <h3>회원 탈퇴</h3>
+          </div>
+        </div>
+        <p className="track-hint">
+          계정과 함께 이수 내역, 로드맵, 시간표, 대화 기록이 모두 즉시 삭제됩니다. 되돌릴 수 없습니다.
+        </p>
+        {isDeleteAccountOpen ? (
+          <div className="account-delete-confirm">
+            <label>
+              <span>계속하려면 <strong>탈퇴</strong>라고 입력하세요</span>
+              <input
+                value={deleteAccountConfirmText}
+                onChange={(event) => setDeleteAccountConfirmText(event.target.value)}
+                placeholder="탈퇴"
+                disabled={isDeletingAccount}
+              />
+            </label>
+            {deleteAccountError ? <p className="sync-error" role="alert">{deleteAccountError}</p> : null}
+            <div className="profile-editor-actions">
+              <button
+                className="account-delete-button"
+                type="button"
+                onClick={() => void handleAccountDelete()}
+                disabled={isDeletingAccount || deleteAccountConfirmText.trim() !== "탈퇴"}
+              >
+                <Trash2 size={15} aria-hidden="true" />
+                {isDeletingAccount ? "삭제 중..." : "영구 삭제"}
+              </button>
+              <button
+                className="profile-cancel-button"
+                type="button"
+                onClick={() => { setIsDeleteAccountOpen(false); setDeleteAccountConfirmText(""); setDeleteAccountError(""); }}
+                disabled={isDeletingAccount}
+              >
+                <X size={15} aria-hidden="true" />취소
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button className="account-delete-button" type="button" onClick={() => setIsDeleteAccountOpen(true)}>
+            <Trash2 size={15} aria-hidden="true" />회원 탈퇴
+          </button>
+        )}
       </section>
     </section>
   );

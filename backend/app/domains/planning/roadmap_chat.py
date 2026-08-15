@@ -127,6 +127,22 @@ def _is_regular_planned_semester(planned_semester: str | None) -> bool:
     return planned_semester.strip() in _REGULAR_SEMESTER_VALUES
 
 
+def _curriculum_semester_for(
+    db: Session, user_id: int, planned_year: str | None, planned_semester: str | None
+) -> str | None:
+    """달력 학기를 커리큘럼 학기로 환산한다. 환산 불가면 None.
+
+    LLM은 propose_change에 달력 학기를 넣는다(프롬프트 규약). 로드맵 화면은
+    커리큘럼 학기로 슬롯을 잡으므로, 반영 시점에 나머지 축을 채워 준다.
+    """
+    if not planned_year or not planned_semester:
+        return None
+    from app.domains.planning.history import project_curriculum_term
+
+    _, curriculum_semester = project_curriculum_term(db, user_id, planned_year, planned_semester)
+    return curriculum_semester
+
+
 def _is_before_current_term(planned_year: str | None, planned_semester: str | None) -> bool:
     """(planned_year, planned_semester)가 현재 학기보다 과거인지. 형식이 명확한 경우만 True/False,
     파싱 불가면 False(가드가 오탐으로 정상 제안을 막지 않도록 보수적으로 통과)."""
@@ -2363,6 +2379,9 @@ def apply_pending_changes(
                 credits=course.credits if course else None,
                 planned_year=change.planned_year,
                 planned_semester=change.planned_semester,
+                curriculum_semester=_curriculum_semester_for(
+                    db, roadmap.user_id, change.planned_year, change.planned_semester
+                ),
                 planned_grade=change.planned_grade,
                 reason=change.reason,
                 source="ai",
@@ -2384,6 +2403,11 @@ def apply_pending_changes(
                     item.planned_year = change.planned_year
                 if change.planned_semester is not None:
                     item.planned_semester = change.planned_semester
+                if change.planned_year is not None or change.planned_semester is not None:
+                    # 달력 학기가 바뀌면 커리큘럼 학기도 다시 환산해야 한다.
+                    item.curriculum_semester = _curriculum_semester_for(
+                        db, roadmap.user_id, item.planned_year, item.planned_semester
+                    )
                 if change.planned_grade is not None:
                     item.planned_grade = change.planned_grade
                 if change.program_type is not None:

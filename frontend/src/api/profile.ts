@@ -230,3 +230,17 @@ export async function deleteLanguageScore(id: number) {
   }
   await apiClient.delete(`/me/language-scores/${id}`);
 }
+
+export type AccountDeletionResult = {
+  deleted_user_id: number;
+  deleted_rows: Record<string, number>;
+};
+
+/**
+ * 회원 탈퇴 — hard delete라 되돌릴 수 없다. 호출 전 확인 UI를 반드시 거칠 것.
+ * 서버에 세션 저장소가 없으므로 성공 후 프론트가 토큰을 지워야 로그아웃이 완성된다.
+ */
+export async function deleteAccount() {
+  const { data } = await apiClient.delete<AccountDeletionResult>("/me/account");
+  return data;
+}

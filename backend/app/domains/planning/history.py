@@ -52,34 +52,33 @@ def _curriculum_term(
     semester: str | None,
     entry_grade: int = 1,
 ) -> tuple[int | None, str | None]:
-    """정규 학기 record 하나에 대응하는 (planned_grade, planned_semester)를 돌려준다.
+    """정규 학기 record 하나가 커리큘럼상 몇 학년 몇 학기인지 돌려준다.
 
-    planned_grade: 재학 학기 순번 기준 학년. entry_grade에서 시작해 두 학기마다
+    grade: 재학 학기 순번 기준 학년. entry_grade에서 시작해 두 학기마다
     하나씩 오른다. 편입생은 첫 재학 학기가 3학년 1학기다. 4학년을 넘으면 None.
-    planned_semester: 순번의 홀/짝으로 도출한 커리큘럼 상 학기. 정규 학기가 아니면
-    원본 semester를 그대로 돌려준다 — 계절수업 같은 값은 유지해야 표시·필터링이 깨지지 않는다.
+    semester: 순번의 홀/짝으로 도출한 커리큘럼 학기.
 
-    특수 케이스: `입학전성적`(편입/조기이수 인정)은 어느 학년에도 속하지 않는
-    lump-sum이라 planned_grade를 None으로 두고 semester를 원본 그대로 남긴다.
-    화면은 이 값을 학년 슬롯이 아니라 "입학 전 인정 학점" 칸으로 따로 그린다.
+    커리큘럼 축으로 환산할 수 없는 학기는 (None, None)이다 — 계절수업, 그리고
+    `입학전성적`(편입/조기이수 인정)처럼 어느 학년에도 속하지 않는 lump-sum.
+    이 경우 호출부는 달력 학기 원본만 남기고, 화면은 학년 슬롯 대신 "입학 전
+    인정 학점"이나 계절학기 칸으로 따로 그린다.
 
-    예전에는 이걸 3학년 1학기로 못 박았는데, 그러면 편입생의 실제 3학년 1학기와
-    같은 칸에 합쳐져 버린다. 실제로 그렇게 겹쳐 있었다.
+    예전에는 입학전성적을 3학년 1학기로 못 박았는데, 그러면 편입생의 실제
+    3학년 1학기와 같은 칸에 합쳐져 버린다. 실제로 그렇게 겹쳐 있었다.
     """
     if year is None or semester is None:
-        return None, semester
+        return None, None
     if semester in PRE_ADMISSION_SEMESTERS:
-        return None, semester
+        return None, None
     if semester not in _REGULAR_SEMESTERS:
-        return None, semester
+        return None, None
     rank = semester_rank.get((year, semester))
     if rank is None:
-        return None, semester
+        return None, None
     grade = entry_grade + (rank - 1) // 2
     if not (1 <= grade <= 4):
-        return None, semester
-    curriculum_semester = "1학기" if rank % 2 == 1 else "2학기"
-    return grade, curriculum_semester
+        return None, None
+    return grade, "1학기" if rank % 2 == 1 else "2학기"
 
 
 def _absolute_semester(year: str, semester: str) -> int:
@@ -134,19 +133,20 @@ def project_curriculum_term(
     매길 수 없어서, 마지막으로 등록한 학기의 순번에 **재학 학기 수**를 더해 이어 붙인다
     (달력 거리가 아니다 — `_steps_to_target` 참고).
 
-    planned_grade를 채우지 않으면 로드맵 화면이 그 항목을 학년 슬롯에 넣지 못하고
-    "2026년 2학기" 같은 기타 칸으로 떨어뜨린다. 챗에서는 더 나빠서, 학년을 못 받은 LLM이
+    커리큘럼 축으로 환산할 수 없으면 (None, None)이다. planned_grade를 채우지
+    않으면 로드맵 화면이 그 항목을 학년 슬롯에 넣지 못하고 "2026년 2학기" 같은
+    기타 칸으로 떨어뜨린다. 챗에서는 더 나빠서, 학년을 못 받은 LLM이
     "1학년 1학기입니다"처럼 **지어낸다** (골든 케이스 10에서 실제 관측).
 
     복학 이후로는 쉬지 않고 다닌다고 본다. 실제로 또 휴학하면 다음 포털 동기화가
     이수 기록 기준으로 다시 계산해 바로잡는다.
     """
     if semester not in _REGULAR_SEMESTERS:
-        return None, semester
+        return None, None
     try:
         target = _absolute_semester(year, semester)
     except (TypeError, ValueError):
-        return None, semester
+        return None, None
 
     records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
     semester_rank = _build_semester_rank(records)
@@ -160,7 +160,7 @@ def project_curriculum_term(
             last_abs = _absolute_semester(*last_key)
             if target - last_abs <= 0:
                 # 기록된 학기보다 과거인데 기록이 없다 — 근거가 없어 비워 둔다.
-                return None, semester
+                return None, None
             rank = semester_rank[last_key] + _steps_to_target(db, last_abs, target)
         else:
             # 이수 기록이 아예 없으면 이번이 첫 학기다.
@@ -168,19 +168,59 @@ def project_curriculum_term(
 
     grade = entry_grade + (rank - 1) // 2
     if not (1 <= grade <= 4):
-        return None, semester
+        return None, None
     return grade, "1학기" if rank % 2 == 1 else "2학기"
+
+
+def project_calendar_term(
+    db: Session, user_id: int, grade: int | None, curriculum_semester: str | None
+) -> tuple[str | None, str | None]:
+    """project_curriculum_term의 역방향 — 커리큘럼 학기가 달력상 언제인지 추정한다.
+
+    로드맵 화면은 "4학년 1학기" 같은 커리큘럼 슬롯만 보여주므로, 사용자가 거기에
+    과목을 끌어다 놓으면 그게 달력상 몇 년 몇 학기인지는 서버가 알아야 한다.
+    쉬지 않고 다닌다는 가정은 정방향과 같다.
+    """
+    if grade is None or curriculum_semester not in _REGULAR_SEMESTERS:
+        return None, None
+
+    records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
+    semester_rank = _build_semester_rank(records)
+    user = db.get(User, user_id)
+    entry_grade = admission_entry_grade(user.admission_type if user else None)
+
+    rank = (grade - entry_grade) * 2 + (1 if curriculum_semester == "1학기" else 2)
+    if rank < 1:
+        return None, None
+
+    # 이미 등록한 학기면 실제 달력값이 있다 — 추정할 필요가 없다.
+    for key, existing_rank in semester_rank.items():
+        if existing_rank == rank:
+            return key
+
+    if not semester_rank:
+        return None, None
+    last_key = max(semester_rank, key=lambda key: _semester_order(*key))
+    steps = rank - semester_rank[last_key]
+    if steps <= 0:
+        # 등록 기록 사이에 뚫린 순번 — 휴학 배치를 알 수 없어 비워 둔다.
+        return None, None
+    absolute = _absolute_semester(*last_key) + steps
+    return str(absolute // 2), "1학기" if absolute % 2 == 0 else "2학기"
 
 
 def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int) -> list[CourseRoadmapItem]:
     """user_id의 StudentCourseRecord를 roadmap_id의 완료된 항목으로 upsert한다.
 
+    학기는 두 축을 각각 채운다: planned_year/planned_semester는 성적표에 적힌
+    달력 학기 그대로, planned_grade/curriculum_semester는 재학 순번으로 환산한
+    커리큘럼 학기다(CourseRoadmapItem 주석 참고).
+
     upsert 키는 (course_name, planned_year) + status="completed" + source="manual"이다.
-    planned_semester를 키에 넣지 않는 이유: 휴학 반영 이전 코드가 저장해 둔 항목은
-    달력 학기 기준이고, 이 함수가 새로 쓰는 값은 커리큘럼 학기 기준이라 그대로
-    매칭시키면 옛 행이 그대로 남고 새 행이 중복 생성된다. 학생이 같은 과목을 같은
-    달력 연도의 1·2학기 모두 이수하는 케이스는 실질적으로 발생하지 않아 이 키로도
-    충돌하지 않는다.
+    planned_semester를 키에 넣지 않는 이유: 커리큘럼 학기를 planned_semester에
+    잘못 넣던 시절의 행이 남아 있어, 달력 학기로 매칭하면 옛 행을 못 찾고 새 행이
+    중복 생성된다. 학생이 같은 과목을 같은 달력 연도의 1·2학기 모두 이수하는
+    케이스는 실질적으로 발생하지 않아 이 키로도 충돌하지 않는다.
     """
     records = db.query(StudentCourseRecord).filter_by(user_id=user_id).all()
     semester_rank = _build_semester_rank(records)
@@ -190,7 +230,7 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
 
     saved: list[CourseRoadmapItem] = []
     for record in records:
-        planned_grade, planned_semester = _curriculum_term(
+        planned_grade, curriculum_semester = _curriculum_term(
             semester_rank, record.year, record.semester, entry_grade
         )
 
@@ -210,7 +250,8 @@ def sync_completed_courses_to_roadmap(db: Session, user_id: int, roadmap_id: int
             planned_year=record.year,
         )
         item.planned_year = record.year
-        item.planned_semester = planned_semester
+        item.planned_semester = record.semester
+        item.curriculum_semester = curriculum_semester
         item.planned_grade = planned_grade
         item.course_id = record.course_id
         item.course_name = record.raw_course_name

@@ -9,6 +9,7 @@ from app.domains.academics.models import StudentCourseRecord
 from app.domains.courses.models import Course
 from app.domains.planning import roadmap_chat as roadmap_chat_mod
 from app.domains.planning.history import (
+    project_calendar_term,
     project_curriculum_term,
     sync_completed_courses_to_roadmap,
 )
@@ -77,9 +78,49 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         saved = sync_completed_courses_to_roadmap(db, user_id=1, roadmap_id=1)
         by_name = {it.course_name: it for it in saved}
 
-        self.assertEqual((1, "1학기"), (by_name["A"].planned_grade, by_name["A"].planned_semester))
-        self.assertEqual((1, "2학기"), (by_name["B"].planned_grade, by_name["B"].planned_semester))
-        self.assertEqual((2, "1학기"), (by_name["C"].planned_grade, by_name["C"].planned_semester))
+        for name, grade, semester in [("A", 1, "1학기"), ("B", 1, "2학기"), ("C", 2, "1학기")]:
+            item = by_name[name]
+            self.assertEqual((grade, semester), (item.planned_grade, item.curriculum_semester))
+            # 쉬지 않고 다닌 학생은 두 축이 일치한다.
+            self.assertEqual(semester, item.planned_semester)
+
+    def test_leave_of_absence_keeps_calendar_and_curriculum_apart(self):
+        """휴학한 학기는 재학 순번에서 빠지므로 달력 학기와 커리큘럼 학기가 어긋난다.
+
+        2025-2를 쉰 학생의 2026년 **1학기**는 재학 2번째 학기라 커리큘럼상
+        1학년 2학기다. 예전에는 이 커리큘럼 학기를 planned_semester에 그대로
+        덮어써서, planned_year와 짝지어 읽으면 다닌 적 없는 "2026년 2학기"가
+        됐다 — 성장 로드맵 화면과 DB가 서로 다른 학기를 가리킨 원인.
+        """
+        db = self.make_db()
+        db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="A", category="전공기초",
+                                 credits=3, year="2025", semester="1학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="B", category="전공필수",
+                                 credits=3, year="2026", semester="1학기"),
+        ])
+        db.flush()
+
+        by_name = {it.course_name: it
+                   for it in sync_completed_courses_to_roadmap(db, user_id=1, roadmap_id=1)}
+
+        self.assertEqual(("2026", "1학기"),
+                         (by_name["B"].planned_year, by_name["B"].planned_semester))
+        self.assertEqual((1, "2학기"),
+                         (by_name["B"].planned_grade, by_name["B"].curriculum_semester))
+
+    def test_seasonal_records_have_no_curriculum_semester(self):
+        """계절수업은 학년 슬롯 밖이라 커리큘럼 축이 비고, 달력 축만 남는다."""
+        db = self.make_db()
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="딥러닝PBL", category="일반선택",
+                                    credits=3, year="2026", semester="여름계절수업"))
+        db.flush()
+
+        item = sync_completed_courses_to_roadmap(db, user_id=1, roadmap_id=1)[0]
+
+        self.assertEqual(("2026", "여름계절수업"), (item.planned_year, item.planned_semester))
+        self.assertIsNone(item.planned_grade)
+        self.assertIsNone(item.curriculum_semester)
 
     def test_transfer_student_first_semester_is_grade_3(self):
         """편입생의 첫 재학 학기는 3학년 1학기다.
@@ -107,9 +148,9 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         # 입학 전 인정 학점은 학년 슬롯 밖.
         self.assertIsNone(by_name["이산수학"].planned_grade)
         # 재학 학기는 3학년부터 시작해 두 학기마다 오른다.
-        self.assertEqual((3, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].planned_semester))
-        self.assertEqual((3, "2학기"), (by_name["알고리즘"].planned_grade, by_name["알고리즘"].planned_semester))
-        self.assertEqual((4, "1학기"), (by_name["캡스톤"].planned_grade, by_name["캡스톤"].planned_semester))
+        self.assertEqual((3, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].curriculum_semester))
+        self.assertEqual((3, "2학기"), (by_name["알고리즘"].planned_grade, by_name["알고리즘"].curriculum_semester))
+        self.assertEqual((4, "1학기"), (by_name["캡스톤"].planned_grade, by_name["캡스톤"].curriculum_semester))
 
     def test_freshman_with_pre_admission_credits_still_starts_at_grade_1(self):
         """조기이수 인정 학점이 있어도 신입생이면 재학 학기는 1학년부터 센다."""
@@ -126,7 +167,7 @@ class SyncCompletedCoursesTest(unittest.TestCase):
         by_name = {it.course_name: it for it in saved}
 
         self.assertIsNone(by_name["이산수학"].planned_grade)
-        self.assertEqual((1, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].planned_semester))
+        self.assertEqual((1, "1학기"), (by_name["자료구조"].planned_grade, by_name["자료구조"].curriculum_semester))
 
 
 class ProjectCurriculumTermTest(unittest.TestCase):
@@ -178,9 +219,14 @@ class ProjectCurriculumTermTest(unittest.TestCase):
         self.assertEqual((3, "1학기"), project_curriculum_term(db_transfer, 1, "2026", "1학기"))
 
     def test_계절수업은_학년을_매기지_않는다(self):
+        """커리큘럼 축으로 환산할 수 없으면 두 값 모두 None이다.
+
+        예전에는 원본 학기를 그대로 돌려줬는데, 호출부가 그걸 커리큘럼 학기로
+        믿고 저장하면서 달력 학기가 커리큘럼 컬럼에 섞여 들어갔다.
+        """
         db = self.make_db()
         self._add_terms(db, [("2025", "1학기")])
-        self.assertEqual((None, "여름계절수업"),
+        self.assertEqual((None, None),
                          project_curriculum_term(db, 1, "2025", "여름계절수업"))
 
     def test_4학년을_넘어가면_비워_둔다(self):
@@ -190,7 +236,7 @@ class ProjectCurriculumTermTest(unittest.TestCase):
             ("2022", "1학기"), ("2022", "2학기"), ("2023", "1학기"), ("2023", "2학기"),
             ("2024", "1학기"), ("2024", "2학기"), ("2025", "1학기"), ("2025", "2학기"),
         ])
-        self.assertEqual((None, "1학기"), project_curriculum_term(db, 1, "2026", "1학기"))
+        self.assertEqual((None, None), project_curriculum_term(db, 1, "2026", "1학기"))
 
     def test_엇학기_학생은_커리큘럼_학기가_달력과_어긋난다(self):
         """한 학기 휴학한 엇학기 학생의 사례.
@@ -219,6 +265,30 @@ class ProjectCurriculumTermTest(unittest.TestCase):
         self.assertEqual((4, "1학기"), project_curriculum_term(db, 1, "2025", "2학기"))
         # 다음 달력 학기 2026-1은 커리큘럼 4-2다 (달력은 1학기, 커리큘럼은 2학기).
         self.assertEqual((4, "2학기"), project_curriculum_term(db, 1, "2026", "1학기"))
+
+    def test_커리큘럼_학기를_달력으로_되돌린다(self):
+        """로드맵 화면은 커리큘럼 슬롯만 안다 — 달력 학기는 서버가 되돌려야 한다.
+
+        위 엇학기 학생과 같은 이력. 사용자가 "4학년 2학기" 칸에 과목을 놓으면
+        그건 달력상 2026년 1학기다.
+        """
+        db = self.make_db()
+        self._add_terms(db, [
+            ("2022", "1학기"), ("2022", "2학기"),
+            ("2023", "1학기"), ("2023", "2학기"),
+            ("2024", "1학기"),
+            ("2025", "1학기"), ("2025", "2학기"),
+        ])
+        # 이미 등록한 학기는 추정하지 않고 실제 달력값을 돌려준다.
+        self.assertEqual(("2025", "2학기"), project_calendar_term(db, 1, 4, "1학기"))
+        # 아직 안 다닌 학기는 마지막 등록 학기 뒤로 이어 붙인다.
+        self.assertEqual(("2026", "1학기"), project_calendar_term(db, 1, 4, "2학기"))
+
+    def test_계절수업은_달력으로_되돌릴_수_없다(self):
+        db = self.make_db()
+        self._add_terms(db, [("2025", "1학기")])
+        self.assertEqual((None, None), project_calendar_term(db, 1, 1, "여름계절수업"))
+        self.assertEqual((None, None), project_calendar_term(db, 1, None, "1학기"))
 
 
 if __name__ == "__main__":
