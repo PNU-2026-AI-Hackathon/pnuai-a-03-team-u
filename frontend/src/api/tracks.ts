@@ -30,6 +30,27 @@ export type EnrolledTrack = {
   completed: boolean;
 };
 
+export type TrackPreview = {
+  department_id: number;
+  department_name: string;
+  major_id: number;
+  track_name: string;
+  total_credits: number;
+  dept_credits: { min?: number; max?: number };
+  ai_common_credits: { min?: number; max?: number };
+};
+
+/**
+ * 회원가입 홍보 카드용 비로그인 조회. 자동완성에서 고른 정식 학과명과
+ * 완전 일치할 때만 결과가 온다 — 타이핑 중간값에는 조용히 빈 배열.
+ */
+export async function previewTracks(department: string) {
+  const { data } = await apiClient.get<TrackPreview[]>("/tracks/preview", {
+    params: { department },
+  });
+  return data;
+}
+
 export async function listAvailableTracks() {
   const { data } = await apiClient.get<AvailableTrack[]>("/me/tracks/available");
   return data;

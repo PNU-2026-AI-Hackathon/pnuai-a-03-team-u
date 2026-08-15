@@ -23,7 +23,9 @@ from app.domains.planning.models import (
     CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange,
     TimetableChatMessage, TimetableChatSession,
 )
-from app.domains.planning.timetable_chat import _TimeTableToolContext, run_timetable_chat
+from app.domains.planning.timetable_chat import (
+    _TimeTableToolContext, clear_chat_messages, run_timetable_chat,
+)
 from app.domains.users.models import User
 
 
@@ -405,6 +407,39 @@ class SessionPersistenceTest(unittest.TestCase):
                     db=db, user=user, year="2026", semester="2학기",  # 세션은 1학기인데 요청은 2학기
                     message="x", session_id=sess.id,
                 )
+
+
+class ClearChatMessagesTest(unittest.TestCase):
+    """'이 대화 비우기' — 세션(제목·학기 맥락)은 남기고 메시지만 지운다."""
+
+    def test_clears_messages_but_keeps_session(self):
+        db = _make_db()
+        db.add(School(id=1, name="테스트")); db.flush()
+        db.add(College(id=1, school_id=1, name="테스트대학")); db.flush()
+        db.add(Department(id=100, college_id=1, name="테스트학과")); db.flush()
+        user = _make_student(db, department_id=100)
+        sess = TimetableChatSession(user_id=user.id, year="2026", semester="2학기", title="스레드")
+        db.add(sess); db.flush()
+        db.add(TimetableChatMessage(session_id=sess.id, role="user", content="안녕"))
+        db.add(TimetableChatMessage(session_id=sess.id, role="assistant", content="네"))
+        db.commit()
+
+        deleted = clear_chat_messages(db, user, sess.id)
+
+        self.assertEqual(2, deleted)
+        self.assertIsNotNone(db.get(TimetableChatSession, sess.id))
+        self.assertEqual(0, db.query(TimetableChatMessage).filter_by(session_id=sess.id).count())
+
+    def test_other_users_session_returns_none(self):
+        db = _make_db()
+        db.add(School(id=1, name="테스트")); db.flush()
+        db.add(College(id=1, school_id=1, name="테스트대학")); db.flush()
+        db.add(Department(id=100, college_id=1, name="테스트학과")); db.flush()
+        user = _make_student(db, department_id=100)
+        other = TimetableChatSession(user_id=999, year="2026", semester="2학기", title="남의 것")
+        db.add(other); db.commit()
+
+        self.assertIsNone(clear_chat_messages(db, user, other.id))
 
 
 class OfferingLookupTest(unittest.TestCase):

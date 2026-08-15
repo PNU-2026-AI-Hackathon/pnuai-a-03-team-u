@@ -106,6 +106,14 @@ export async function deleteTimetableChatSession(sessionId: number) {
   await apiClient.delete(`/agent/timetable/sessions/${sessionId}`);
 }
 
+/** 세션(제목·학기 맥락)은 남기고 메시지만 비운다 — '이 대화 비우기'. */
+export async function clearTimetableChatMessages(sessionId: number) {
+  const { data } = await apiClient.delete<{ deleted_messages: number }>(
+    `/agent/timetable/sessions/${sessionId}/messages`,
+  );
+  return data;
+}
+
 export type SuggestedOffering = {
   offering_id: number;
   course_id: number | null;

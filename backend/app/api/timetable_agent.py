@@ -21,6 +21,7 @@ from app.core.ratelimit import CHAT_LIMITS, limiter
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import TimetableChatMessage, TimetableChatSession
 from app.domains.planning.timetable_chat import (
+    clear_chat_messages,
     create_chat_session,
     delete_chat_session,
     list_chat_sessions,
@@ -118,6 +119,19 @@ def get_session_messages(
         )
         for m in messages
     ]
+
+
+@router.delete("/sessions/{session_id}/messages")
+def clear_session_messages(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """세션은 남기고 메시지만 비운다 — 로드맵 챗의 '이 대화 비우기'와 동일."""
+    deleted = clear_chat_messages(db, current_user, session_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    return {"deleted_messages": deleted}
 
 
 @router.delete("/sessions/{session_id}")
