@@ -4588,6 +4588,69 @@ body.theme-dark .semester-course-status.status-completed {
   color: var(--blue);
 }
 
+.timetable-tool[data-tooltip],
+.ai-session-new[data-tooltip],
+.ai-session-delete[data-tooltip] {
+  position: relative;
+}
+
+.timetable-tool[data-tooltip]::after,
+.ai-session-new[data-tooltip]::after,
+.ai-session-delete[data-tooltip]::after {
+  position: absolute;
+  right: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: 180px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(50%, 4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  white-space: nowrap;
+}
+
+.timetable-tool[data-tooltip]::before,
+.ai-session-new[data-tooltip]::before,
+.ai-session-delete[data-tooltip]::before {
+  position: absolute;
+  right: 50%;
+  bottom: calc(100% + 3px);
+  z-index: 21;
+  border: 5px solid transparent;
+  border-top-color: #111827;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(50%, 4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.timetable-tool[data-tooltip]:hover::after,
+.timetable-tool[data-tooltip]:hover::before,
+.timetable-tool[data-tooltip]:focus-visible::after,
+.timetable-tool[data-tooltip]:focus-visible::before,
+.ai-session-new[data-tooltip]:hover::after,
+.ai-session-new[data-tooltip]:hover::before,
+.ai-session-new[data-tooltip]:focus-visible::after,
+.ai-session-new[data-tooltip]:focus-visible::before,
+.ai-session-delete[data-tooltip]:hover::after,
+.ai-session-delete[data-tooltip]:hover::before,
+.ai-session-delete[data-tooltip]:focus-visible::after,
+.ai-session-delete[data-tooltip]:focus-visible::before {
+  opacity: 1;
+  transform: translate(50%, 0);
+}
+
 .ai-session-delete:hover:not(:disabled) {
   border-color: #f4c2c2;
   color: var(--red);
