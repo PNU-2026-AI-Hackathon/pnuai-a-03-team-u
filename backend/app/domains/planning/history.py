@@ -87,7 +87,7 @@ def _absolute_semester(year: str, semester: str) -> int:
     return int(year) * 2 + (0 if semester == "1학기" else 1)
 
 
-def _steps_to_target(db: Session, last_abs: int, target_abs: int) -> int:
+def _steps_to_target(last_abs: int, target_abs: int) -> int:
     """마지막 이수 학기에서 target까지 **재학 학기가 몇 번 더 지나는지**.
 
     커리큘럼 학년은 달력이 아니라 **실제 재학한 학기 수**로 올라간다. 그래서 휴학으로
@@ -104,9 +104,16 @@ def _steps_to_target(db: Session, last_abs: int, target_abs: int) -> int:
         복학 첫 학기로 보고 거기서부터 센다.
 
     앞으로 또 휴학할지는 알 수 없으므로 복학 이후로는 연속 재학을 가정한다(기존 방침 유지).
+
+    여기서 `_absolute_semester`가 실패하는 경우는 없다 — 입력이
+    `_current_academic_term()`이고, 그 함수는 반환 경로 세 개가 전부 학기를 `1` 또는 `2`
+    리터럴로 돌려주기 때문이다. 호출자가 넘기는 `last_abs`/`target_abs`는 이미 정수이고,
+    그 값들의 정규 학기 여부·연도 파싱은 `project_curriculum_term`이 먼저 거른다.
+    (예전에는 여기에 `current_abs is None` 체크가 있었는데, `_absolute_semester`는
+    `int(year) * 2 + ...`라 None을 돌려줄 수 없어서 한 번도 참이 된 적이 없었다.)
     """
     current_abs = _absolute_semester(*_current_academic_term_strings())
-    if current_abs is None or current_abs - last_abs <= 1:
+    if current_abs - last_abs <= 1:
         return target_abs - last_abs
     next_plannable_abs = current_abs + 1
     return max(1, 1 + (target_abs - next_plannable_abs))
@@ -161,7 +168,7 @@ def project_curriculum_term(
             if target - last_abs <= 0:
                 # 기록된 학기보다 과거인데 기록이 없다 — 근거가 없어 비워 둔다.
                 return None, semester
-            rank = semester_rank[last_key] + _steps_to_target(db, last_abs, target)
+            rank = semester_rank[last_key] + _steps_to_target(last_abs, target)
         else:
             # 이수 기록이 아예 없으면 이번이 첫 학기다.
             rank = 1

@@ -14,7 +14,7 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
-## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 6건 + 의존성 핀·보안 스캔(P1-3)
+## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 7건 + 의존성 핀·보안 스캔(P1-3)
 
 미PR 상태로 쌓여 있던 `fix/chat-quality-and-security-docs`(main +21커밋, 61파일)를 전수
 리뷰하고 나온 결함을 고쳤다. 겸해서 의존성 핀이 없는 문제(P1-3)를 함께 처리했다.
@@ -66,6 +66,12 @@
   파라미터를 하나씩 만들어 PostgreSQL 상한(65535)에 걸리면 쿼리가 통째로 실패할 수 있었다.
   제약이 없으면 `LIMIT 1` 존재 확인, 있으면 조인 한 번으로 바꿨다. 판정 규칙은 SQL로 옮기지
   않고 파이썬 로직 그대로 뒀다(후보 필터 쪽과 갈라질 위험).
+- **[chore] `_steps_to_target`의 죽은 코드 정리.** 쓰지 않는 `db: Session` 인자와, 한 번도
+  참이 된 적 없는 `if current_abs is None` 체크를 걷어냈다(`_absolute_semester`는
+  `int(year) * 2 + ...`라 None을 돌려줄 수 없다). 죽은 null 체크는 "여기에 가드가 필요한가"를
+  계속 되묻게 만드는데, 실제로는 필요 없다 — 입력이 `_current_academic_term()`이고 그 함수는
+  반환 경로 세 개가 전부 학기를 `1`/`2` 리터럴로 주며, 나머지 입력의 정규 학기 여부·연도
+  파싱은 `project_curriculum_term`이 앞에서 이미 거른다. 그 근거를 docstring에 남겼다.
 - **[feat] 의존성 버전 핀 + 보안 스캔 CI (보안 계획 P1-3).** `backend/constraints.txt`
   신설, golden-eval 워크플로 2개를 `-c constraints.txt` 설치로 전환,
   `.github/workflows/security-scan.yml`(gitleaks=머지 차단 / pip-audit=보고만) 추가.
