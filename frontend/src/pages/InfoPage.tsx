@@ -1303,7 +1303,7 @@ export function InfoPage() {
                       </div>
                     </div>
                     <div className="profile-record-actions">
-                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 취소`} title="이수 취소"><Trash2 size={15} aria-hidden="true" /></button>
+                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 체크 해제`} title="이수 체크 해제"><Trash2 size={15} aria-hidden="true" /></button>
                     </div>
                   </div>
                 ))}
@@ -1318,7 +1318,7 @@ export function InfoPage() {
                       </span>
                     </div>
                     <button className="profile-add-button" type="button" onClick={() => void handleTrackEnroll(track)} disabled={isTrackSaving}>
-                      <Plus size={15} aria-hidden="true" />이수 시작
+                      <Plus size={15} aria-hidden="true" />이수 체크
                     </button>
                   </div>
                 ))}

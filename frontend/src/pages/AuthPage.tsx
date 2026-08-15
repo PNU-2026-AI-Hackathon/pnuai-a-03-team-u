@@ -105,7 +105,7 @@ export function AuthPage() {
   const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(false);
 
   // 대상 학과를 고르면 뜨는 AI융합트랙 홍보 카드. 트랙은 학과에 1:1이라
-  // 고르는 UI가 아니라 안내 + 체크(가입 직후 이수 추적 시작)로 충분하다.
+  // 고르는 UI가 아니라 안내 + 체크(가입 직후 이수 체크 시작)로 충분하다.
   const [trackPreview, setTrackPreview] = useState<TrackPreview | null>(null);
   const [wantsTrack, setWantsTrack] = useState(false);
 
@@ -483,7 +483,7 @@ export function AuthPage() {
                       checked={wantsTrack}
                       onChange={(event) => setWantsTrack(event.target.checked)}
                     />
-                    <span>가입하면서 이수 추적 시작하기 (내 정보에서 언제든 취소 가능)</span>
+                    <span>가입하면서 이수 체크 시작하기 (내 정보에서 언제든 해제 가능)</span>
                   </label>
                 </div>
               ) : null}
