@@ -14,7 +14,7 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
-## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 7건 + 의존성 핀·보안 스캔(P1-3)
+## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 9건 + 의존성 핀·보안 스캔(P1-3)
 
 미PR 상태로 쌓여 있던 `fix/chat-quality-and-security-docs`(main +21커밋, 61파일)를 전수
 리뷰하고 나온 결함을 고쳤다. 겸해서 의존성 핀이 없는 문제(P1-3)를 함께 처리했다.
@@ -72,6 +72,26 @@
   계속 되묻게 만드는데, 실제로는 필요 없다 — 입력이 `_current_academic_term()`이고 그 함수는
   반환 경로 세 개가 전부 학기를 `1`/`2` 리터럴로 주며, 나머지 입력의 정규 학기 여부·연도
   파싱은 `project_curriculum_term`이 앞에서 이미 거른다. 그 근거를 docstring에 남겼다.
+- **[fix] `project_calendar_term`이 휴학 학생에게 과거 달력 학기를 돌려줬다.** main이
+  `#143`으로 "달력 축 ↔ 커리큘럼 축" 역방향 함수를 새로 넣었는데, 정방향
+  (`project_curriculum_term`)만 휴학 공백을 건너뛰고 역방향은 달력 거리를 그대로 썼다.
+  두 함수를 서로의 역함수라고 docstring에 적어 놓고 실제로는 어긋난 상태 —
+  2022 입학·5학기 이수 후 휴학한 학생(현재 2026-2)에게 정방향은 `2027-1학기 → 3학년 2학기`,
+  역방향은 `3학년 2학기 → 2024년 2학기`를 줬다. **2024-2는 그 학생이 휴학해서 다니지 않은
+  학기다.** 로드맵 "3학년 2학기" 칸에 과목을 놓으면 `planned_year`가 2024로 저장된다.
+  - 이 브랜치와 main이 각각 같은 함수군을 고치면서 **병합으로 드러난** 결함이다. main
+    단독으로는 정·역방향이 둘 다 달력 거리라 서로 맞아떨어져 안 보였다.
+  - `_steps_to_target`의 역방향인 `_absolute_for_step`을 추가해 분기 기준을 정방향과
+    일치시켰다. steps가 최소 1로 잘리므로 결과는 항상 현재 학기보다 뒤다.
+  - 왕복 테스트 3건 추가(`CalendarTermRoundTripTest`). "휴학 학생의 어떤 커리큘럼 슬롯도
+    현재 학기보다 과거로 떨어지지 않는다"를 subTest로 고정했다.
+- **[fix] `test_planning_history.py`의 테스트 5건이 한 번도 실행되지 않고 있었다.**
+  `if __name__ == "__main__": unittest.main()` 블록이 파일 **중간**에 있어서, 직접 실행하면
+  그 뒤에 정의된 `ProjectCurriculumTermGapTest`(휴학 보정 회귀 테스트 5건)가 아예 수집되기
+  전에 러너가 끝났다. CI는 pytest라 초록이어서 안 드러났다. 블록을 파일 끝으로 옮겼다
+  (직접 실행 15건 → 23건). 함께, 오늘 날짜에 따라 결과가 바뀌던
+  `test_커리큘럼_학기를_달력으로_되돌린다`에 현재 학기 patch를 넣었다 — 9월이 되면
+  코드 변경 없이 깨질 테스트였다.
 - **[feat] 의존성 버전 핀 + 보안 스캔 CI (보안 계획 P1-3).** `backend/constraints.txt`
   신설, golden-eval 워크플로 2개를 `-c constraints.txt` 설치로 전환,
   `.github/workflows/security-scan.yml`(gitleaks=머지 차단 / pip-audit=보고만) 추가.
@@ -87,7 +107,7 @@
   - pip-audit 첫 실행에서 취약점 9건 발견 → `aiohttp` 3.14.3 / `pyasn1` 0.6.4로 올려
     **2건**으로 줄였다. 남은 2건(`cryptography` PKCS#7, `ecdsa` Minerva)은 우리 경로에서
     도달 불가라 수용 — 우리 JWT는 `HS256`(HMAC)이라 ECDSA를 쓰지 않는다.
-- 확인: 백엔드 테스트 **330 passed**. 실패 2건은 로컬에 Postgres가 안 떠 있어서 나는 기존
+- 확인: 백엔드 테스트 **338 passed**. 실패 2건은 로컬에 Postgres가 안 떠 있어서 나는 기존
   실패(`RateLimitTest`가 실제 HTTP로 `/auth/login` 호출)이고 이번 변경과 무관하다.
   `constraints.txt` 집합이 CI와 같은 Python 3.12에서 설치되는 것을 별도 venv로 확인했다.
 
