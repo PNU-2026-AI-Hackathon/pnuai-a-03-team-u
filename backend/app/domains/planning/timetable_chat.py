@@ -696,6 +696,22 @@ def delete_chat_session(db: Session, user: User, session_id: int) -> bool:
     return True
 
 
+def clear_chat_messages(db: Session, user: User, session_id: int) -> int | None:
+    """세션은 남기고 메시지만 비운다. 소유자 불일치·없는 세션이면 None.
+
+    로드맵 챗의 "이 대화 비우기"와 같은 동작 — 스레드(제목·학기 맥락)는
+    유지한 채 대화만 새로 시작하고 싶을 때 쓴다.
+    """
+    session = db.get(TimetableChatSession, session_id)
+    if session is None or session.user_id != user.id:
+        return None
+    deleted = db.query(TimetableChatMessage).filter(
+        TimetableChatMessage.session_id == session_id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return deleted
+
+
 def load_chat_messages(
     db: Session, user: User, session_id: int
 ) -> list[TimetableChatMessage] | None:

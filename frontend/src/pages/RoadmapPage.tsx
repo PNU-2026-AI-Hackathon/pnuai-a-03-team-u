@@ -26,6 +26,7 @@ import type { GraduationProgram } from "../api/studentInfo";
 import { isMockAuthEnabled, visibleGrades } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import { useAuth } from "../auth/AuthContext";
+import { ChatMarkdown } from "../components/chat/ChatMarkdown";
 
 type RoadmapTab = "semester" | "requirements" | "curriculum";
 
@@ -2284,9 +2285,18 @@ function ConnectedRoadmapPage() {
             </div>
           </div>
         ) : null}
-        <div ref={chatLogRef} className="chat-log" aria-live="polite" aria-busy={isAiLoading || isThreadLoading}>
-          {isThreadLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 지난 대화를 불러오는 중</p></div> : messages.map((message) => <div className={message.speaker === "AI" ? "ai-message" : "user-message"} key={message.id}><strong>{message.speaker}</strong><p>{message.text}</p></div>)}
-          {isAiLoading ? <div className="ai-message ai-message-loading"><strong>AI</strong><p><LoaderCircle size={14} aria-hidden="true" /> 처리 중</p></div> : null}
+        {/* 시간표 챗과 같은 말풍선 디자인(timetable-chat)을 공유한다 — 두 AI 챗이
+            딴 화면처럼 보이던 것을 통일. AI 답변은 마크다운으로 렌더링. */}
+        <div ref={chatLogRef} className="timetable-chat roadmap-rail-chat" aria-live="polite" aria-busy={isAiLoading || isThreadLoading}>
+          {isThreadLoading ? <p className="timetable-empty">지난 대화를 불러오는 중입니다…</p> : messages.map((message) => (
+            <div className={`timetable-chat-row ${message.speaker === "AI" ? "assistant" : "user"}`} key={message.id}>
+              <span className="timetable-chat-who">{message.speaker === "AI" ? "AI" : "나"}</span>
+              {message.speaker === "AI"
+                ? <div className="chat-bubble"><ChatMarkdown text={message.text} /></div>
+                : <p>{message.text}</p>}
+            </div>
+          ))}
+          {isAiLoading ? <p className="timetable-empty">답변을 작성하고 있습니다…</p> : null}
           {aiError ? <div className="ai-chat-error" role="alert"><p>{aiError}</p>{failedPrompt ? <button type="button" onClick={() => void sendMessage(failedPrompt, false)}><RefreshCw size={13} aria-hidden="true" /> 다시 시도</button> : null}</div> : null}
         </div>
         {pendingChanges.length > 0 ? <section className="ai-roadmap-proposal" aria-label="AI 로드맵 변경 제안"><div><span>변경 제안</span><h4>{pendingChanges.length}개의 변경사항</h4><p>반영할 항목만 체크한 뒤 승인하세요.</p></div><ul>{pendingChanges.map((change) => <li key={change.change_id}><label className="pending-change-row"><input type="checkbox" checked={selectedChangeIds.has(change.change_id)} onChange={() => togglePendingChangeSelection(change.change_id)} disabled={isAiLoading} /><span>{pendingChangeLabel(change)}</span></label></li>)}</ul><div className="proposal-actions"><button type="button" disabled={isAiLoading} onClick={() => void resolvePendingChanges(false)}><X size={14} aria-hidden="true" /> 모두 거절</button><button className="apply-proposal-button" type="button" disabled={isAiLoading || selectedChangeIds.size === 0} onClick={() => void resolvePendingChanges(true)}><Check size={14} aria-hidden="true" /> 선택 승인 ({selectedChangeIds.size})</button></div></section> : null}
