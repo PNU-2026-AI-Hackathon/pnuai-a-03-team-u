@@ -148,6 +148,7 @@ export function TimetablePage() {
   const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
+  const [activeOfferingActionId, setActiveOfferingActionId] = useState<number | null>(null);
   const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
   const [applyError, setApplyError] = useState("");
   /**
@@ -337,6 +338,34 @@ export function TimetablePage() {
 
   const allPlaced = detail?.offerings ?? [];
   const totalCredits = detail?.total_credits ?? 0;
+  const offeringEmptyTitle = groupKey === "major" && !selectedCollege
+    ? "단과대를 먼저 선택해 주세요"
+    : "조건에 맞는 개설 강좌가 없습니다";
+  const offeringEmptyDescription = groupKey === "major" && !selectedCollege
+    ? "전공 과목은 단과대와 학부를 선택하면 더 정확하게 찾을 수 있어요."
+    : search.trim()
+      ? "검색어를 줄이거나 이수구분 필터를 해제해 보세요."
+      : "다른 갈래를 고르거나 필터를 조금 넓혀보세요.";
+
+  const selectedGroupLabel = COURSE_GROUPS.find((group) => group.key === groupKey)?.label ?? "갈래";
+  const majorStepItems = [
+    { label: "단과대", value: selectedCollege || "단과대 선택" },
+    { label: "학부", value: selectedDepartment?.name ?? (selectedCollege ? "학부 전체" : "단과대를 먼저") },
+    {
+      label: "전공",
+      value: selectedMajor || (selectedDepartment ? "학부 공통" : "전공 선택"),
+    },
+    { label: "이수구분", value: majorCategory || "전공 전체" },
+  ];
+  const searchSummary = groupKey === "major"
+    ? [
+        selectedGroupLabel,
+        selectedCollege,
+        selectedDepartment?.name,
+        selectedMajor || (selectedDepartment ? "학부 공통" : ""),
+        majorCategory || "전공 전체",
+      ].filter(Boolean).join(" · ")
+    : `${selectedGroupLabel} · 전교 개설 강좌`;
 
   /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
   const placedOfferingIds = new Set(allPlaced.map((offering) => offering.offering_id));
@@ -504,6 +533,7 @@ export function TimetablePage() {
   async function addOfferings(offeringIds: number[]) {
     if (isApplying || offeringIds.length === 0) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringIds.length === 1 ? offeringIds[0] : null);
     setApplyError("");
     try {
       // 시간표가 하나도 없으면 먼저 만들어 준다. 담기 전에 생성을 강요하지 않는다.
@@ -520,12 +550,14 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
   async function removeOffering(offeringId: number) {
     if (activeId === null || isApplying) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringId);
     setApplyError("");
     try {
       syncDetail(await removeTimetableItem(activeId, offeringId));
@@ -533,6 +565,7 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 빼지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
@@ -669,6 +702,7 @@ export function TimetablePage() {
             className="timetable-tool"
             type="button"
             title="새 시간표 만들기"
+            data-tooltip="새 시간표 만들기"
             aria-label="새 시간표 만들기"
             disabled={isRenaming}
             onClick={() => void handleCreateTimetable()}
@@ -679,6 +713,7 @@ export function TimetablePage() {
             className="timetable-tool"
             type="button"
             title="이름 바꾸기"
+            data-tooltip="이름 바꾸기"
             aria-label="이름 바꾸기"
             disabled={detail === null || isRenaming}
             onClick={() => {
@@ -693,6 +728,7 @@ export function TimetablePage() {
             className="timetable-tool is-danger"
             type="button"
             title="시간표 삭제"
+            data-tooltip="시간표 삭제"
             aria-label="시간표 삭제"
             disabled={detail === null || isRenaming}
             onClick={() => setIsConfirmingDelete(true)}
@@ -772,6 +808,26 @@ export function TimetablePage() {
                 {group.label}
               </button>
             ))}
+          </div>
+
+          <div className="timetable-filter-status" aria-label="현재 과목 검색 조건">
+            {groupKey === "major" ? (
+              <div className="timetable-filter-steps">
+                {majorStepItems.map((item) => (
+                  <div
+                    className={`timetable-filter-step ${item.value.includes("선택") || item.value.includes("먼저") ? "" : "is-active"}`}
+                    key={item.label}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <p className="timetable-filter-summary">
+              <strong>현재 검색 조건</strong>
+              <span>{searchSummary}</span>
+            </p>
           </div>
 
           {/* 2단계: 전공을 골랐을 때만 단과대 → 학부 → 전공으로 좁힌다. */}
@@ -858,13 +914,25 @@ export function TimetablePage() {
           ) : null}
 
           <ul className="timetable-course-list">
-            {isSearchingOfferings ? <li className="timetable-empty">불러오는 중입니다…</li> : null}
+            {isSearchingOfferings ? (
+              <li className="timetable-empty">
+                <strong>개설 강좌를 불러오는 중입니다</strong>
+                <span>선택한 조건에 맞는 과목을 찾고 있어요.</span>
+              </li>
+            ) : null}
             {!isSearchingOfferings && offerings.length === 0 ? (
-              <li className="timetable-empty">이 조건으로 개설된 과목이 없습니다.</li>
+              <li className="timetable-empty">
+                <strong>{offeringEmptyTitle}</strong>
+                <span>{offeringEmptyDescription}</span>
+              </li>
             ) : null}
 
             {offerings.map((offering) => {
               const placed = placedOfferingIds.has(offering.offering_id);
+              const isCurrentAction = activeOfferingActionId === offering.offering_id;
+              const buttonLabel = isCurrentAction
+                ? placed ? "빼는 중…" : "담는 중…"
+                : placed ? "담김 · 빼기" : "담기";
               return (
                 <li className="timetable-course" key={offering.offering_id}>
                   <div>
@@ -883,7 +951,7 @@ export function TimetablePage() {
                     }
                   >
                     {placed ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                    {placed ? "담김 · 빼기" : "담기"}
+                    {buttonLabel}
                   </button>
                 </li>
               );
@@ -1002,6 +1070,7 @@ export function TimetablePage() {
               type="button"
               aria-label="새 대화 시작"
               title="새 대화 시작"
+              data-tooltip="새 대화 시작"
               disabled={isSending}
               onClick={() => void handleCreateChatSession()}
             >
@@ -1012,6 +1081,7 @@ export function TimetablePage() {
               type="button"
               aria-label="이 대화 삭제"
               title="이 대화 삭제"
+              data-tooltip="이 대화 삭제"
               disabled={isSending || activeChatId === null}
               onClick={() => setIsConfirmingChatDelete(true)}
             >
@@ -1046,10 +1116,16 @@ export function TimetablePage() {
           ) : null}
 
           <div className="timetable-chat" aria-live="polite">
-            {isChatLoading ? <p className="timetable-empty">지난 대화를 불러오는 중입니다…</p> : null}
+            {isChatLoading ? (
+              <p className="timetable-empty">
+                <strong>지난 대화를 불러오는 중입니다</strong>
+                <span>잠시만 기다려 주세요.</span>
+              </p>
+            ) : null}
             {!isChatLoading && chat.length === 0 ? (
               <p className="timetable-empty">
-                남은 요건이나 원하는 조건을 말하면 로드맵 기준으로 답해드립니다.
+                <strong>원하는 시간표 조건을 말해보세요</strong>
+                <span>예: 공강 만들기, 오전 수업 줄이기, 졸업요건 우선으로 추천해줘</span>
               </p>
             ) : (
               chat.map((entry) => (

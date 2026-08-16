@@ -672,6 +672,9 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
                 required_total_credits=rule.total_credits,
                 special_rules=special,
             ))
+            # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+            # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+            db.flush()
 
     # program_courses upsert (필수과목 있으면)
     for code, name, group_label in rule.courses:
@@ -700,6 +703,9 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
                 requirement_group=group_label,
                 curriculum_year=rule.curriculum_year,
             ))
+            # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+            # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+            db.flush()
     return stats
 
 
