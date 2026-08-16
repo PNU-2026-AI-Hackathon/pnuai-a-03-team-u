@@ -17,7 +17,9 @@ nullable 마이그레이션 후 추가.
 
 from __future__ import annotations
 
+import datetime
 import json
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy import select
@@ -27,6 +29,7 @@ from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.models import StudentCourseRecord
+from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
     CourseRoadmap,
@@ -140,15 +143,21 @@ _TIMETABLE_CONDITIONAL_RULES: dict[str, str] = {
 
     "critical_missing": """
 - **필수 미이수 + 이번 학기 개설 X → 반드시 안내**: `critical_missing_required`에 항목이
-  있다. finish_response 앞부분에서 "이 필수 과목(예: '컴퓨터구조')은 X학기 전용 개설이라
-  이번 학기(Y학기)엔 못 담습니다. 다음 학년도 X학기에 반드시 들어야 졸업 가능합니다"처럼
-  지연·위험 + 대안 명시. 시간표 후보에는 넣지 마라 (이번 학기 개설 안 됨).""",
+  있다. finish_response 앞부분에서 **그 과목의 실제 이름과 개설 학기를 직접 써서**,
+  이번 학기에는 못 담는다는 사실과 다음에 언제 들어야 졸업 가능한지를 함께 알려라.
+  ⚠️ 과목명·학기는 `critical_missing_required`에 **실제로 들어 있는 값만** 써라. 시간표 후보에는 넣지 마라 (이번 학기 개설 안 됨).""",
 
     "prereq_blocked": """
 - **선수과목 부족 과목 이번 시간표 제외**: `prereq_blocked`에 항목이 있다. 이 course_id는
   시간표 조합에 넘기지 마라. `list_offered_courses` 결과에 있어도 걸러라. description
   파싱 기반이라 오탐 가능성 있으니 학생 "선수 이미 들었어" 반박하면 그대로 수용. 명시적
   요청 시 "선수 X가 미이수라 X부터 이수 권장"이라고 안내.""",
+
+    "non_primary_programs": """
+- **부전공·복수전공 과목도 후보에 넣어라**: 이 학생은 주전공 외 프로그램을 이수 중이다.
+  `list_offered_courses`를 **주전공용 한 번, 해당 프로그램용 한 번**(`program_type="minor"`
+  등) 최소 두 번 호출해라. 주전공 스코프로만 검색하면 부전공 학과 개설과목이 결과에
+  아예 안 나와서, 담을 수 있는 과목이 몇 개 없는 것처럼 보인다.""",
 
     "retake_candidates": """
 - **재수강 권유만, 강요 X**: `retake_candidates`에 C+ 이하 성적 과목이 있다. 학생이
@@ -166,27 +175,26 @@ def _select_timetable_rules(db: Session, user: User, target_semester: str) -> li
     """
     applicable: list[str] = []
 
-    # 엇학기 힌트 — SCR 최신 연도가 curriculum_year + 4 이상 지났으면 휴학 가능성
     from app.domains.academics.models import UserAcademicProgram
-    scr_years = db.scalars(
-        select(StudentCourseRecord.year).where(
-            StudentCourseRecord.user_id == user.id,
-            StudentCourseRecord.year.is_not(None),
-            StudentCourseRecord.semester != "입학전성적",
+    from sqlalchemy import func as _func
+
+    # 부·복수·융합전공 보유 → 그 학과 개설과목도 따로 검색해야 후보가 제대로 모인다.
+    if db.scalar(
+        select(_func.count(UserAcademicProgram.id)).where(
+            UserAcademicProgram.user_id == user.id,
+            UserAcademicProgram.program_type != "primary",
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
         )
-    ).all()
-    if scr_years:
-        try:
-            year_ints = [int(y) for y in scr_years if str(y).isdigit()]
-            primary_prog = db.scalars(
-                select(UserAcademicProgram).filter_by(user_id=user.id, program_type="primary")
-            ).first()
-            if primary_prog and primary_prog.curriculum_year and year_ints:
-                cy = int(str(primary_prog.curriculum_year))
-                if (max(year_ints) - cy) >= 4:
-                    applicable.append("staggered_semester")
-        except (TypeError, ValueError):
-            pass
+    ):
+        applicable.append("non_primary_programs")
+
+    # 엇학기 — 로드맵 챗과 같은 판정을 쓴다 (마지막 이수 학기와 현재 학기 사이 공백).
+    # 예전엔 "최신 SCR 연도 - curriculum_year >= 4"라는 다른 식이 여기 복제돼 있었고,
+    # 그 식은 정작 한 학기 휴학생을 못 잡았다. 판정이 두 곳에 갈리면 로드맵과 시간표가
+    # 서로 다른 안내를 하게 되므로 단일 출처로 모은다.
+    from app.domains.planning.roadmap_chat import _has_term_gap
+    if _has_term_gap(db, user):
+        applicable.append("staggered_semester")
 
     # 자동 판정 필드 3개 — get_student_context가 어차피 계산하는 값이라 double-compute
     # 감수 (사용자당 로드맵 1개, 쿼리 저렴).
@@ -239,7 +247,11 @@ _TOOLS = [
                 "이번 학기(호출 컨텍스트의 year/semester) 실제 개설 과목을 검색한다. "
                 "query 비워두고 필터만 걸어도 '이 학과 전공선택 뭐 열렸나' 훑기가 가능하다. "
                 "각 결과는 course_id, course_name, category, credits, offered_sections(분반 목록)을 담는다. "
-                "offered_sections의 offering_id를 validate_timetable에 넘겨 조합을 검증한다."
+                "offered_sections의 offering_id를 validate_timetable에 넘겨 조합을 검증한다. "
+                "**`results`에는 이번 학기 분반이 실제로 있는 과목만 들어온다.** 교육과정에는 "
+                "있지만 이번 학기 미개설인 과목은 `matched_but_not_offered_this_term`으로 따로 "
+                "온다 — 시간표에 넣을 수 없고, 사용자가 그 과목을 콕 집어 요청했다면 "
+                "'이번 학기에는 개설되지 않았습니다'라고 명시적으로 알려야 한다."
             ),
             "parameters": {
                 "type": "object",
@@ -255,6 +267,16 @@ _TOOLS = [
                         ),
                     },
                     "limit": {"type": "integer", "description": "결과 상한 (기본 10)"},
+                    "program_type": {
+                        "type": "string",
+                        "enum": ["primary", "minor", "dual", "interdisciplinary"],
+                        "description": (
+                            "검색 스코프를 어느 프로그램의 학과로 잡을지. 미지정이면 주전공 학과. "
+                            "학생이 부전공·복수전공을 이수 중이면 그 프로그램 과목도 시간표에 넣어야 "
+                            "하므로 `program_type='minor'` 처럼 지정해 **따로 한 번 더 호출**해라 — "
+                            "주전공 학과 스코프로만 검색하면 부전공 학과 개설과목이 결과에 아예 안 나온다."
+                        ),
+                    },
                 },
                 "required": [],
             },
@@ -361,14 +383,106 @@ _TOOLS = [
 ]
 
 
+# --- 사용자 시간 제약 -------------------------------------------------------
+#
+# "월수 오전에만 넣어주세요" 같은 제약은 _CORE_PROMPT에도 규칙이 있지만 LLM이 지키지 않는다:
+# 골든 케이스 18에서 3/3 재현으로, 화·목 14:00 분반(6003)을 조합에 넣고서 rationale에는
+# "월수 오전에 진행되는 데이터베이스와 머신러닝"이라고 **거짓 설명**까지 붙였다.
+# 제약 위반과 설명 불일치가 동시에 일어나므로 사용자는 잘못된 시간표를 그대로 믿게 된다.
+#
+# 그래서 판정을 LLM에 맡기지 않는다. 메시지에서 제약을 파싱해 도구 계층이 (a) 후보에서
+# 아예 빼고 (b) 검증에서 거절한다 — 로드맵 챗의 가드들과 같은 방식이다.
+
+_DAY_TOKENS = {"월": "월", "화": "화", "수": "수", "목": "목", "금": "금", "토": "토", "일": "일"}
+
+# 오전/오후 경계. 12:00에 걸치는 수업은 어느 쪽으로도 단정하지 않고 통과시킨다(보수적).
+_NOON = datetime.time(12, 0)
+
+
+def _parse_time_constraint(message: str | None) -> dict | None:
+    """사용자 메시지에서 요일·시간대 제약을 뽑는다. 없으면 None.
+
+    확신이 높은 표현만 잡는다 — 오탐으로 정상 후보를 지우는 게 놓치는 것보다 나쁘다.
+    잡히지 않으면 기존 동작 그대로(제약 없음)다.
+
+    - 요일: "월수 오전만", "월/수요일에만" 처럼 요일 글자 뒤에 한정 표현이 있을 때
+    - 시간대: "오전만" / "오후에만"
+    """
+    if not message:
+        return None
+    text = message.replace(" ", "")
+    # 한정 표현이 없으면 단순 언급일 수 있다("월요일에 뭐 열려?") — 제약으로 보지 않는다.
+    if not any(k in text for k in ("만", "에만", "위주", "빼고", "제외")):
+        return None
+
+    constraint: dict = {}
+
+    # 요일: '월수', '월,수', '월요일수요일' 등에서 연속 등장하는 요일 글자를 모은다.
+    # "빼고/제외"는 반대 의미라 지금은 다루지 않는다 (오파싱 위험) — 제약 없음으로 둔다.
+    if "빼고" in text or "제외" in text:
+        return None
+    day_run = re.findall(r"(?:[월화수목금토일](?:요일)?)+", text)
+    days: set[str] = set()
+    for run in day_run:
+        for ch in run:
+            if ch in _DAY_TOKENS:
+                days.add(ch)
+    # '일'은 '일요일'뿐 아니라 '일단'·'수업일' 등에서도 나오므로, 다른 요일과 함께 잡힌
+    # 경우에만 신뢰한다.
+    if days == {"일"}:
+        days = set()
+    if days:
+        constraint["days"] = days
+
+    if "오전" in text:
+        constraint["period"] = "morning"
+    elif "오후" in text:
+        constraint["period"] = "afternoon"
+
+    return constraint or None
+
+
+def _describe_constraint(constraint: dict) -> str:
+    parts = []
+    if constraint.get("days"):
+        parts.append("".join(sorted(constraint["days"], key="월화수목금토일".index)) + "요일")
+    period = constraint.get("period")
+    if period == "morning":
+        parts.append("오전")
+    elif period == "afternoon":
+        parts.append("오후")
+    return " ".join(parts) or "(제약 없음)"
+
+
+def _times_violate_constraint(times, constraint: dict | None) -> str | None:
+    """이 분반의 강의시간이 제약을 어기면 사유 문자열, 아니면 None."""
+    if not constraint:
+        return None
+    for t in times:
+        day = (t.day_of_week or "").strip()
+        if constraint.get("days") and day and day not in constraint["days"]:
+            return f"{day}요일 수업 — 요청한 요일({_describe_constraint(constraint)})이 아님"
+        period = constraint.get("period")
+        if period == "morning" and t.start_time and t.start_time >= _NOON:
+            return f"{day} {t.start_time.strftime('%H:%M')} 시작 — 오전 요청과 어긋남"
+        if period == "afternoon" and t.end_time and t.end_time <= _NOON:
+            return f"{day} {t.end_time.strftime('%H:%M')} 종료 — 오후 요청과 어긋남"
+    return None
+
+
 class _TimeTableToolContext:
     """도구 실행 상태. LLM 대화 한 턴 동안 살아 있음."""
 
-    def __init__(self, db: Session, user: User, year: str, semester: str):
+    def __init__(self, db: Session, user: User, year: str, semester: str,
+                 time_constraint: dict | None = None):
         self.db = db
         self.user = user
         self.year = year
         self.semester = semester
+        # 사용자 메시지에서 파싱한 요일·시간대 제약. None이면 제약 없음(기존 동작).
+        self.time_constraint = time_constraint
+        # validate_timetable이 ok로 통과시킨 조합들 (finish 단계 가드가 참조).
+        self.validated_ok_combos: list[list[int]] = []
 
     # ------------ 도구 구현 ------------
 
@@ -437,19 +551,83 @@ class _TimeTableToolContext:
             "prereq_blocked": _compute_prereq_blocked(self.db, self.user, roadmap_id=None),
         }
 
+    def _search_scope(self, program_type: str | None) -> tuple[int | None, int | None]:
+        """검색 대상 학과·전공. program_type이 minor/dual/interdisciplinary면 그 프로그램의 학과.
+
+        로드맵 챗 `search_courses`와 같은 규칙이다. 이게 없으면 부전공 학생의 시간표에
+        부전공 학과 과목이 **아예 후보로 뜨지 않는다** — 골든 케이스 20(경영 주전공 +
+        전자 부전공)에서 실제로 회로이론이 보이지 않아, 담을 수 있는 과목이 주전공
+        1과목뿐인 상태로 매번 반복 상한까지 헤맸다.
+        """
+        if program_type and program_type != "primary":
+            from app.domains.academics.models import UserAcademicProgram
+            prog = self.db.scalars(
+                select(UserAcademicProgram).filter_by(
+                    user_id=self.user.id, program_type=program_type,
+                ).where(UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
+            ).first()
+            if prog is not None and prog.department_id is not None:
+                return prog.department_id, prog.major_id
+        return self.user.department_id, self.user.major_id
+
     def list_offered_courses(
-        self, query: str | None = None, category: str | None = None, limit: int | None = None
+        self, query: str | None = None, category: str | None = None,
+        limit: int | None = None, program_type: str | None = None,
     ) -> dict:
         retriever = CurriculumRetriever(self.db)
+        scope_dept_id, scope_major_id = self._search_scope(program_type)
         results = retriever.search(
             query=query or "",
-            department_id=self.user.department_id,
-            major_id=self.user.major_id,
+            department_id=scope_dept_id,
+            major_id=scope_major_id,
             curriculum_year=2026,
             filters={"semester": self.semester, "category": category},
         )
         cap = max(1, min(limit or 10, 30))
-        payload: dict = {"results": [self._attach_offerings(r) for r in results[:cap]]}
+        candidates = list(results[:cap])
+
+        # 과목명을 콕 집어 물은 경우(query 있음)에는 카탈로그 `semester` 필터를 한 번 더
+        # 풀어서 이름으로 다시 찾는다. 이 필드는 "권장 학기"라 실제 개설과 자주 어긋나기
+        # 때문이다 — 실측(2026-08): '공학작문및발표'는 2026-2학기 분반이 24개 열려 있는데
+        # 그 행의 catalog semester가 '1'이라 2학기 검색에서 통째로 빠졌다. 개설 여부의
+        # 진짜 근거는 `course_offerings`이지 `courses.semester`가 아니다.
+        if query:
+            seen_ids = {r.get("course_id") for r in candidates}
+            unfiltered = retriever.search(
+                query=query,
+                department_id=scope_dept_id,
+                major_id=scope_major_id,
+                curriculum_year=2026,
+                filters={"category": category},
+            )
+            for r in unfiltered[:cap]:
+                if r.get("course_id") not in seen_ids:
+                    candidates.append(r)
+                    seen_ids.add(r.get("course_id"))
+
+        attached = [self._attach_offerings(r) for r in candidates]
+
+        # 개설이 하나도 없는 과목을 `results`에 섞어두면 LLM이 `offered_sections: []`를
+        # "일단 존재하는 과목"으로 읽고 시간표에 넣거나, 반대로 미개설 사실을 사용자에게
+        # 안 알린다 (골든 케이스 21에서 관측: "공학작문 넣어줘"에 미개설을 명시하지 않고
+        # 한 번은 시간표에 포함했다고 거짓 주장까지 했다). 담을 수 있는 것과 담을 수 없는
+        # 것을 아예 다른 필드로 갈라서 오독의 여지를 없앤다.
+        offered = [r for r in attached if r.get("offered_sections")]
+        not_offered = [
+            {"course_id": r.get("course_id"), "course_name": r.get("course_name"),
+             "category": r.get("category")}
+            for r in attached if not r.get("offered_sections")
+        ]
+        payload: dict = {"results": offered}
+        if not_offered:
+            payload["matched_but_not_offered_this_term"] = not_offered
+            payload["not_offered_note"] = (
+                f"위 과목들은 교육과정에는 있으나 {self.year}학년도 {self.semester}에 개설된 "
+                "분반이 없다. 시간표에 넣을 수 없다. 사용자가 이 중 하나를 콕 집어 요청했다면 "
+                "finish_response에서 '이번 학기에는 개설되지 않았습니다'라고 **명시적으로** "
+                "알려라 — 넣었다고 하거나 조용히 빼면 안 된다."
+            )
+
         # 빈 결과에는 hint 부착 — LLM이 같은 인수로 반복 호출하지 않도록.
         if not payload["results"]:
             from app.ai.rag.curriculum_retriever import available_categories_for_scope
@@ -525,6 +703,27 @@ class _TimeTableToolContext:
             select(CourseTime).where(CourseTime.offering_id.in_(offering_ids))
         ).all():
             times_by_offering.setdefault(t.offering_id, []).append(t)
+        # 후보 목록에서 이미 걸렀더라도, LLM이 예전 턴의 offering_id를 기억해 다시 넣을 수
+        # 있다. 검증 단계에서 한 번 더 막고 어떤 분반이 왜 안 되는지 알려준다.
+        violations = [
+            {"offering_id": o.id,
+             "reason": _times_violate_constraint(times_by_offering.get(o.id, []), self.time_constraint)}
+            for o in offerings
+            if _times_violate_constraint(times_by_offering.get(o.id, []), self.time_constraint)
+        ]
+        if violations:
+            return {
+                "ok": False,
+                "reason": "time_constraint_violation",
+                "constraint": _describe_constraint(self.time_constraint or {}),
+                "violations": violations,
+                "hint": (
+                    "사용자가 요청한 시간 제약을 어기는 분반이다. 이 offering_id들을 빼고 "
+                    "다시 검증해라. 제약을 지키면 목표 학점에 못 미치면 억지로 채우지 말고 "
+                    "finish_response에서 '제약을 지키면 최대 N학점까지 가능합니다'라고 설명해라."
+                ),
+            }
+
         courses = {
             c.id: c
             for c in self.db.scalars(
@@ -599,6 +798,54 @@ class _TimeTableToolContext:
 
     # ------------ 헬퍼 ------------
 
+    def _sibling_course_ids(self, course_id: int) -> list[int]:
+        """같은 과목의 중복 행들(id 집합)을 돌려준다.
+
+        부산대는 같은 과목명에 개설 주체별로 **다른 교과목코드**를 발급한다 (ZE/DM/CB/MS
+        접두사). 그래서 `courses`에 같은 (과목명, 학과, 전공)인데 course_code만 다른 행들이
+        생긴다 — 2026-08 기준 7개 그룹 19행. 이건 적재 버그가 아니라 원본 데이터의 성질이고,
+        코드는 수강신청에 필요하므로 **행을 합치면 안 된다**.
+
+        문제는 개설(`course_offerings`)이 그 형제 행들에 흩어져 붙는다는 것이다:
+
+            공학작문및발표  ZE1000043(1326): 24개  ← 카탈로그 semester가 '1'이라 2학기 검색에서 빠짐
+                          ZE1000119(6166):  0개  ← 검색이 집어오던 행
+            인공지능과디지털사고  1개 행에 65개, 나머지 3행에 0개
+            대학영어            1개 행에 88개, 나머지 1행에 0개
+
+        한 행만 보면 분반 0인 행을 집어 "이번 학기 미개설"이라고 오답한다(2026-08-13 실제
+        사고). 그래서 개설 조회는 **검색이 집어온 행 하나가 아니라 같은 과목 전체**를 본다.
+
+        판정 기준이 (과목명, 학과, 전공, **이수구분, 학점**)인 이유:
+
+        - 학과·전공을 빼면 남의 학과 분반을 보여준다. 일반물리학(I)은 31개 학과에 각각
+          존재하고, 정보컴퓨터공학부도 컴퓨터공학(36)·인공지능(35)·디자인테크놀로지(34)
+          전공이 major_id로 나뉘어 각자 이산수학을 갖는다.
+        - **이수구분·학점을 빼면 요건이 다른 과목을 합친다.** 컴퓨터공학전공 안에도
+          이산수학이 두 항목이다: CB1501027(1-1, 전공기초)과 CB2001104(2-2, 전공선택).
+          분반을 합쳐 보여주면 학생이 어느 요건을 채우는지 오인한다 — 졸업요건 집계가
+          이수구분 기준이라 실제로 결과가 달라진다.
+
+        현황 점검: `python scripts/report_course_alias_groups.py`
+        """
+        course = self.db.get(Course, course_id)
+        if course is None:
+            return [course_id]
+        siblings = self.db.scalars(
+            select(Course.id).where(
+                Course.course_name == course.course_name,
+                Course.department_id.is_(None) if course.department_id is None
+                else Course.department_id == course.department_id,
+                Course.major_id.is_(None) if course.major_id is None
+                else Course.major_id == course.major_id,
+                Course.category.is_(None) if course.category is None
+                else Course.category == course.category,
+                Course.credits.is_(None) if course.credits is None
+                else Course.credits == course.credits,
+            )
+        ).all()
+        return list(siblings) or [course_id]
+
     def _attach_offerings(self, retriever_result: dict) -> dict:
         """CurriculumRetriever 결과에 이번 학기 실제 offered_sections(offering_id·분반·시간)를 붙인다."""
         course_id = retriever_result.get("course_id")
@@ -606,7 +853,7 @@ class _TimeTableToolContext:
             return {**retriever_result, "offered_sections": []}
         offerings = self.db.scalars(
             select(CourseOffering).where(
-                CourseOffering.course_id == course_id,
+                CourseOffering.course_id.in_(self._sibling_course_ids(course_id)),
                 CourseOffering.year == self.year,
                 CourseOffering.semester == self.semester,
             )
@@ -618,26 +865,100 @@ class _TimeTableToolContext:
             select(CourseTime).where(CourseTime.offering_id.in_([o.id for o in offerings]))
         ).all():
             times_by_off.setdefault(t.offering_id, []).append(t)
-        return {
-            **retriever_result,
-            "offered_sections": [
-                {
-                    "offering_id": o.id,
-                    "section": o.section,
-                    "professor": o.professor,
-                    "times": [
-                        {
-                            "day_of_week": t.day_of_week,
-                            "start_time": t.start_time.strftime("%H:%M") if t.start_time else None,
-                            "end_time": t.end_time.strftime("%H:%M") if t.end_time else None,
-                            "classroom": t.classroom,
-                        }
-                        for t in times_by_off.get(o.id, [])
-                    ],
-                }
-                for o in offerings
-            ],
+        sections = []
+        excluded = []
+        for o in offerings:
+            times = times_by_off.get(o.id, [])
+            view = {
+                "offering_id": o.id,
+                "section": o.section,
+                "professor": o.professor,
+                "times": [
+                    {
+                        "day_of_week": t.day_of_week,
+                        "start_time": t.start_time.strftime("%H:%M") if t.start_time else None,
+                        "end_time": t.end_time.strftime("%H:%M") if t.end_time else None,
+                        "classroom": t.classroom,
+                    }
+                    for t in times
+                ],
+            }
+            # 사용자 제약을 어기는 분반은 후보에서 아예 뺀다. LLM이 "시간 보고 걸러라"를
+            # 지키지 않는 게 관측됐으므로(케이스 18), 볼 수 없게 만드는 쪽이 확실하다.
+            violation = _times_violate_constraint(times, self.time_constraint)
+            if violation:
+                excluded.append({**view, "excluded_reason": violation})
+            else:
+                sections.append(view)
+
+        result = {**retriever_result, "offered_sections": sections}
+        if excluded:
+            # 왜 빠졌는지는 알려준다 — 제약을 지키면 학점이 모자란 상황을 LLM이
+            # 사용자에게 설명할 수 있어야 한다.
+            result["excluded_by_time_constraint"] = excluded
+        return result
+
+    def record_validated_ok(self, offering_ids: list[int]) -> None:
+        """validate_timetable이 ok로 통과시킨 조합을 기억한다.
+
+        LLM이 검증까지 해놓고 결과를 message 텍스트에만 적고 `schedules`는 비워서 내는
+        일이 있다 — UI는 schedules를 렌더링하므로 사용자에겐 시간표가 안 보인다.
+        되돌릴 때 "이 조합을 넣어라"라고 구체적으로 지목하기 위해 저장한다.
+        """
+        if offering_ids:
+            self.validated_ok_combos.append(list(offering_ids))
+
+    def has_any_offering(self) -> bool:
+        """이번 학기에 개설 자체가 하나라도 있는지 (제약 필터 적용 후 기준).
+
+        "조합을 만들 수 있었는데 안 만든 것"과 "정말 아무것도 없는 것"을 구분하는 데 쓴다.
+        """
+        offerings = self.db.scalars(
+            select(CourseOffering).where(
+                CourseOffering.year == self.year,
+                CourseOffering.semester == self.semester,
+            )
+        ).all()
+        if not offerings:
+            return False
+        if not self.time_constraint:
+            return True
+        times_by_off: dict[int, list[CourseTime]] = {o.id: [] for o in offerings}
+        for t in self.db.scalars(
+            select(CourseTime).where(CourseTime.offering_id.in_([o.id for o in offerings]))
+        ).all():
+            times_by_off.setdefault(t.offering_id, []).append(t)
+        return any(
+            _times_violate_constraint(times_by_off.get(o.id, []), self.time_constraint) is None
+            for o in offerings
+        )
+
+    def schedules_violating_constraint(self, schedules: list[dict]) -> list[dict]:
+        """finish_response가 낸 조합 중 시간 제약을 어기는 offering 목록.
+
+        제약이 없으면 항상 빈 리스트라 기존 동작에 영향이 없다.
+        """
+        if not self.time_constraint or not schedules:
+            return []
+        ids = {
+            oid
+            for s in schedules
+            for oid in (s.get("offering_ids") or [])
+            if isinstance(oid, int)
         }
+        if not ids:
+            return []
+        times_by_offering: dict[int, list[CourseTime]] = {oid: [] for oid in ids}
+        for t in self.db.scalars(
+            select(CourseTime).where(CourseTime.offering_id.in_(ids))
+        ).all():
+            times_by_offering.setdefault(t.offering_id, []).append(t)
+        bad = []
+        for oid in sorted(ids):
+            reason = _times_violate_constraint(times_by_offering.get(oid, []), self.time_constraint)
+            if reason:
+                bad.append({"offering_id": oid, "reason": reason})
+        return bad
 
     # ------------ 디스패치 ------------
 
@@ -797,7 +1118,11 @@ def run_timetable_chat(
         })
         # LLM 초기화·tool 바인딩 + 학생 상태 기반 프롬프트 assembly (fatigue 완화).
         with trace.span("build_llm_and_context"):
-            ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester)
+            # 시간 제약은 이번 턴 메시지에서 파싱한다. 파싱되면 도구 계층이 후보 필터링과
+            # 검증 거절을 모두 담당하므로 LLM이 규칙을 어겨도 잘못된 조합이 안 나간다.
+            time_constraint = _parse_time_constraint(message)
+            ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester,
+                                        time_constraint=time_constraint)
             llm = _build_llm().bind_tools(_TOOLS, tool_choice="any")
             system_prompt, applied_rules = _build_timetable_system_prompt(db, user, semester)
 
@@ -805,6 +1130,8 @@ def run_timetable_chat(
         trace.add_metadata({
             "applied_conditional_rules": applied_rules,
             "system_prompt_chars": len(system_prompt),
+            # Langfuse에서 "제약이 걸린 대화에서 무슨 일이 있었나"를 필터링할 수 있게 남긴다.
+            "time_constraint": _describe_constraint(time_constraint) if time_constraint else None,
         })
 
         # DB에서 로드한 최근 히스토리를 langchain 메시지로. 방금 저장한 유저 메시지가
@@ -821,8 +1148,20 @@ def run_timetable_chat(
         tool_call_log: list[dict] = []
         finished = False
         non_finish_tool_calls = 0
+        # finish_response를 되돌린 적 있는지. 각각 한 번만 — 무한 왕복 방지.
+        constraint_retry_used = False
+        unvalidated_retry_used = False
+        empty_schedules_retry_used = False
+        validate_called = False
 
-        for iteration in range(MAX_TOOL_ITERATIONS):
+        # 가드가 finish_response를 되돌린 횟수. 이 반복은 탐색이 아니라 강제 교정이라
+        # 탐색 예산(MAX_TOOL_ITERATIONS)에서 빼주지 않는다 — 안 그러면 가드 때문에 남은
+        # 예산이 줄어 정작 시간표를 못 짜고 상한에 걸린다(케이스 20·21에서 8 iterations
+        # 도달 관측). 되돌림은 종류별 1회씩이라 이 보정은 최대 3회로 묶여 있다.
+        guard_retries = 0
+        iteration = 0
+        while iteration < MAX_TOOL_ITERATIONS + guard_retries:
+            iteration += 1
             ai_msg = llm.invoke(messages, config=trace.config)
             messages.append(ai_msg)
             tool_calls = getattr(ai_msg, "tool_calls", None) or []
@@ -835,18 +1174,108 @@ def run_timetable_chat(
                 call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", "")
                 tool_call_log.append({"name": name, "args": args})
                 if name == "finish_response":
+                    proposed = args.get("schedules", []) or []
+                    # 최종 관문. 여기까지 온 조합에 제약 위반이 남아 있으면 그대로 사용자에게
+                    # 나간다 — 케이스 18에서 관측된 실패가 정확히 이 경로였다(위반 조합 +
+                    # "월수 오전에 진행되는"이라는 거짓 rationale). 한 번은 되돌려 고치게 하고,
+                    # 그래도 고쳐오지 않으면 위반 조합만 떨어뜨린다.
+                    # validate_timetable을 한 번도 안 부르고 끝내려는 두 경로를 막는다.
+                    # 케이스 18에서 둘 다 관측됐다:
+                    #  (a) 조건에 맞는 분반이 2개(시간도 안 겹침) 있는데 빈 schedules로 종료
+                    #  (b) 조합을 제출하면서 검증은 한 번도 안 함 — 충돌·학점 상한 미확인
+                    # 프롬프트에 후퇴 문구를 넣으면 LLM이 그 경로를 선호한다는 게 이미
+                    # 관측돼 있어(2026-08-12) 도구 계층에서 되돌린다. 한 번만.
+                    if not validate_called and not unvalidated_retry_used and (
+                        proposed or ctx.has_any_offering()
+                    ):
+                        unvalidated_retry_used = True
+                        guard_retries += 1
+                        hint = (
+                            "제출한 조합을 validate_timetable로 검증하지 않았다. 시간 충돌과 "
+                            "학점 상한이 확인되지 않은 조합은 사용자에게 낼 수 없다."
+                            if proposed else
+                            "이번 학기 개설 과목이 있는데 validate_timetable을 한 번도 호출하지 "
+                            "않고 빈 시간표로 끝내려 했다."
+                        )
+                        messages.append(ToolMessage(
+                            content=json.dumps({
+                                "ok": False,
+                                "reason": "finish_without_validation",
+                                "hint": (
+                                    f"{hint} list_offered_courses 결과에서 시간이 겹치지 않는 "
+                                    "조합을 골라 validate_timetable로 검증한 뒤, ok=true가 나온 "
+                                    "조합만 schedules에 담아 다시 finish_response를 호출해라. "
+                                    "정말 성립하는 조합이 없다면 무엇을 시도했고 왜 안 되는지 "
+                                    "message에 설명해라."
+                                ),
+                            }, ensure_ascii=False),
+                            tool_call_id=call_id or "",
+                        ))
+                        break
+
+                    # 검증까지 해놓고 결과를 message 텍스트에만 적고 schedules는 비워서 내는
+                    # 경우. UI가 렌더링하는 건 schedules라 사용자에겐 시간표가 안 보인다.
+                    if not proposed and ctx.validated_ok_combos and not empty_schedules_retry_used:
+                        empty_schedules_retry_used = True
+                        guard_retries += 1
+                        messages.append(ToolMessage(
+                            content=json.dumps({
+                                "ok": False,
+                                "reason": "validated_combo_not_submitted",
+                                "validated_ok_combos": ctx.validated_ok_combos,
+                                "hint": (
+                                    "validate_timetable로 ok를 받은 조합이 있는데 schedules를 "
+                                    "비워서 finish_response를 호출했다. 사용자 화면에는 message "
+                                    "본문이 아니라 schedules가 시간표로 렌더링되므로, 검증에 성공한 "
+                                    "위 조합을 schedules에 담아 다시 호출해라."
+                                ),
+                            }, ensure_ascii=False),
+                            tool_call_id=call_id or "",
+                        ))
+                        break
+
+                    bad = ctx.schedules_violating_constraint(proposed)
+                    if bad and not constraint_retry_used:
+                        constraint_retry_used = True
+                        guard_retries += 1
+                        messages.append(ToolMessage(
+                            content=json.dumps({
+                                "ok": False,
+                                "reason": "time_constraint_violation",
+                                "constraint": _describe_constraint(time_constraint or {}),
+                                "violations": bad,
+                                "hint": (
+                                    "위 offering들은 사용자가 요청한 시간 제약을 어긴다. 해당 분반을 "
+                                    "빼고 finish_response를 다시 호출해라. message 본문에서도 그 과목·"
+                                    "시간 언급을 지워라 — 조합에 없는 과목을 있는 것처럼 설명하면 안 된다. "
+                                    "제약을 지키면 학점이 모자라면 그 사실을 그대로 설명해라."
+                                ),
+                            }, ensure_ascii=False),
+                            tool_call_id=call_id or "",
+                        ))
+                        break  # 다음 iteration에서 LLM이 다시 finish_response를 부른다
                     reply_text = args.get("message", "")
-                    schedules = args.get("schedules", []) or []
+                    if bad:
+                        violating_ids = {v["offering_id"] for v in bad}
+                        proposed = [
+                            s for s in proposed
+                            if not (set(s.get("offering_ids") or []) & violating_ids)
+                        ]
+                    schedules = proposed
                     messages.append(
                         ToolMessage(content=json.dumps({"ok": True}), tool_call_id=call_id or "")
                     )
                     finished = True
                     break
                 non_finish_tool_calls += 1
+                if name == "validate_timetable":
+                    validate_called = True
                 with trace.span(f"tool:{name}", as_type="tool", input=args) as tool_span:
                     result = ctx.dispatch(name, args or {})
                     if tool_span is not None:
                         tool_span.update(output=result)
+                if name == "validate_timetable" and isinstance(result, dict) and result.get("ok"):
+                    ctx.record_validated_ok(args.get("offering_ids") or [])
                 messages.append(
                     ToolMessage(
                         content=json.dumps(result, ensure_ascii=False, default=str),
@@ -877,14 +1306,14 @@ def run_timetable_chat(
         trace.set_output({
             "reply": reply_text,
             "schedules_count": len(schedules),
-            "iterations": iteration + 1,
+            "iterations": iteration,
         })
         # 대시보드용 정량 스코어.
         trace.score("finished_with_tool", finished)
-        trace.score("iterations_used", iteration + 1)
+        trace.score("iterations_used", iteration)
         trace.score(
             "iteration_efficiency",
-            round(1 - iteration / max(MAX_TOOL_ITERATIONS - 1, 1), 3),
+            round(1 - (iteration - 1) / max(MAX_TOOL_ITERATIONS - 1, 1), 3),
         )
         trace.score("tool_calls", non_finish_tool_calls)
         trace.score("schedules_returned", len(schedules))
@@ -892,7 +1321,7 @@ def run_timetable_chat(
     return {
         "reply": reply_text,
         "schedules": schedules,
-        "iterations": iteration + 1,
+        "iterations": iteration,
         "tool_calls": tool_call_log,
         "session_id": session.id,
     }

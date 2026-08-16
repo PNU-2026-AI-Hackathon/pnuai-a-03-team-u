@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 from functools import lru_cache
 
 import bcrypt
@@ -68,18 +69,48 @@ def _jwt_secret() -> str:
     return settings.JWT_SECRET_KEY
 
 
-def create_access_token(user_id: int) -> str:
+# --- 토큰 무효화 ---
+#
+# 문제: 페이로드가 {sub, exp}뿐이고 서버측 세션 저장소가 없어서, 비밀번호를 바꾸거나
+# 재설정해도 **기존 토큰이 만료(7일)까지 그대로 유효**했다. 토큰이 유출된 사용자가
+# 비밀번호를 바꿔도 공격자는 계속 접근할 수 있다 (security-privacy-plan.md P0-2).
+#
+# 해결: 토큰에 현재 password_hash의 지문(`pv`)을 넣고 매 요청 대조한다. 비밀번호가
+# 바뀌면 해시가 바뀌므로 지문이 어긋나 옛 토큰이 즉시 무효가 된다. **스키마 변경이
+# 필요 없다** — 사용자 행은 인증 과정에서 어차피 로드하므로 추가 쿼리도 없다.
+#
+# 한계: "다른 기기 로그아웃"처럼 비밀번호 변경 없이 세션을 끊는 건 못 한다. 그건
+# users.token_valid_after 컬럼이 필요하고, 공유 DB 마이그레이션이라 별도 승인 후에 한다.
+
+
+def password_fingerprint(password_hash: str) -> str:
+    """password_hash에서 파생한 12자 지문. 해시 원본을 토큰에 싣지 않기 위한 것."""
+    return hashlib.sha256(password_hash.encode()).hexdigest()[:12]
+
+
+def create_access_token(user_id: int, password_hash: str) -> str:
     expire = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    payload = {"sub": str(user_id), "exp": expire}
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "pv": password_fingerprint(password_hash),
+    }
     return jwt.encode(payload, _jwt_secret(), algorithm=settings.JWT_ALGORITHM)
 
 
-def decode_access_token(token: str) -> int | None:
-    """토큰이 유효하면 user_id를, 아니면 None을 반환한다."""
+def decode_access_token(token: str) -> tuple[int, str] | None:
+    """유효하면 (user_id, password_fingerprint), 아니면 None.
+
+    `pv`가 없는 토큰은 이 방어가 생기기 전에 발급된 것이라 거절한다 — 통과시키면
+    무효화가 최대 7일간 무의미해진다. 기존 로그인 세션은 한 번 끊기고 재로그인이 필요하다.
+    """
     try:
         payload = jwt.decode(token, _jwt_secret(), algorithms=[settings.JWT_ALGORITHM])
-        return int(payload["sub"])
+        fingerprint = payload.get("pv")
+        if not fingerprint:
+            return None
+        return int(payload["sub"]), str(fingerprint)
     except (JWTError, KeyError, ValueError):
         return None

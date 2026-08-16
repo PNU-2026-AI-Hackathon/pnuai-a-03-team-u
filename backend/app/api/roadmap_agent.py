@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.core.ratelimit import CHAT_LIMITS, limiter
 from app.domains.courses.models import Course
 from app.domains.planning.models import (
     CourseRoadmap,
@@ -265,7 +266,9 @@ def delete_roadmap_messages(
 
 
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit(CHAT_LIMITS)
 def chat_with_roadmap_agent(
+    request: Request,
     roadmap_id: int,
     payload: ChatRequest,
     current_user: User = Depends(get_current_user),

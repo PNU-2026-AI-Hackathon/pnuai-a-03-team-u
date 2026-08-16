@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.core.ratelimit import CHAT_LIMITS, limiter
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import TimetableChatMessage, TimetableChatSession
 from app.domains.planning.timetable_chat import (
@@ -225,7 +226,9 @@ def _load_offerings(db: Session, offering_ids: list[int]) -> dict[int, Suggested
 
 
 @router.post("/recommend", response_model=TimetableChatResponse)
+@limiter.limit(CHAT_LIMITS)
 def recommend_timetable_agent(
+    request: Request,
     payload: TimetableChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

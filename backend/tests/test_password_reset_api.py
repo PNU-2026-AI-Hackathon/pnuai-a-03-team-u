@@ -56,7 +56,7 @@ class PasswordResetApiTest(unittest.TestCase):
         self.db.close()
 
     def _request_token(self, email="dowon@pusan.ac.kr", name="이도원") -> str:
-        request_password_reset(PasswordResetRequest(email=email, name=name), self.db)
+        request_password_reset(request=None, payload=PasswordResetRequest(email=email, name=name), db=self.db)
         return self.sent[-1][1].split("token=")[1]
 
     def test_request_sends_link_and_stores_only_hash(self):
@@ -71,22 +71,22 @@ class PasswordResetApiTest(unittest.TestCase):
 
     def test_request_for_unknown_email_does_not_reveal_or_send(self):
         response = request_password_reset(
-            PasswordResetRequest(email="nobody@pusan.ac.kr", name="이도원"), self.db
+            request=None, payload=PasswordResetRequest(email="nobody@pusan.ac.kr", name="이도원"), db=self.db
         )
 
         # 가입 여부가 응답으로 드러나면 안 된다 — 문구가 같아야 한다.
         known = request_password_reset(
-            PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), self.db
+            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), db=self.db
         )
         self.assertEqual(response.message, known.message)
         self.assertEqual([to for to, _ in self.sent], ["dowon@pusan.ac.kr"])
 
     def test_name_mismatch_does_not_send_and_does_not_reveal(self):
         response = request_password_reset(
-            PasswordResetRequest(email="dowon@pusan.ac.kr", name="다른사람"), self.db
+            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="다른사람"), db=self.db
         )
         matched = request_password_reset(
-            PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), self.db
+            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), db=self.db
         )
 
         # 이름이 틀리면 메일도, 토큰도 만들어지지 않는다.
