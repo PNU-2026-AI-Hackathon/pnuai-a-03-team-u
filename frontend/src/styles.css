@@ -4545,7 +4545,9 @@ body.theme-dark .semester-course-status.status-completed {
 .ai-session-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .ai-session-select {
@@ -4692,7 +4694,8 @@ body.theme-dark .semester-course-status.status-completed {
 
 .ai-message,
 .user-message {
-  max-width: 94%;
+  max-width: min(94%, 560px);
+  min-width: 0;
 }
 
 .ai-message strong,
@@ -4712,6 +4715,8 @@ body.theme-dark .semester-course-status.status-completed {
   font-size: 12px;
   font-weight: 700;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .ai-message p {
@@ -4911,6 +4916,7 @@ body.theme-dark .semester-course-status.status-completed {
 
 .quick-prompts button {
   min-height: 30px;
+  max-width: 100%;
   padding-inline: 12px;
   border: 1px solid var(--gray-line);
   border-radius: 20px;
@@ -4919,6 +4925,8 @@ body.theme-dark .semester-course-status.status-completed {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .quick-prompts button:hover {
@@ -8609,6 +8617,7 @@ body.theme-dark .topnav .theme-mode-button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
   min-height: 180px;
   max-height: 320px;
   padding: 16px;
@@ -8634,13 +8643,14 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .timetable-chat-row p {
-  max-width: 90%;
+  max-width: min(90%, 520px);
   margin: 0;
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--panel);
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -8723,6 +8733,7 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-proposal-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -8828,6 +8839,7 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .timetable-quick button {
+  max-width: 100%;
   padding: 8px 14px;
   border: 1px solid var(--shell-line);
   border-radius: 999px;
@@ -8835,12 +8847,15 @@ body.theme-dark .topnav .theme-mode-button {
   color: var(--ink);
   font-size: 13px;
   cursor: pointer;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .timetable-composer {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding: 8px 8px 8px 16px;
   border: 1px solid var(--shell-line);
   border-radius: 999px;
@@ -8910,6 +8925,16 @@ body.theme-dark .timetable-panel {
   .timetable-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .timetable-composer {
+    border-radius: 18px;
+  }
+
+  .timetable-proposal-actions button,
+  .timetable-apply-button {
+    justify-content: center;
+    width: 100%;
   }
 }
 
