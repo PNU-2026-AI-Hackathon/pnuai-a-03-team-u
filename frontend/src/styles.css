@@ -259,44 +259,11 @@ input {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 20px;
   min-height: 100px;
   border-bottom: 1px solid var(--gray-line);
-}
-
-/* Figma 175:1505 — 상단 검색바 (radius 20, 좌측 lucide/search) */
-.topbar-search {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(440px, 34vw);
-  padding: 0 20px;
-  height: 44px;
-  border: 1px solid var(--gray-line);
-  border-radius: 20px;
-  background: var(--panel);
-}
-
-.topbar-search .search-icon {
-  color: var(--muted);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.topbar-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 15px;
-  outline: none;
-}
-
-.topbar-search input::placeholder {
-  color: var(--muted);
 }
 
 /* Figma Frame 116 — 내 정보 칩 (아바타 + 라벨, #F3F5F9) */
@@ -320,11 +287,6 @@ input {
   color: #fff;
   font-size: 11px;
   font-weight: 800;
-}
-
-body.theme-dark .topbar-search {
-  border-color: #0e1116;
-  background: #243346;
 }
 
 .eyebrow {
@@ -351,6 +313,70 @@ h1 {
   min-width: 0;
   align-items: center;
   gap: 10px;
+}
+
+.topbar-help {
+  position: relative;
+}
+
+.top-actions .topbar-help-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.topbar-help-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  min-width: 170px;
+  padding: 7px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 16px 34px rgba(25, 35, 55, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  pointer-events: none;
+}
+
+.topbar-help.open .topbar-help-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.topbar-help-menu ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.topbar-help-menu li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: #4f5b6d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.topbar-help-menu li:first-child {
+  color: var(--blue);
 }
 
 .top-actions button,
@@ -630,6 +656,20 @@ body.theme-dark .theme-menu {
   border-color: #0e1116;
   background: #243346;
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+}
+
+body.theme-dark .topbar-help-menu {
+  border-color: #243346;
+  background: #121d2c;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+}
+
+body.theme-dark .topbar-help-menu li {
+  color: #d6deea;
+}
+
+body.theme-dark .topbar-help-menu li:first-child {
+  color: #6aa2ff;
 }
 
 body.theme-dark .theme-menu button {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
+import { BookOpen, CircleHelp, Mail, Megaphone, MessageCircle } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -47,6 +48,7 @@ export function AppLayout() {
   const { user, logoutUser } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
   const [collapsed, setCollapsed] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [profileOverrides, setProfileOverrides] = useState(readProfileOverrides);
   const { themeMode, setThemeMode } = useThemeMode();
@@ -148,12 +150,47 @@ export function AppLayout() {
             <p className="eyebrow">{meta.eyebrow}</p>
             <h1>{meta.title}</h1>
           </div>
-          {/* Figma 시안(175:1505)의 상단 검색바. 검색 백엔드가 아직 없어 화면 이동만 안내한다. */}
-          <div className="topbar-search" role="search">
-            <span className="search-icon" aria-hidden="true">⌕</span>
-            <input type="search" placeholder="로드맵, 자격증, 활동 검색" aria-label="로드맵, 자격증, 활동 검색" />
-          </div>
           <div className="top-actions">
+            <div
+              className={`topbar-help${helpOpen ? " open" : ""}`}
+              onMouseEnter={() => setHelpOpen(true)}
+              onMouseLeave={() => setHelpOpen(false)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setHelpOpen(false);
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setHelpOpen(false);
+                }
+              }}
+            >
+              <button
+                className="topbar-help-button"
+                type="button"
+                aria-label="도움말 메뉴"
+                aria-haspopup="dialog"
+                aria-controls="topbar-help-menu"
+                aria-expanded={helpOpen}
+                onClick={() => setHelpOpen(true)}
+                onFocus={() => setHelpOpen(true)}
+              >
+                <CircleHelp size={18} aria-hidden="true" />
+              </button>
+              <div
+                className="topbar-help-menu"
+                id="topbar-help-menu"
+                role="dialog"
+                aria-label="도움말 메뉴 안내"
+              >
+                <ul>
+                  <li><CircleHelp size={15} aria-hidden="true" /><span>도움말</span></li>
+                  <li><MessageCircle size={15} aria-hidden="true" /><span>의견 내기</span></li>
+                  <li><Megaphone size={15} aria-hidden="true" /><span>공지사항</span></li>
+                  <li><BookOpen size={15} aria-hidden="true" /><span>자주 묻는 질문</span></li>
+                  <li><Mail size={15} aria-hidden="true" /><span>문의하기</span></li>
+                </ul>
+              </div>
+            </div>
             <div className={`theme-picker${themeOpen ? " open" : ""}`}>
               <button
                 className="theme-mode-button"
