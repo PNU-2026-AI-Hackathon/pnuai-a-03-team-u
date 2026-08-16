@@ -337,6 +337,14 @@ export function TimetablePage() {
 
   const allPlaced = detail?.offerings ?? [];
   const totalCredits = detail?.total_credits ?? 0;
+  const offeringEmptyTitle = groupKey === "major" && !selectedCollege
+    ? "단과대를 먼저 선택해 주세요"
+    : "조건에 맞는 개설 강좌가 없습니다";
+  const offeringEmptyDescription = groupKey === "major" && !selectedCollege
+    ? "전공 과목은 단과대와 학부를 선택하면 더 정확하게 찾을 수 있어요."
+    : search.trim()
+      ? "검색어를 줄이거나 이수구분 필터를 해제해 보세요."
+      : "다른 갈래를 고르거나 필터를 조금 넓혀보세요.";
 
   const selectedGroupLabel = COURSE_GROUPS.find((group) => group.key === groupKey)?.label ?? "갈래";
   const majorStepItems = [
@@ -900,9 +908,17 @@ export function TimetablePage() {
           ) : null}
 
           <ul className="timetable-course-list">
-            {isSearchingOfferings ? <li className="timetable-empty">불러오는 중입니다…</li> : null}
+            {isSearchingOfferings ? (
+              <li className="timetable-empty">
+                <strong>개설 강좌를 불러오는 중입니다</strong>
+                <span>선택한 조건에 맞는 과목을 찾고 있어요.</span>
+              </li>
+            ) : null}
             {!isSearchingOfferings && offerings.length === 0 ? (
-              <li className="timetable-empty">이 조건으로 개설된 과목이 없습니다.</li>
+              <li className="timetable-empty">
+                <strong>{offeringEmptyTitle}</strong>
+                <span>{offeringEmptyDescription}</span>
+              </li>
             ) : null}
 
             {offerings.map((offering) => {
@@ -1088,10 +1104,16 @@ export function TimetablePage() {
           ) : null}
 
           <div className="timetable-chat" aria-live="polite">
-            {isChatLoading ? <p className="timetable-empty">지난 대화를 불러오는 중입니다…</p> : null}
+            {isChatLoading ? (
+              <p className="timetable-empty">
+                <strong>지난 대화를 불러오는 중입니다</strong>
+                <span>잠시만 기다려 주세요.</span>
+              </p>
+            ) : null}
             {!isChatLoading && chat.length === 0 ? (
               <p className="timetable-empty">
-                남은 요건이나 원하는 조건을 말하면 로드맵 기준으로 답해드립니다.
+                <strong>원하는 시간표 조건을 말해보세요</strong>
+                <span>예: 공강 만들기, 오전 수업 줄이기, 졸업요건 우선으로 추천해줘</span>
               </p>
             ) : (
               chat.map((entry) => (
