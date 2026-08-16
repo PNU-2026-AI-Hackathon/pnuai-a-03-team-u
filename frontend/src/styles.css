@@ -8356,16 +8356,16 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-columns {
   display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(520px, 1.3fr) minmax(320px, 0.9fr);
-  gap: 20px;
+  grid-template-columns: minmax(300px, 0.82fr) minmax(540px, 1.28fr) minmax(320px, 0.9fr);
+  gap: clamp(18px, 1.4vw, 24px);
   align-items: start;
 }
 
 .timetable-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px;
+  gap: clamp(14px, 1.1vw, 18px);
+  padding: clamp(18px, 1.4vw, 24px);
   border: 1px solid var(--shell-line);
   border-radius: 20px;
   background: var(--panel);
@@ -8462,7 +8462,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-filter-step {
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px clamp(9px, 0.8vw, 12px);
   border: 1px solid var(--shell-line);
   border-radius: 13px;
   background: var(--panel);
@@ -8486,12 +8486,19 @@ body.theme-dark .topnav .theme-mode-button {
   overflow: hidden;
   color: var(--ink);
   font-size: 13px;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .timetable-filter-step.is-active strong {
   color: var(--shell-accent);
+}
+
+@media (max-width: 1500px) {
+  .timetable-filter-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .timetable-filter-summary {
@@ -8556,8 +8563,8 @@ body.theme-dark .topnav .theme-mode-button {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  padding: 16px;
+  gap: clamp(12px, 1vw, 16px);
+  padding: clamp(14px, 1.1vw, 18px);
   border: 1px solid var(--shell-line);
   border-radius: 12px;
 }
@@ -8627,7 +8634,9 @@ body.theme-dark .topnav .theme-mode-button {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  min-width: 78px;
   padding: 8px 14px;
   border: 0;
   border-radius: 999px;
