@@ -703,6 +703,7 @@ export function TimetablePage() {
                 className="timetable-tool"
                 type="button"
                 title="새 시간표 만들기"
+                data-tooltip="새 시간표 만들기"
                 aria-label="새 시간표 만들기"
                 onClick={() => void handleCreateTimetable()}
               >
@@ -712,6 +713,7 @@ export function TimetablePage() {
                 className="timetable-tool"
                 type="button"
                 title="이름 바꾸기"
+                data-tooltip="이름 바꾸기"
                 aria-label="이름 바꾸기"
                 disabled={detail === null}
                 onClick={() => {
@@ -726,6 +728,7 @@ export function TimetablePage() {
                 className="timetable-tool is-danger"
                 type="button"
                 title="시간표 삭제"
+                data-tooltip="시간표 삭제"
                 aria-label="시간표 삭제"
                 disabled={detail === null}
                 onClick={() => setIsConfirmingDelete(true)}
@@ -1069,6 +1072,7 @@ export function TimetablePage() {
               type="button"
               aria-label="새 대화 시작"
               title="새 대화 시작"
+              data-tooltip="새 대화 시작"
               disabled={isSending}
               onClick={() => void handleCreateChatSession()}
             >
@@ -1079,6 +1083,7 @@ export function TimetablePage() {
               type="button"
               aria-label="이 대화 삭제"
               title="이 대화 삭제"
+              data-tooltip="이 대화 삭제"
               disabled={isSending || activeChatId === null}
               onClick={() => setIsConfirmingChatDelete(true)}
             >
