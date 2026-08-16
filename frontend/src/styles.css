@@ -219,11 +219,25 @@ input {
 
 .nav-icon {
   display: grid;
-  flex: 0 0 24px;
+  flex: 0 0 28px;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  color: var(--ink);
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  color: var(--muted);
+  transition: color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.nav-item:hover .nav-icon {
+  background: rgba(37, 120, 255, 0.08);
+  color: var(--blue);
+  transform: translateY(-1px);
+}
+
+.nav-item.active .nav-icon {
+  background: #ffffff;
+  color: var(--blue);
+  box-shadow: 0 8px 18px rgba(37, 120, 255, 0.16);
 }
 
 .sidebar-section {
