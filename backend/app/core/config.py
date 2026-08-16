@@ -113,3 +113,22 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# 개발 편의 기능을 열어도 되는 환경인지 판단하는 **단일 기준**.
+#
+# 이 판단이 두 군데에 각자 구현돼 서로 달랐다: 크롤러 폴백 가드(P1-4)는
+# `ENV.strip().lower() in {local, dev, development}`였고, 재설정 링크 로그 가드(P0-4)는
+# `ENV == "local"` 정확 일치였다. 그래서 `.env`에 `ENV=dev`를 쓴 개발자는 크롤러
+# 폴백은 열리는데 재설정 링크는 안 찍히고, 로그에는 "배포 환경에서 시도됐다"는
+# error가 남았다. `ENV=Local`이나 뒤에 공백이 붙은 경우도 마찬가지로 갈렸다.
+#
+# 두 가드는 "여기는 개발자 로컬인가"라는 **같은 질문**을 하므로 기준도 하나여야 한다.
+# 새로 개발 전용 우회를 추가할 때도 반드시 이 함수를 쓴다 — 직접 `settings.ENV`를
+# 비교하지 말 것.
+_DEV_ENVS = frozenset({"local", "dev", "development"})
+
+
+def is_dev_environment() -> bool:
+    """`ENV`가 개발 환경(local/dev/development)인가. 대소문자·앞뒤 공백 무시."""
+    return (settings.ENV or "").strip().lower() in _DEV_ENVS

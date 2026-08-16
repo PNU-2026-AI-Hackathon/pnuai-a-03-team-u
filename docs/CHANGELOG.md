@@ -14,6 +14,103 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 9건 + 의존성 핀·보안 스캔(P1-3)
+
+미PR 상태로 쌓여 있던 `fix/chat-quality-and-security-docs`(main +21커밋, 61파일)를 전수
+리뷰하고 나온 결함을 고쳤다. 겸해서 의존성 핀이 없는 문제(P1-3)를 함께 처리했다.
+
+- **[fix] 레이트 리밋이 걸린 엔드포인트가 성공 경로에서 전부 500이었다 (심각).**
+  `Limiter(headers_enabled=True)`이면 slowapi는 엔드포인트 반환값이 starlette Response가
+  아닐 때 `_inject_headers(kwargs.get("response"), ...)`를 부르는데, `_inject_headers`는
+  response가 Response가 아니면 **예외를 던진다**(slowapi 0.1.10 `extension.py:381-385`).
+  우리 엔드포인트는 전부 Pydantic 모델을 반환하고 `response: Response`를 선언하지 않아
+  None이 넘어갔다. 즉 `RATE_LIMIT_ENABLED=true`(기본값) 배포에서 `/auth/login`,
+  `/auth/signup`, `/auth/password-reset/request`, `/me/portal-sync`, `/rag/ingest`,
+  로드맵 `/chat`, 시간표 `/recommend`가 **정상 요청에서 죽는다.**
+  - 기존 리밋 테스트가 못 잡은 이유: 401(인증 실패)과 429(리밋 초과)는 둘 다 헤더 주입
+    지점 **전에** 빠져나간다. 리밋 테스트는 전부 초록인데 로그인 성공만 죽어 있었다.
+  - `headers_enabled=False`로 고쳤다. 엔드포인트 7곳에 `response: Response`를 추가하는
+    방법도 있지만, 그러면 리밋 엔드포인트를 새로 추가할 때 빠뜨리면 그 엔드포인트만
+    조용히 500이 되는 지뢰가 남는다. 지금 프론트는 이 헤더를 읽지 않는다.
+  - 회귀 테스트 2건 추가(`LimiterSuccessPathTest`). DB 없이 도는, 우리 limiter를 그대로
+    쓰는 최소 앱으로 "Pydantic 반환 엔드포인트가 200을 준다"를 고정했다.
+    `headers_enabled=True`로 되돌리면 그 예외로 실패하는 것까지 확인.
+- **[fix] 시간표 챗의 요일 파싱이 낱말 속 글자를 요일로 읽었다.** 공백 제거 후 문장
+  전체에서 요일 글자를 긁어서 `'전공필수과목만 넣어줘'` → 필**수**·과**목** → `{수, 목}`이
+  됐다. 발동 조건이 `만`/`위주` 포함이라 한국어 요청에서 사실상 상시 걸렸다. 이 제약은
+  후보 필터·검증·최종 응답 세 군데에서 강제돼, 사용자는 이유도 모른 채 수·목 수업만
+  받거나 빈 시간표를 받았다.
+  - 함께 있던 두 번째 버그: `'수요일'`의 **일**을 일요일로 셌다(매치 문자열 전체를 훑음).
+    `'월요일과 수요일만'` → `{월, 수, 일}`. `…요일`을 언급하는 거의 모든 요청에 일요일이
+    섞였다.
+  - 인정 조건을 "`요일`이 명시됐거나 요일 글자가 2자 이상 연속"으로 좁히고, `요일`
+    접미사는 글자 수집에서 제외했다. 오탐 8종 제거 / 정상 7종 유지를 테스트로 고정.
+    구분자에 `과`/`와`를 넣지 않은 건, 넣으면 `필수과목`이 수-과-목으로 이어져 재발해서다.
+- **[fix] 중복 요건 경고가 정작 필요한 상황에서만 안 떴다.**
+  `_count_matching_requirements`가 **프로그램** 기준(`program.major_id`)으로 셌는데, 학과
+  단위 폴백은 전공 단위 행이 없을 때 타는 경로다 → 학과 단위 행이 하나도 안 세어져 0이
+  나오고 경고가 사라졌다. **실제로 고른 행**(`requirement.major_id`) 기준으로 바꿨다.
+- **[fix] 429의 `Retry-After`가 항상 60초였다.** slowapi `RateLimitExceeded`에는
+  `retry_after` 속성이 없어(`limit` 하나뿐) `getattr(..., 60)`의 폴백이 항상 이겼다.
+  `5/hour`·`3/hour;10/day`·`100/day`에 걸린 사용자는 "1분 뒤"를 따라도 또 429를 받는다.
+  raise 직전에 채워지는 `request.state.view_rate_limit`으로 실제 리셋 시각을 계산하고,
+  실패 시 한도 윈도우 길이로 폴백한다(이르게 재시도시키지 않는 쪽). 실측: 2/minute→60,
+  2/hour→3600, 2/day→86400.
+- **[fix] 같은 "개발 환경인가" 판단이 두 군데에서 서로 달랐다.** 크롤러 폴백 가드(P1-4)는
+  `ENV.strip().lower() in {local,dev,development}`, 재설정 링크 로그 가드(P0-4)는
+  `ENV == "local"` 정확 일치였다. `.env`에 `ENV=dev`를 쓴 개발자는 크롤러 폴백은 열리는데
+  재설정 링크는 안 찍히고 로그엔 "배포 환경에서 시도됐다"는 error가 남았다.
+  `core.config.is_dev_environment()` 하나로 통일했다.
+- **[fix] `has_any_offering()`이 학기 전체 개설 분반을 전수 적재하고 `IN (...)`으로 시간을
+  다시 긁었다.** 존재 여부만 필요한데 챗 턴마다 전수 적재였고, `in_()`이 분반당 bind
+  파라미터를 하나씩 만들어 PostgreSQL 상한(65535)에 걸리면 쿼리가 통째로 실패할 수 있었다.
+  제약이 없으면 `LIMIT 1` 존재 확인, 있으면 조인 한 번으로 바꿨다. 판정 규칙은 SQL로 옮기지
+  않고 파이썬 로직 그대로 뒀다(후보 필터 쪽과 갈라질 위험).
+- **[chore] `_steps_to_target`의 죽은 코드 정리.** 쓰지 않는 `db: Session` 인자와, 한 번도
+  참이 된 적 없는 `if current_abs is None` 체크를 걷어냈다(`_absolute_semester`는
+  `int(year) * 2 + ...`라 None을 돌려줄 수 없다). 죽은 null 체크는 "여기에 가드가 필요한가"를
+  계속 되묻게 만드는데, 실제로는 필요 없다 — 입력이 `_current_academic_term()`이고 그 함수는
+  반환 경로 세 개가 전부 학기를 `1`/`2` 리터럴로 주며, 나머지 입력의 정규 학기 여부·연도
+  파싱은 `project_curriculum_term`이 앞에서 이미 거른다. 그 근거를 docstring에 남겼다.
+- **[fix] `project_calendar_term`이 휴학 학생에게 과거 달력 학기를 돌려줬다.** main이
+  `#143`으로 "달력 축 ↔ 커리큘럼 축" 역방향 함수를 새로 넣었는데, 정방향
+  (`project_curriculum_term`)만 휴학 공백을 건너뛰고 역방향은 달력 거리를 그대로 썼다.
+  두 함수를 서로의 역함수라고 docstring에 적어 놓고 실제로는 어긋난 상태 —
+  2022 입학·5학기 이수 후 휴학한 학생(현재 2026-2)에게 정방향은 `2027-1학기 → 3학년 2학기`,
+  역방향은 `3학년 2학기 → 2024년 2학기`를 줬다. **2024-2는 그 학생이 휴학해서 다니지 않은
+  학기다.** 로드맵 "3학년 2학기" 칸에 과목을 놓으면 `planned_year`가 2024로 저장된다.
+  - 이 브랜치와 main이 각각 같은 함수군을 고치면서 **병합으로 드러난** 결함이다. main
+    단독으로는 정·역방향이 둘 다 달력 거리라 서로 맞아떨어져 안 보였다.
+  - `_steps_to_target`의 역방향인 `_absolute_for_step`을 추가해 분기 기준을 정방향과
+    일치시켰다. steps가 최소 1로 잘리므로 결과는 항상 현재 학기보다 뒤다.
+  - 왕복 테스트 3건 추가(`CalendarTermRoundTripTest`). "휴학 학생의 어떤 커리큘럼 슬롯도
+    현재 학기보다 과거로 떨어지지 않는다"를 subTest로 고정했다.
+- **[fix] `test_planning_history.py`의 테스트 5건이 한 번도 실행되지 않고 있었다.**
+  `if __name__ == "__main__": unittest.main()` 블록이 파일 **중간**에 있어서, 직접 실행하면
+  그 뒤에 정의된 `ProjectCurriculumTermGapTest`(휴학 보정 회귀 테스트 5건)가 아예 수집되기
+  전에 러너가 끝났다. CI는 pytest라 초록이어서 안 드러났다. 블록을 파일 끝으로 옮겼다
+  (직접 실행 15건 → 23건). 함께, 오늘 날짜에 따라 결과가 바뀌던
+  `test_커리큘럼_학기를_달력으로_되돌린다`에 현재 학기 patch를 넣었다 — 9월이 되면
+  코드 변경 없이 깨질 테스트였다.
+- **[feat] 의존성 버전 핀 + 보안 스캔 CI (보안 계획 P1-3).** `backend/constraints.txt`
+  신설, golden-eval 워크플로 2개를 `-c constraints.txt` 설치로 전환,
+  `.github/workflows/security-scan.yml`(gitleaks=머지 차단 / pip-audit=보고만) 추가.
+  근거와 검증은 `docs/backend/security-privacy-plan.md` P1-3에 정리. 요점 셋:
+  - 핀이 없어서 **주간 golden-eval CI가 로컬 검증본과 다른 스택에서 돌고 있었다** —
+    지금 새로 설치하면 `openai` 2.44→**3.1**(메이저), `cryptography` 49→50,
+    `wrapt` 1.17→2.3, `langchain-core` 1.4.8→1.5.5가 깔린다. LLM 회귀를 감시하는 CI가
+    라이브러리 버전 때문에 흔들리면 감시 자체가 무의미하다.
+  - **gitleaks 기본 룰셋은 우리가 쓰는 시크릿 3종을 전부 못 잡았다**(OpenAI `sk-proj-`,
+    Anthropic `sk-ant-`, 비밀번호 포함 Postgres URI). 무작위 값으로 심어 확인하고 전용
+    룰을 추가했다 — 기본만 믿었으면 통과 도장짜리 게이트가 될 뻔했다. 히스토리 422커밋
+    전수 스캔 결과 실제 시크릿은 0건(유일한 검출은 API 문서의 잘린 JWT 예시, 오탐 확인).
+  - pip-audit 첫 실행에서 취약점 9건 발견 → `aiohttp` 3.14.3 / `pyasn1` 0.6.4로 올려
+    **2건**으로 줄였다. 남은 2건(`cryptography` PKCS#7, `ecdsa` Minerva)은 우리 경로에서
+    도달 불가라 수용 — 우리 JWT는 `HS256`(HMAC)이라 ECDSA를 쓰지 않는다.
+- 확인: 백엔드 테스트 **338 passed**. 실패 2건은 로컬에 Postgres가 안 떠 있어서 나는 기존
+  실패(`RateLimitTest`가 실제 HTTP로 `/auth/login` 호출)이고 이번 변경과 무관하다.
+  `constraints.txt` 집합이 CI와 같은 Python 3.12에서 설치되는 것을 별도 venv로 확인했다.
+
 ## 2026-08-13 (blackest21) — 백엔드 전수 점검 + 보안 P0 구현
 
 - **[fix] 케이스 06 — 프롬프트의 거짓 정보 + 요구 학점 미노출 + 페르소나 공백**:

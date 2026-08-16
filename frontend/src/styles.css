@@ -8629,7 +8629,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-chat-who {
   color: var(--shell-dim);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -8639,8 +8639,8 @@ body.theme-dark .topnav .theme-mode-button {
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--panel);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 
@@ -9579,4 +9579,190 @@ body.theme-dark .roadmap-meta-edit-button,
 body.theme-dark .roadmap-meta-editor > button {
   background: #2c3644;
   color: #aab6c6;
+}
+
+/* --- 회원가입 AI융합트랙 홍보 카드 -------------------------------------- */
+
+.auth-track-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #c7d7fe;
+  border-radius: 14px;
+  background: var(--blue-soft, #eef2ff);
+}
+
+.auth-track-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-track-title strong {
+  color: var(--blue, #2563eb);
+}
+
+.auth-track-desc {
+  margin: 0;
+  color: var(--muted, #64748b);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.auth-track-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-track-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue, #2563eb);
+}
+
+body.theme-dark .auth-track-card {
+  border-color: #33415e;
+  background: #1d2536;
+}
+
+/* --- 회원가입 STEP 1 — 스텝 2와 같은 2컬럼 배치 -------------------------- */
+
+.signup-columns > .auth-panel:first-child {
+  min-height: 0;
+}
+
+.signup-columns .auth-title h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.signup-columns-footer {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.signup-columns-footer .auth-message {
+  min-height: 0;
+}
+
+.signup-columns-footer .auth-submit {
+  width: 100%;
+  max-width: 480px;
+}
+
+@media (max-width: 900px) {
+  .signup-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- AI 챗 공통 — 말풍선·마크다운 (로드맵 레일이 timetable-chat을 공유) ---- */
+
+.timetable-chat-row .chat-bubble {
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 로드맵 레일은 폭이 좁고 세로 공간이 아쉬워 높이만 레일 기준으로 맞춘다 */
+.ai-roadmap-panel .roadmap-rail-chat {
+  min-height: 140px;
+  max-height: 330px;
+}
+
+.chat-md > :first-child {
+  margin-top: 0;
+}
+
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-md p {
+  margin: 0 0 8px;
+}
+
+.chat-md ul,
+.chat-md ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+}
+
+.chat-md h1,
+.chat-md h2,
+.chat-md h3,
+.chat-md h4 {
+  margin: 4px 0 6px;
+  font-size: 14.5px;
+  font-weight: 800;
+}
+
+.chat-md code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--shell-canvas);
+  font-size: 13px;
+}
+
+.chat-md pre {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--shell-canvas);
+  overflow-x: auto;
+}
+
+.chat-md pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.chat-md blockquote {
+  margin: 0 0 8px;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--gray-line);
+  color: var(--muted);
+}
+
+.chat-md table {
+  margin: 0 0 8px;
+  border-collapse: collapse;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.chat-md th,
+.chat-md td {
+  padding: 4px 8px;
+  border: 1px solid var(--gray-line);
+  white-space: nowrap;
+}
+
+.chat-md a {
+  color: var(--blue);
+}
+
+.chat-md hr {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--gray-line);
+}
+
+.timetable-ai header .ai-reset-button {
+  margin-left: auto;
 }

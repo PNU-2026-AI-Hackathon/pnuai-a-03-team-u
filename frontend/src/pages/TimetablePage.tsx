@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { ArrowUp, Check, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowUp, Check, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import {
   addTimetableItems,
   applyTimetableToRoadmap,
   chatWithTimetableAgent,
+  clearTimetableChatMessages,
   createTimetable,
   createTimetableChatSession,
   deleteTimetableChatSession,
@@ -24,10 +25,10 @@ import {
   type TimetableSummary,
 } from "../api/timetable";
 import { getCurrentRoadmap } from "../api/roadmaps";
+import { ChatMarkdown } from "../components/chat/ChatMarkdown";
 import { searchDepartments } from "../api/departments";
 import type { DepartmentSearchResult } from "../api/departments";
 import { getApiErrorMessage } from "../api/client";
-import { BrandMark } from "../components/layout/BrandMark";
 import { useAuth } from "../auth/AuthContext";
 
 /** 시간표를 만들 대상 학기. 로드맵의 다음 학기를 본다. */
@@ -249,6 +250,22 @@ export function TimetablePage() {
       setSelectedOfferingIds(new Set());
     } catch {
       // 생성 실패 시 기존 세션 유지
+    }
+  }
+
+  /** 세션은 남기고 대화만 비운다 — 로드맵 챗의 '이 대화 비우기'와 동일. */
+  async function handleClearChat() {
+    if (activeChatId === null || isSending) return;
+    setIsConfirmingChatDelete(false);
+    try {
+      await clearTimetableChatMessages(activeChatId);
+      setChat([]);
+      setSuggestion(null);
+      setSelectedOfferingIds(new Set());
+      setChatSessions((current) => current.map((s) =>
+        s.session_id === activeChatId ? { ...s, message_count: 0 } : s));
+    } catch {
+      // 비우기 실패 시 그대로 둔다
     }
   }
 
@@ -1014,13 +1031,20 @@ export function TimetablePage() {
 
         <section className="timetable-panel timetable-ai">
           <header>
-            <span className="timetable-ai-face">
-              <BrandMark id="plan-u-face-timetable" />
-            </span>
             <div>
               <h3>AI와 같이 시간표 짜기</h3>
               <p>담은 과목과 남은 학점으로 시간표를 작성합니다.</p>
             </div>
+            <button
+              className="ai-reset-button"
+              type="button"
+              aria-label="이 대화 비우기"
+              title="이 대화 비우기"
+              disabled={isSending || activeChatId === null || chat.length === 0}
+              onClick={() => void handleClearChat()}
+            >
+              <RotateCcw size={16} aria-hidden="true" />
+            </button>
           </header>
 
           {/* 대화 스레드 전환. 로드맵 AI 레일과 같은 구성이라 스타일을 공유한다. */}
@@ -1097,7 +1121,9 @@ export function TimetablePage() {
               chat.map((entry) => (
                 <div className={`timetable-chat-row ${entry.role}`} key={entry.key}>
                   <span className="timetable-chat-who">{entry.role === "user" ? "나" : "AI"}</span>
-                  <p>{entry.content}</p>
+                  {entry.role === "user"
+                    ? <p>{entry.content}</p>
+                    : <div className="chat-bubble"><ChatMarkdown text={entry.content} /></div>}
                 </div>
               ))
             )}

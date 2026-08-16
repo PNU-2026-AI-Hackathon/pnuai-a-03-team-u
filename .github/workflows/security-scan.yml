@@ -1,0 +1,106 @@
+name: security-scan
+
+# 보안 계획 P1-3. 두 가지를 본다:
+#   1. gitleaks  — 커밋에 시크릿이 들어갔는가 (CLAUDE.md 절대원칙 4를 CI가 강제)
+#   2. pip-audit — 잠근 의존성에 알려진 취약점(CVE)이 있는가
+#
+# 게이트 정책이 둘이 다르다:
+#   - gitleaks는 **실패 = 머지 차단**. 시크릿은 한 번 푸시되면 되돌릴 수 없고
+#     (GitHub는 force-push 후에도 dangling object로 남는다) 키 폐기까지 가야 한다.
+#   - pip-audit는 **실패해도 통과**. 남의 라이브러리 CVE는 우리가 즉시 못 고치는데
+#     여기서 막으면 무관한 PR이 전부 멈춘다. 대신 결과를 Job Summary에 남겨서
+#     사람이 보고 판단한다. 실제로 조치가 필요한 CVE는 이슈로 올린다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 매주 월요일 UTC 17:00 = KST 화요일 02:00. golden-eval-weekly 직전.
+    # 코드가 안 바뀌어도 새 CVE는 계속 나오므로 주기 실행이 필요하다.
+    - cron: "0 17 * * MON"
+  workflow_dispatch:
+
+# 같은 PR에 연속 push하면 이전 실행은 취소 (CI 시간 절약)
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: 시크릿 스캔 (머지 차단)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks가 커밋 히스토리를 훑어야 하므로 전체 클론.
+          # 얕은 클론이면 PR에 새로 들어온 커밋만 보고 놓치는 게 생긴다.
+          fetch-depth: 0
+
+      # 공식 gitleaks-action@v2는 **조직 소유 레포에서 GITLEAKS_LICENSE를 요구**한다.
+      # 이 레포는 PNU-2026-AI-Hackathon 조직 소유라 라이선스 키 없이는 액션이 실패한다.
+      # 바이너리를 직접 받아 쓰면 라이선스와 무관하게 동작하고, 버전도 우리가 고정한다
+      # (로컬에서 8.30.0으로 검증한 것과 CI가 같은 룰셋을 쓰게 된다).
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.0"
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan git history for secrets
+        # 설정은 .gitleaks.toml (기본 룰 + 이 프로젝트가 쓰는 OpenAI/Anthropic/Postgres
+        # 전용 룰). 기본 룰만으로는 그 3종이 안 잡히는 걸 확인하고 추가한 것이다.
+        # 실패하면 머지 차단 — 시크릿은 푸시된 뒤엔 키 폐기 말고 되돌릴 방법이 없다.
+        run: gitleaks git . --no-banner --redact --config .gitleaks.toml
+
+  pip-audit:
+    name: 의존성 취약점 (보고만)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # golden-eval 워크플로와 같은 버전으로 맞춘다 — 다른 버전에서 감사하면
+          # 실제로 CI/운영이 쓰는 것과 다른 의존성 트리를 보게 된다.
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        # 스캐너도 핀한다 — 안 그러면 어느 날 스캐너가 바뀌어서 결과가 흔들린다.
+        run: pip install pip-audit==2.10.1
+
+      - name: Audit locked dependencies
+        # constraints.txt가 실제로 설치되는 버전 집합이라, 감사 대상도 이 파일이다.
+        # requirements.txt는 버전이 없어서 감사해봐야 "최신 기준"이 나온다.
+        run: |
+          echo "## pip-audit — backend/constraints.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if pip-audit --requirement backend/constraints.txt \
+                       --desc \
+                       --format markdown > audit.md 2> audit.err; then
+            echo "알려진 취약점 없음." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "취약점이 보고됐다. 아래 표를 확인하고, 조치가 필요하면 이슈로 올린다." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat audit.md >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '<details><summary>stderr</summary>' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat audit.err >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+          fi
+        # 위 if/else가 이미 실패를 삼키지만, pip-audit 자체가 죽는 경우(네트워크 등)에도
+        # 이 job이 PR을 막지 않게 한다. 게이트는 gitleaks 하나뿐이다.
+        continue-on-error: true

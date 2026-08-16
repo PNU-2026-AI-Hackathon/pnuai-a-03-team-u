@@ -1,3 +1,4 @@
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -19,7 +20,7 @@ from app.api.roadmaps import router as roadmaps_router
 from app.api.timetables import router as timetables_router
 from app.api.timetable import router as timetable_router
 from app.api.timetable_agent import router as timetable_agent_router
-from app.api.tracks import router as tracks_router
+from app.api.tracks import public_router as tracks_public_router, router as tracks_router
 from app.ai.llm.langfuse_callback import flush as langfuse_flush, startup_log as langfuse_startup_log
 from app.core.config import settings
 from app.core.ratelimit import limiter
@@ -41,6 +42,38 @@ def _validation_handler(request: Request, exc: RequestValidationError) -> JSONRe
     return JSONResponse(status_code=422, content={"detail": safe})
 
 
+def _retry_after_seconds(request: Request, exc: RateLimitExceeded) -> int:
+    """429에 실을 Retry-After(초).
+
+    예전에는 `getattr(exc, "retry_after", 60)`이었는데, slowapi의 `RateLimitExceeded`는
+    `limit` 하나만 갖고 `retry_after` 속성이 **없다**(slowapi/errors.py). 그래서 폴백 60이
+    항상 이겨서, `5/hour`(포털동기화·가입)·`3/hour;10/day`(재설정)·`100/day`(챗)에 걸린
+    사용자에게 "1분 뒤 재시도"라고 안내했다. 그대로 따르면 또 429를 받는다.
+
+    slowapi는 예외를 던지기 직전에 `request.state.view_rate_limit`에
+    `(RateLimitItem, [식별자])`를 넣어두므로(extension.py 530행, raise는 533행),
+    저장소에 윈도우 리셋 시각을 물어 정확한 값을 낼 수 있다.
+
+    이 함수는 절대 예외를 밖으로 내지 않는다 — 429 응답을 만들다가 500이 나면
+    사용자 입장에서 더 나쁘다.
+    """
+    try:
+        item, identifiers = request.state.view_rate_limit
+        reset_at, _remaining = limiter.limiter.get_window_stats(item, *identifiers)
+        seconds = int(reset_at - time.time()) + 1
+        if seconds > 0:
+            return seconds
+    except Exception:  # noqa: BLE001 - 아래 폴백으로 충분하다
+        pass
+
+    # 폴백: 한도 윈도우 길이 전체. 실제 리셋보다 늦을 수는 있어도 이르지는 않으므로
+    # "따랐는데 또 429"는 나오지 않는다.
+    try:
+        return max(1, int(exc.limit.limit.get_expiry()))
+    except Exception:  # noqa: BLE001
+        return 60
+
+
 def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """429를 프론트가 그대로 노출할 수 있는 한국어 메시지로 돌려준다.
 
@@ -50,7 +83,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRespons
     return JSONResponse(
         status_code=429,
         content={"detail": "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요."},
-        headers={"Retry-After": str(getattr(exc, "retry_after", 60) or 60)},
+        headers={"Retry-After": str(_retry_after_seconds(request, exc))},
     )
 
 
@@ -99,6 +132,7 @@ app.include_router(timetable_router)
 app.include_router(timetable_agent_router)
 app.include_router(timetables_router)
 app.include_router(tracks_router)
+app.include_router(tracks_public_router)
 
 
 @app.get("/health")
