@@ -9,6 +9,7 @@ import { searchDepartments } from "../api/departments";
 import type { DepartmentSearchResult } from "../api/departments";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { useAuth } from "../auth/AuthContext";
+import { clearSignupFlow, readSignupFlow, saveSignupFlow } from "../auth/signupFlow";
 import type { AcademicProgramInput, AdmissionType } from "../api/auth";
 import { PNU_EMAIL_DOMAIN, toPnuEmail } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
@@ -80,8 +81,10 @@ function formatCreditRange(range: { min?: number; max?: number } | undefined, fa
 
 export function AuthPage() {
   const navigate = useNavigate();
-  const { loginWithEmail, signupWithEmail } = useAuth();
-  const [mode, setMode] = useState<AuthMode>("login");
+  const { isAuthenticated, loginWithEmail, signupWithEmail } = useAuth();
+  const signupDraft = useMemo(() => readSignupFlow(), []);
+  const isSignupReview = isAuthenticated && signupDraft !== null;
+  const [mode, setMode] = useState<AuthMode>(isSignupReview ? "signup" : "login");
   const [message, setMessage] = useState("");
   const [loginMessage, setLoginMessage] = useState("");
   const [loginMessageKind, setLoginMessageKind] = useState<MessageKind>("error");
@@ -91,23 +94,25 @@ export function AuthPage() {
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberLogin, setRememberLogin] = useState(false);
   const [signupPassword, setSignupPassword] = useState("");
-  const [signupEmail, setSignupEmail] = useState("");
-  const [signupName, setSignupName] = useState("");
-  const [studentId, setStudentId] = useState("");
-  const [admissionType, setAdmissionType] = useState<AdmissionType>("freshman");
-  const [department, setDepartment] = useState("");
-  const [primaryMajor, setPrimaryMajor] = useState("");
-  const [careerGoal, setCareerGoal] = useState("");
-  const [minorDepartment, setMinorDepartment] = useState("");
-  const [minorMajor, setMinorMajor] = useState("");
-  const [dualDepartment, setDualDepartment] = useState("");
-  const [dualMajor, setDualMajor] = useState("");
-  const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(false);
+  const [signupEmail, setSignupEmail] = useState(signupDraft?.emailId ?? "");
+  const [signupName, setSignupName] = useState(signupDraft?.name ?? "");
+  const [studentId, setStudentId] = useState(signupDraft?.studentId ?? "");
+  const [admissionType, setAdmissionType] = useState<AdmissionType>(signupDraft?.admissionType ?? "freshman");
+  const [department, setDepartment] = useState(signupDraft?.department ?? "");
+  const [primaryMajor, setPrimaryMajor] = useState(signupDraft?.primaryMajor ?? "");
+  const [careerGoal, setCareerGoal] = useState(signupDraft?.careerGoal ?? "");
+  const [minorDepartment, setMinorDepartment] = useState(signupDraft?.minorDepartment ?? "");
+  const [minorMajor, setMinorMajor] = useState(signupDraft?.minorMajor ?? "");
+  const [dualDepartment, setDualDepartment] = useState(signupDraft?.dualDepartment ?? "");
+  const [dualMajor, setDualMajor] = useState(signupDraft?.dualMajor ?? "");
+  const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(
+    signupDraft?.additionalProgramsOpen ?? false,
+  );
 
   // 대상 학과를 고르면 뜨는 AI융합트랙 홍보 카드. 트랙은 학과에 1:1이라
   // 고르는 UI가 아니라 안내 + 체크(가입 직후 이수 체크 시작)로 충분하다.
   const [trackPreview, setTrackPreview] = useState<TrackPreview | null>(null);
-  const [wantsTrack, setWantsTrack] = useState(false);
+  const [wantsTrack, setWantsTrack] = useState(signupDraft?.wantsTrack ?? false);
 
   // 학과 3개(주전공/부전공/복수전공)는 각자 따로 검색한다.
   const primaryResults = useDepartmentOptions(department);
@@ -160,6 +165,7 @@ export function AuthPage() {
     setIsLoginSubmitting(true);
     try {
       await loginWithEmail(toPnuEmail(loginEmailId), loginPassword, rememberLogin);
+      clearSignupFlow();
       navigate("/", { replace: true });
     } catch (error) {
       setLoginMessage(getApiErrorMessage(error, "로그인에 실패했습니다. 입력한 정보를 확인해 주세요."));
@@ -171,6 +177,11 @@ export function AuthPage() {
   async function handleSignup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
+
+    if (isSignupReview) {
+      window.location.assign("/onboarding");
+      return;
+    }
 
     if (signupPassword.length < 8) {
       setMessage("비밀번호는 8자 이상이어야 합니다.");
@@ -224,19 +235,35 @@ export function AuthPage() {
         admission_type: admissionType,
         school: "부산대학교",
         department: department || undefined,
-        career_goal: careerGoal || undefined,
+        career_goal: careerGoal.trim() || undefined,
         academic_programs: academicPrograms,
       });
       isAccountCreated = true;
+      saveSignupFlow({
+        emailId: signupEmail,
+        name: signupName,
+        studentId,
+        admissionType,
+        department,
+        primaryMajor,
+        careerGoal,
+        minorDepartment,
+        minorMajor,
+        dualDepartment,
+        dualMajor,
+        additionalProgramsOpen: isAdditionalProgramsOpen,
+        wantsTrack,
+      });
       await loginWithEmail(email, signupPassword, false);
       if (wantsTrack && trackPreview) {
         // 트랙 등록 실패가 가입 완주를 막으면 안 된다 — 내 정보에서 언제든
         // 다시 시작할 수 있으므로 조용히 넘어간다.
         await enrollTrack(trackPreview.major_id).catch(() => undefined);
       }
-      window.location.replace("/onboarding");
+      window.location.assign("/onboarding");
     } catch (error) {
       if (isAccountCreated) {
+        clearSignupFlow();
         setLoginEmailId("");
         setLoginPassword("");
         setLoginMessageKind("error");
@@ -251,7 +278,7 @@ export function AuthPage() {
   }
 
   return (
-    <main className="auth-screen">
+    <main className="auth-screen route-view">
       <section className={`auth-shell${mode === "signup" ? " is-signup is-wide" : ""}`}>
         <Link className="auth-logo" to="/" aria-label="Plan U 홈">
           <BrandMark id="plan-u-face-auth" />
@@ -266,7 +293,7 @@ export function AuthPage() {
             양쪽 모두 폼 하단 링크("회원가입"/"로그인")가 담당 — 탭은 두지 않는다. */}
         {mode === "login" ? (
           <div className="auth-panel">
-            <form className="auth-form" onSubmit={handleLogin}>
+            <form className="auth-form auth-panel-enter" key="login" onSubmit={handleLogin}>
               <div className="auth-title">
                 <p className="eyebrow">Welcome Back</p>
                 <h1>로그인</h1>
@@ -330,8 +357,12 @@ export function AuthPage() {
               </p>
             </form>
           </div>
-          ) : (
-            <form className="onboarding-columns signup-columns" onSubmit={handleSignup}>
+        ) : (
+            <form
+              className="onboarding-columns signup-columns auth-panel-enter"
+              key="signup"
+              onSubmit={handleSignup}
+            >
               <div className="auth-panel">
               <div className="auth-title">
                 <p className="eyebrow">STEP 1 · ACCOUNT</p>
@@ -351,6 +382,7 @@ export function AuthPage() {
                     placeholder="예 : 안선주"
                     value={signupName}
                     onChange={(event) => setSignupName(event.target.value)}
+                    disabled={isSignupReview}
                     required
                   />
                 </label>
@@ -362,6 +394,7 @@ export function AuthPage() {
                     placeholder="예 : 202366247"
                     value={studentId}
                     onChange={(event) => setStudentId(event.target.value)}
+                    disabled={isSignupReview}
                     required
                   />
                 </label>
@@ -377,6 +410,7 @@ export function AuthPage() {
                       value="freshman"
                       checked={admissionType === "freshman"}
                       onChange={() => setAdmissionType("freshman")}
+                      disabled={isSignupReview}
                     />
                     <span className="auth-choice-label">신입학</span>
                     <span className="auth-choice-hint">1학년부터 이수</span>
@@ -388,6 +422,7 @@ export function AuthPage() {
                       value="transfer"
                       checked={admissionType === "transfer"}
                       onChange={() => setAdmissionType("transfer")}
+                      disabled={isSignupReview}
                     />
                     <span className="auth-choice-label">편입학</span>
                     <span className="auth-choice-hint">3학년부터 이수</span>
@@ -404,6 +439,7 @@ export function AuthPage() {
                     placeholder="아이디를 입력하세요"
                     value={signupEmail}
                     onChange={(event) => setSignupEmail(event.target.value)}
+                    disabled={isSignupReview}
                     required
                   />
                   <span className="auth-email-domain">{PNU_EMAIL_DOMAIN}</span>
@@ -413,9 +449,10 @@ export function AuthPage() {
                 <span>비밀번호 입력</span>
                 <input
                   type="password"
-                  placeholder="8자 이상 입력하세요"
+                  placeholder={isSignupReview ? "등록된 비밀번호" : "8자 이상 입력하세요"}
                   value={signupPassword}
                   onChange={(event) => setSignupPassword(event.target.value)}
+                  disabled={isSignupReview}
                   required
                 />
               </label>
@@ -441,6 +478,7 @@ export function AuthPage() {
                   if (next.trim() !== department.trim()) setPrimaryMajor("");
                 }}
                 options={toDepartmentOptions(primaryResults)}
+                disabled={isSignupReview}
                 required
               />
               <FieldAutocomplete
@@ -449,6 +487,7 @@ export function AuthPage() {
                 value={primaryMajor}
                 onChange={setPrimaryMajor}
                 options={primaryMajorOptions}
+                disabled={isSignupReview}
                 minChars={0}
                 emptyHint={
                   department.trim() ? "이 학부는 세부전공 구분이 없습니다" : "학부를 먼저 고르세요"
@@ -470,6 +509,7 @@ export function AuthPage() {
                       type="checkbox"
                       checked={wantsTrack}
                       onChange={(event) => setWantsTrack(event.target.checked)}
+                      disabled={isSignupReview}
                     />
                     <span>이 트랙을 이수하고 있어요 (내 정보에서 언제든 해제 가능)</span>
                   </label>
@@ -482,6 +522,7 @@ export function AuthPage() {
                   placeholder="예 : 데이터사이언티스트"
                   value={careerGoal}
                   onChange={(event) => setCareerGoal(event.target.value)}
+                  disabled={isSignupReview}
                 />
               </label>
 
@@ -491,6 +532,7 @@ export function AuthPage() {
                   type="button"
                   aria-expanded={isAdditionalProgramsOpen}
                   aria-controls="additional-program-fields"
+                  disabled={isSignupReview && !isAdditionalProgramsOpen}
                   onClick={() => setIsAdditionalProgramsOpen((isOpen) => !isOpen)}
                 >
                   <span>부전공·복수전공 입력</span>
@@ -509,6 +551,7 @@ export function AuthPage() {
                         if (next.trim() !== minorDepartment.trim()) setMinorMajor("");
                       }}
                       options={toDepartmentOptions(minorResults)}
+                      disabled={isSignupReview}
                     />
                     <FieldAutocomplete
                       label="부전공 세부전공 입력 (선택)"
@@ -516,6 +559,7 @@ export function AuthPage() {
                       value={minorMajor}
                       onChange={setMinorMajor}
                       options={minorMajorOptions}
+                      disabled={isSignupReview}
                       minChars={0}
                       emptyHint={
                         minorDepartment.trim()
@@ -532,6 +576,7 @@ export function AuthPage() {
                         if (next.trim() !== dualDepartment.trim()) setDualMajor("");
                       }}
                       options={toDepartmentOptions(dualResults)}
+                      disabled={isSignupReview}
                     />
                     <FieldAutocomplete
                       label="복수전공 세부전공 입력 (선택)"
@@ -539,6 +584,7 @@ export function AuthPage() {
                       value={dualMajor}
                       onChange={setDualMajor}
                       options={dualMajorOptions}
+                      disabled={isSignupReview}
                       minChars={0}
                       emptyHint={
                         dualDepartment.trim()
@@ -558,12 +604,14 @@ export function AuthPage() {
                 <button className="auth-submit" type="submit" disabled={isSignupSubmitting}>
                   {isSignupSubmitting ? "가입 중..." : "다음"}
                 </button>
-                <p className="auth-switch">
-                  이미 계정이 있나요?{" "}
-                  <button type="button" onClick={() => setMode("login")}>
-                    로그인
-                  </button>
-                </p>
+                {!isSignupReview ? (
+                  <p className="auth-switch">
+                    이미 계정이 있나요?{" "}
+                    <button type="button" onClick={() => setMode("login")}>
+                      로그인
+                    </button>
+                  </p>
+                ) : null}
               </div>
             </form>
           )}

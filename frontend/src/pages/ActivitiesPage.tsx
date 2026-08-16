@@ -17,7 +17,7 @@ const categories = [
 
 export function ActivitiesPage() {
   const { user } = useAuth();
-  const displayName = readProfileOverrides()?.name ?? user?.name ?? "이도원";
+  const displayName = readProfileOverrides()?.name ?? user?.name ?? "사용자";
 
   return (
     <section className="activity-page">

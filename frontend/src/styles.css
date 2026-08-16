@@ -29,6 +29,45 @@
   box-sizing: border-box;
 }
 
+@keyframes route-view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes auth-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.route-view,
+.onboarding-step-enter {
+  animation: route-view-enter 220ms ease-out both;
+}
+
+.auth-panel-enter {
+  animation: auth-panel-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-view,
+  .onboarding-step-enter,
+  .auth-panel-enter {
+    animation: none;
+  }
+}
+
 body {
   margin: 0;
   min-width: 1160px;
@@ -235,6 +274,7 @@ input {
 .mini-profile .avatar {
   width: 42px;
   height: 42px;
+  color: #ffffff;
   font-weight: 800;
 }
 
@@ -7208,6 +7248,35 @@ body.theme-dark .topnav .theme-mode-button {
   color: var(--shell-accent);
 }
 
+.onboarding-brand-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  align-items: center;
+}
+
+.onboarding-back {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--shell-line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  place-items: center;
+}
+
+.onboarding-back:hover {
+  border-color: var(--shell-accent);
+  color: var(--shell-accent);
+}
+
+.onboarding-back:focus-visible {
+  outline: 3px solid var(--shell-active);
+  outline-offset: 2px;
+}
+
 /* 진행 단계 */
 .signup-stepper {
   display: flex;
@@ -7363,6 +7432,11 @@ body.theme-dark .topnav .theme-mode-button {
   font-size: 16px;
   line-height: 1.4;
   outline: none;
+}
+
+.auth-field input:disabled {
+  color: var(--shell-dim);
+  cursor: default;
 }
 
 /* 학과/전공 자동완성. 입력 바로 아래로 후보가 겹쳐 펼쳐진다. */

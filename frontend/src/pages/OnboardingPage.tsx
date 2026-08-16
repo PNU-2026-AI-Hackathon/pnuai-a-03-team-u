@@ -1,20 +1,22 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { Check } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft, Check } from "lucide-react";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { MY_PUSAN_SYNC_FAILED_MESSAGE, summarizePortalSync, syncFromPortal } from "../api/portal";
 import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { clearSignupFlow, hasActiveSignupFlow } from "../auth/signupFlow";
 
 type Summary = ReturnType<typeof summarizePortalSync>;
 
 /** 회원가입 STEP 2·3. 로그인된 뒤에만 들어올 수 있다. */
 export function OnboardingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
-  const [step, setStep] = useState<2 | 3>(2);
+  const step: 2 | 3 = location.state?.signupStep === 3 ? 3 : 2;
   const [portalId, setPortalId] = useState(user?.student_id ?? "");
   const [portalPassword, setPortalPassword] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -22,6 +24,27 @@ export function OnboardingPage() {
   const [error, setError] = useState("");
 
   const displayName = user?.name ?? "회원";
+
+  function handleBack() {
+    if (step === 3) {
+      navigate(-1);
+      return;
+    }
+    if (hasActiveSignupFlow()) {
+      navigate("/auth");
+      return;
+    }
+    navigate("/", { replace: true });
+  }
+
+  function goToCompletion() {
+    navigate("/onboarding", { state: { signupStep: 3 } });
+  }
+
+  function finishSignup(path: string) {
+    clearSignupFlow();
+    navigate(path, { replace: true });
+  }
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,19 +88,31 @@ export function OnboardingPage() {
   ];
 
   return (
-    <main className="auth-screen">
+    <main className="auth-screen route-view">
       <section className={`auth-shell is-signup ${step === 2 ? "is-wide" : "is-complete"}`}>
-        <span className="auth-logo" aria-hidden="true">
-          <BrandMark id="plan-u-face-onboarding" />
-          <span>
-            Plan <strong>U</strong>
+        <div className="onboarding-brand-row">
+          <button
+            className="onboarding-back"
+            type="button"
+            aria-label={step === 3 ? "학사정보 단계로 돌아가기" : "이전 단계로 돌아가기"}
+            title={step === 3 ? "학사정보 단계로 돌아가기" : "이전 단계로 돌아가기"}
+            onClick={handleBack}
+          >
+            <ArrowLeft size={20} aria-hidden="true" />
+          </button>
+          <span className="auth-logo" aria-hidden="true">
+            <BrandMark id="plan-u-face-onboarding" />
+            <span>
+              Plan <strong>U</strong>
+            </span>
           </span>
-        </span>
+          <span aria-hidden="true" />
+        </div>
 
         <SignupStepper current={step} />
 
         {step === 2 ? (
-          <div className="onboarding-columns">
+          <div className="onboarding-columns onboarding-step-enter" key="step-2">
             <form className="auth-panel" onSubmit={handleSync}>
               <div className="auth-title">
                 <p className="eyebrow">STEP 2 · AUTO IMPORT</p>
@@ -119,7 +154,7 @@ export function OnboardingPage() {
                 <button className="auth-submit" type="submit" disabled={isSyncing}>
                   {isSyncing ? "불러오는 중..." : "학사정보 불러오기"}
                 </button>
-                <button className="auth-submit ghost" type="button" onClick={() => setStep(3)}>
+                <button className="auth-submit ghost" type="button" onClick={goToCompletion}>
                   직접 입력할게요
                 </button>
               </div>
@@ -158,7 +193,7 @@ export function OnboardingPage() {
                       {MY_PUSAN_SYNC_FAILED_MESSAGE}
                     </p>
                   ) : null}
-                  <button className="auth-submit" type="button" onClick={() => setStep(3)}>
+                  <button className="auth-submit" type="button" onClick={goToCompletion}>
                     확인하고 시작하기
                   </button>
                   <p className="onboarding-note">잘못된 항목은 가입 후 내 정보에서 수정할 수 있어요</p>
@@ -171,7 +206,7 @@ export function OnboardingPage() {
             </div>
           </div>
         ) : (
-          <div className="auth-panel onboarding-done">
+          <div className="auth-panel onboarding-done onboarding-step-enter" key="step-3">
             <span className="onboarding-done-mark" aria-hidden="true">
               <Check size={20} />
             </span>
@@ -196,13 +231,13 @@ export function OnboardingPage() {
 
             <div className="onboarding-done-footer">
               <div className="onboarding-actions">
-                <button className="auth-submit" type="button" onClick={() => navigate("/", { replace: true })}>
+                <button className="auth-submit" type="button" onClick={() => finishSignup("/")}>
                   홈으로 시작하기
                 </button>
                 <button
                   className="auth-submit ghost"
                   type="button"
-                  onClick={() => navigate("/roadmap", { replace: true })}
+                  onClick={() => finishSignup("/roadmap")}
                 >
                   성장 로드맵 보기
                 </button>

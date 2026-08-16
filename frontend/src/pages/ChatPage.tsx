@@ -73,7 +73,7 @@ export function ChatPage() {
    */
   const loadedSessionRef = useRef<number | null>(null);
 
-  const displayName = readProfileOverrides()?.name ?? user?.name ?? "이도원";
+  const displayName = readProfileOverrides()?.name ?? user?.name ?? "사용자";
   const groups = useMemo(() => groupSessions(sessions), [sessions]);
 
   useEffect(() => {

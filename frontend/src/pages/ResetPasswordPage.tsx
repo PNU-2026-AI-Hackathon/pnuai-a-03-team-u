@@ -46,7 +46,7 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <main className="auth-screen">
+    <main className="auth-screen route-view">
       <section className="auth-shell">
         <Link className="auth-logo" to="/auth" aria-label="로그인으로">
           <BrandMark id="plan-u-face-reset-confirm" />
