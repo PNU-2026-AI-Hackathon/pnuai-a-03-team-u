@@ -8034,10 +8034,14 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-head-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
+  min-width: 0;
 }
 
 .timetable-select select {
+  max-width: 260px;
   padding: 10px 14px;
   border: 0;
   border-radius: 999px;
@@ -8184,7 +8188,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-columns {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(280px, 0.8fr) minmax(520px, 1.3fr) minmax(320px, 0.9fr);
   gap: 20px;
   align-items: start;
 }
@@ -8197,6 +8201,7 @@ body.theme-dark .topnav .theme-mode-button {
   border: 1px solid var(--shell-line);
   border-radius: 20px;
   background: var(--panel);
+  min-width: 0;
 }
 
 .timetable-panel h3 {
@@ -8298,9 +8303,14 @@ body.theme-dark .topnav .theme-mode-button {
   border-radius: 12px;
 }
 
+.timetable-course > div {
+  min-width: 0;
+}
+
 .timetable-course strong {
   color: var(--ink);
   font-size: 16px;
+  overflow-wrap: anywhere;
 }
 
 .timetable-course p {
@@ -8385,7 +8395,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-grid {
   display: grid;
-  grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+  grid-template-columns: 44px repeat(5, minmax(86px, 1fr));
   /* 1행은 요일 머리글이라 따로 높이를 준다. 아래 칸이 5분 단위로 잘게 쪼개져
      있어서 grid-auto-rows를 그대로 받으면 머리글이 눌린다. */
   grid-template-rows: 40px;
@@ -8397,7 +8407,7 @@ body.theme-dark .topnav .theme-mode-button {
   grid-auto-rows: calc(72px / 12);
   border: 1px solid var(--gray-line);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .timetable-grid-corner,
@@ -8444,6 +8454,7 @@ body.theme-dark .topnav .theme-mode-button {
   display: block;
   font-size: 12px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .timetable-block span {
@@ -8795,7 +8806,7 @@ body.theme-dark .timetable-panel {
 
 @media (max-width: 1400px) {
   .timetable-columns {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.1fr);
   }
 
   .timetable-ai {
