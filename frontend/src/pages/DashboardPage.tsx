@@ -97,13 +97,13 @@ export function DashboardPage() {
   const [isAdvisorSaving, setIsAdvisorSaving] = useState(false);
   const currentTerm = useMemo(() => getCurrentAcademicTerm(), []);
 
-  const studentId = studentRecord["학번"] ?? user?.student_id ?? "2023662247";
-  const profileName = profileOverrides?.name ?? studentRecord["이름"] ?? studentRecord["성명"] ?? user?.name ?? "이도원";
+  const studentId = studentRecord["학번"] ?? user?.student_id ?? "-";
+  const profileName = profileOverrides?.name ?? studentRecord["이름"] ?? studentRecord["성명"] ?? user?.name ?? "사용자";
   const department = profileOverrides?.department ?? studentRecord["학부"] ?? user?.department ?? "";
   const major = profileOverrides?.major ?? studentRecord["전공"] ?? user?.major ?? "";
-  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear ?? user?.academic_year) ?? 3;
+  const academicYear = normalizeAcademicYear(profileOverrides?.academicYear ?? user?.academic_year);
   const profileProgramNames = getDistinctProgramNames(department, major);
-  const careerGoal = user?.career_goal ?? "데이터 사이언티스트";
+  const careerGoal = user?.career_goal?.trim() || "-";
   const currentConsultationStatus = advisorConsulted ? "상담 완료" : "상담예정";
 
   useEffect(() => {
@@ -155,7 +155,7 @@ export function DashboardPage() {
       ? [[department.trim() ? "학과" : "전공", profileProgramNames[0]]]
       : [["학부", department], ["전공", major]]),
     ["부전공", minorMajor],
-    ["학년", `${academicYear}학년`],
+    ["학년", academicYear ? `${academicYear}학년` : "-"],
     ["진로", careerGoal],
     ["복수전공", dualMajor],
   ];
@@ -199,7 +199,7 @@ export function DashboardPage() {
                 {minorMajor}
               </p>
             ) : null}
-            <p>{academicYear}학년 · 졸업 요건 점검 중</p>
+            <p>{academicYear ? `${academicYear}학년` : "학년 정보 없음"} · 졸업 요건 점검 중</p>
           </div>
         </div>
 
@@ -207,7 +207,7 @@ export function DashboardPage() {
           {profileFacts.map(([label, value]) => (
             <article key={label}>
               <span>{label}</span>
-              <strong>{value}</strong>
+              <strong>{value || "-"}</strong>
             </article>
           ))}
         </div>

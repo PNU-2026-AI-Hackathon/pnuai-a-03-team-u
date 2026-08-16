@@ -28,7 +28,7 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
     title: "Home",
   },
   "/roadmap": {
-    eyebrow: "데이터사이언스전공",
+    eyebrow: "Academic Plan",
     title: "성장 로드맵",
   },
   "/info": {
@@ -80,7 +80,7 @@ export function AppLayout() {
     navigate("/", { state: { scrollTo: "advisor" } });
   }
 
-  const displayName = profileOverrides?.name ?? user?.name ?? "이도원";
+  const displayName = profileOverrides?.name ?? user?.name ?? "사용자";
 
   return (
     <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
@@ -191,7 +191,9 @@ export function AppLayout() {
             </NavLink>
           </div>
         </header>
-        <Outlet />
+        <div className="route-view" key={location.pathname}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );

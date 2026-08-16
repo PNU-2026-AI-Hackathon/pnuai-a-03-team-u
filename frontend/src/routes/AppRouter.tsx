@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
+import { hasActiveSignupFlow } from "../auth/signupFlow";
 import { AppLayout } from "../components/layout/AppLayout";
 import { AuthPage } from "../pages/AuthPage";
 import { DashboardPage } from "../pages/DashboardPage";
@@ -24,9 +25,11 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function GuestOnly({ children }: { children: ReactNode }) {
   const { isAuthenticated, isBootstrapping } = useAuth();
+  const location = useLocation();
+  const isReturningToSignup = location.pathname === "/auth" && hasActiveSignupFlow();
 
   if (isBootstrapping) return null;
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  if (isAuthenticated && !isReturningToSignup) return <Navigate to="/" replace />;
   return children;
 }
 

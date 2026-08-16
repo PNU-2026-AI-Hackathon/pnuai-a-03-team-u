@@ -2,6 +2,7 @@ import { ACCESS_TOKEN_KEY, apiClient } from "./client";
 
 const MOCK_ACCESS_TOKEN_KEY = "planUMockAccessToken";
 const MOCK_USER_KEY = "planUMockUser";
+const MOCK_SIGNUP_USER_KEY = "planUMockSignupUser";
 const AUTH_REQUEST_TIMEOUT_MS = 15_000;
 
 export const isMockAuthEnabled =
@@ -78,26 +79,47 @@ export type SignupPayload = {
   academic_programs?: AcademicProgramInput[];
 };
 
-function createMockUser(
-  studentId: string,
-  name = "테스트 학생",
+type MockUserSeed = {
+  studentId: string;
+  name?: string;
+  email?: string;
+  academicYear?: number;
+  admissionType?: AdmissionType;
+  department?: string;
+  careerGoal?: string;
+  academicPrograms?: AcademicProgramInput[];
+};
+
+function createMockUser({
+  studentId,
+  name = "테스트 사용자",
   email = "mock@plan-u.local",
-  academicYear = 3,
-  admissionType: AdmissionType = "freshman",
-): User {
+  academicYear,
+  admissionType = "freshman",
+  department,
+  careerGoal,
+  academicPrograms: programInputs = [],
+}: MockUserSeed): User {
+  const academicPrograms = programInputs.reduce<AcademicProgram[]>((programs, program) => {
+    const major = program.major?.trim();
+    if (major) programs.push({ major, program_type: program.program_type });
+    return programs;
+  }, []);
+  const primaryMajor = academicPrograms.find((program) => program.program_type === "primary")?.major ?? null;
+
   return {
     id: 0,
     email,
-    name,
-    student_id: studentId.trim() || "2023662247",
-    department: "의생명융합공학부",
-    major: "데이터사이언스전공",
-    academic_year: academicYear,
+    name: name.trim() || "테스트 사용자",
+    student_id: studentId.trim() || null,
+    department: department?.trim() || null,
+    major: primaryMajor,
+    academic_year: academicYear ?? null,
     admission_type: admissionType,
-    career_goal: "데이터 사이언티스트",
-    advisor_name: "김도현 교수",
+    career_goal: careerGoal?.trim() || null,
+    advisor_name: null,
     advisor_consulted: false,
-    academic_programs: [{ major: "데이터사이언스전공", program_type: "primary" }],
+    academic_programs: academicPrograms,
   };
 }
 
@@ -116,13 +138,18 @@ export function hasAuthSession() {
 
 export async function signup(payload: SignupPayload) {
   if (isMockAuthEnabled) {
-    return createMockUser(
-      payload.student_id,
-      payload.name,
-      payload.email,
-      payload.academic_year,
-      payload.admission_type,
-    );
+    const mockUser = createMockUser({
+      studentId: payload.student_id,
+      name: payload.name,
+      email: payload.email,
+      academicYear: payload.academic_year,
+      admissionType: payload.admission_type,
+      department: payload.department,
+      careerGoal: payload.career_goal,
+      academicPrograms: payload.academic_programs,
+    });
+    window.sessionStorage.setItem(MOCK_SIGNUP_USER_KEY, JSON.stringify(mockUser));
+    return mockUser;
   }
 
   const { data } = await apiClient.post<User>("/auth/signup", payload, {
@@ -143,7 +170,18 @@ export function toPnuEmail(localPart: string) {
 
 export async function login(email: string, password: string, rememberLogin = false) {
   if (isMockAuthEnabled) {
-    const mockUser = createMockUser(email.split("@")[0]);
+    const pendingSignup = window.sessionStorage.getItem(MOCK_SIGNUP_USER_KEY);
+    window.sessionStorage.removeItem(MOCK_SIGNUP_USER_KEY);
+    let signupUser: User | null = null;
+    if (pendingSignup) {
+      try {
+        const parsed = JSON.parse(pendingSignup) as User;
+        if (parsed.email.toLowerCase() === email.toLowerCase()) signupUser = parsed;
+      } catch {
+        signupUser = null;
+      }
+    }
+    const mockUser = signupUser ?? createMockUser({ studentId: email.split("@")[0], email });
     const storage = rememberLogin ? window.localStorage : window.sessionStorage;
     const temporaryStorage = rememberLogin ? window.sessionStorage : window.localStorage;
     temporaryStorage.removeItem(MOCK_ACCESS_TOKEN_KEY);
@@ -248,4 +286,5 @@ export function logout() {
   window.localStorage.removeItem(MOCK_USER_KEY);
   window.sessionStorage.removeItem(MOCK_ACCESS_TOKEN_KEY);
   window.sessionStorage.removeItem(MOCK_USER_KEY);
+  window.sessionStorage.removeItem(MOCK_SIGNUP_USER_KEY);
 }
