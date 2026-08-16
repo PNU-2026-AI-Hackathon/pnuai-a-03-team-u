@@ -274,7 +274,9 @@ input {
 .mini-profile .avatar {
   width: 42px;
   height: 42px;
+  background: linear-gradient(135deg, #2563eb 0%, #38bdf8 100%);
   color: #ffffff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.28);
   font-weight: 800;
 }
 
@@ -7830,9 +7832,16 @@ body.theme-dark .topnav .theme-mode-button {
 
 .onboarding-preview h2 {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   color: var(--ink);
   font-size: 20px;
+}
+
+.onboarding-preview h2 svg {
+  color: var(--shell-accent);
 }
 
 .onboarding-badge {
@@ -8454,6 +8463,39 @@ body.theme-dark .topnav .theme-mode-button {
   background: var(--shell-canvas);
 }
 
+.timetable-filter-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.timetable-filter-status-head > span {
+  color: var(--shell-dim);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timetable-filter-status-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--gray-line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--shell-accent);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.timetable-filter-status-head button:disabled {
+  color: var(--shell-dim);
+  cursor: default;
+  opacity: 0.45;
+}
+
 .timetable-filter-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -8703,6 +8745,27 @@ body.theme-dark .topnav .theme-mode-button {
   border-radius: 8px;
   background: var(--rose);
   color: var(--red);
+  line-height: 1.5;
+}
+
+.timetable-grid-empty {
+  display: grid;
+  gap: 4px;
+  margin-top: -4px;
+  padding: 12px 14px;
+  border: 1px dashed var(--shell-line);
+  border-radius: 12px;
+  background: var(--shell-canvas);
+}
+
+.timetable-grid-empty strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.timetable-grid-empty span {
+  color: var(--shell-dim);
+  font-size: 13px;
   line-height: 1.5;
 }
 
