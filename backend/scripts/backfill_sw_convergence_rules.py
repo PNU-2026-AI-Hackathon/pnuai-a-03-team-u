@@ -135,6 +135,9 @@ def main():
                         curriculum_year=curr_year,
                         special_rules=special,
                     ))
+                    # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
+                    # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
+                    db.flush()
             n_groups = len(special.get('groups', []))
             print(f"  [{action:9s}] {program_label:60s} groups={n_groups} courses={len(cs)}")
 

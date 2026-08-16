@@ -145,6 +145,7 @@ def run_experiment_for_model(
     evaluators: list,
     dataset_name: str = DATASET_NAME,
     description: str | None = None,
+    run_group: str | None = None,
 ) -> dict:
     """dataset.run_experiment()로 dataset run을 만든다. 하나의 모델(또는 설정) = 하나의 run.
 
@@ -171,7 +172,9 @@ def run_experiment_for_model(
         task=task_fn,
         evaluators=evaluators,
         max_concurrency=1,   # rate limit 회피 (Luna TPM 200k) + 결과 재현성
-        metadata={"model": label, "run_group": run_name},
+        # run_group은 N회 반복(-r1/-r2/...)을 UI에서 한 묶음으로 필터하기 위한 키다.
+        # 호출부가 안 넘기면 run_name 자체가 그룹이 된다 (반복 없는 단발 실행).
+        metadata={"model": label, "run_group": run_group or run_name},
     )
     lf.flush()
     url = getattr(result, "dataset_run_url", None) or getattr(result, "url", None)

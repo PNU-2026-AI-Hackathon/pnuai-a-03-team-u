@@ -23,7 +23,7 @@ from app.domains.academics.models import (
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
     CourseRoadmap, CourseRoadmapChatMessage, CourseRoadmapChatSession,
-    CourseRoadmapItem, PendingRoadmapChange,
+    CourseRoadmapItem, PendingRoadmapChange, TimetableChatMessage, TimetableChatSession,
 )
 from app.domains.users.models import User
 
@@ -36,6 +36,12 @@ _TABLES = [
     CourseOffering.__table__, CourseTime.__table__,
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
     CourseRoadmapChatSession.__table__, CourseRoadmapChatMessage.__table__,
+    # 시간표 챗도 PR #120 이후 세션 영속형이라 run_timetable_chat이 이 두 테이블을
+    # 반드시 읽고 쓴다. 빠져 있으면 --live에서 케이스 17~21이 LLM에 닿지도 못하고
+    # `no such table: timetable_chat_sessions`로 죽는다 — 실제로 그 상태였다.
+    # dry-run은 _TimeTableToolContext를 직접 부르고 run_timetable_chat을 안 거쳐서
+    # 초록불이라 이 공백이 오래 안 보였다.
+    TimetableChatSession.__table__, TimetableChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__, ProgramCourse.__table__,
 ]
@@ -133,6 +139,8 @@ def build_persona_db(spec: PersonaSpec) -> tuple[Session, User, CourseRoadmap]:
             credits=rec.credits,
             year=rec.year,
             semester=rec.semester,
+            grade=rec.grade,
+            grade_point=rec.grade_point,
         ))
 
     roadmap = CourseRoadmap(id=1, user_id=user.id)

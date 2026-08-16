@@ -81,6 +81,10 @@ class RecordSpec:
     year: str = "2024"
     semester: str = "1학기"                  # 또는 '입학전성적'
     course_id: int | None = None
+    # 재수강 후보 판정(_compute_retake_candidates)은 grade_point로만 한다 — None이면
+    # "판단 불가"로 후보에서 빠진다. 재수강 시나리오 케이스는 반드시 채워야 한다.
+    grade: str | None = None                 # 'A+', 'C0', 'F' 등 표기
+    grade_point: float | None = None         # 4.5 스케일. C+ = 2.5 이하면 재수강 후보
 
 
 @dataclass
@@ -184,3 +188,10 @@ class EvalResult:
     iterations_used: int
     pending_changes_count: int = 0
     schedules_count: int = 0
+    # 시간표 챗이 실제로 반환한 조합 원본 — [{"offering_ids": [...], "rationale": str}, ...].
+    # custom assertion이 "특정 offering이 조합에 들어갔는가"를 문자열이 아니라 데이터로
+    # 검증할 수 있게 그대로 실어 보낸다.
+    schedules: list[dict] = field(default_factory=list)
+    # 로드맵 챗이 제안한 pending change 원본 — [{"action": str, "course_id": int|None,
+    # "planned_semester": str|None, ...}, ...]. 위와 같은 이유.
+    pending_changes: list[dict] = field(default_factory=list)
