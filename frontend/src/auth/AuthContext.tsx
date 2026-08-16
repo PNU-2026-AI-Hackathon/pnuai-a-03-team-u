@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { getMe, hasAuthSession, login, logout, signup } from "../api/auth";
 import type { SignupPayload, User } from "../api/auth";
 import { AUTH_EXPIRED_EVENT } from "../api/client";
+import { clearSignupFlow } from "./signupFlow";
 
 type AuthContextValue = {
   user: User | null;
@@ -69,6 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       logoutUser() {
         logout();
+        // 가입 폼 임시저장(#163)은 그 계정의 가입 여정 동안만 유효하다.
+        // 로그아웃 후 다른 계정을 만들 때 이전 사람의 학부·이름이 프리필되면
+        // 안 되고, 공용 PC에 남는 것도 개인정보 문제다.
+        clearSignupFlow();
         setUser(null);
       },
     }),
