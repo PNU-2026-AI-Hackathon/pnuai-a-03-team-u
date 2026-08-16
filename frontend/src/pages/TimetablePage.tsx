@@ -148,6 +148,7 @@ export function TimetablePage() {
   const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
+  const [activeOfferingActionId, setActiveOfferingActionId] = useState<number | null>(null);
   const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
   const [applyError, setApplyError] = useState("");
   /**
@@ -532,6 +533,7 @@ export function TimetablePage() {
   async function addOfferings(offeringIds: number[]) {
     if (isApplying || offeringIds.length === 0) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringIds.length === 1 ? offeringIds[0] : null);
     setApplyError("");
     try {
       // 시간표가 하나도 없으면 먼저 만들어 준다. 담기 전에 생성을 강요하지 않는다.
@@ -548,12 +550,14 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
   async function removeOffering(offeringId: number) {
     if (activeId === null || isApplying) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringId);
     setApplyError("");
     try {
       syncDetail(await removeTimetableItem(activeId, offeringId));
@@ -561,6 +565,7 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 빼지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
@@ -923,6 +928,10 @@ export function TimetablePage() {
 
             {offerings.map((offering) => {
               const placed = placedOfferingIds.has(offering.offering_id);
+              const isCurrentAction = activeOfferingActionId === offering.offering_id;
+              const buttonLabel = isCurrentAction
+                ? placed ? "빼는 중…" : "담는 중…"
+                : placed ? "담김 · 빼기" : "담기";
               return (
                 <li className="timetable-course" key={offering.offering_id}>
                   <div>
@@ -941,7 +950,7 @@ export function TimetablePage() {
                     }
                   >
                     {placed ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                    {placed ? "담김 · 빼기" : "담기"}
+                    {buttonLabel}
                   </button>
                 </li>
               );
