@@ -1308,7 +1308,7 @@ export function InfoPage() {
               </div>
               <p className="track-hint">
                 졸업요건과 별개로, 이수하면 졸업증명서에 과정명이 표기되는 인증 과정입니다.
-                학과전공 12~15학점 + AI융합공통 6~9학점, 총 21학점.
+                이수 중이라면 체크해 두세요 — 남은 학점을 자동으로 계산합니다.
               </p>
               {trackError ? <p className="sync-error" role="alert">{trackError}</p> : null}
               <div className="profile-record-list">
@@ -1326,7 +1326,7 @@ export function InfoPage() {
                       </div>
                     </div>
                     <div className="profile-record-actions">
-                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 취소`} title="이수 취소"><Trash2 size={15} aria-hidden="true" /></button>
+                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 체크 해제`} title="이수 체크 해제"><Trash2 size={15} aria-hidden="true" /></button>
                     </div>
                   </div>
                 ))}
@@ -1341,7 +1341,7 @@ export function InfoPage() {
                       </span>
                     </div>
                     <button className="profile-add-button" type="button" onClick={() => void handleTrackEnroll(track)} disabled={isTrackSaving}>
-                      <Plus size={15} aria-hidden="true" />이수 시작
+                      <Plus size={15} aria-hidden="true" />이수 체크
                     </button>
                   </div>
                 ))}

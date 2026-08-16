@@ -23,7 +23,9 @@ from app.domains.planning.models import (
     CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange,
     TimetableChatMessage, TimetableChatSession,
 )
-from app.domains.planning.timetable_chat import _TimeTableToolContext, run_timetable_chat
+from app.domains.planning.timetable_chat import (
+    _TimeTableToolContext, clear_chat_messages, run_timetable_chat,
+)
 from app.domains.users.models import User
 
 
@@ -407,6 +409,39 @@ class SessionPersistenceTest(unittest.TestCase):
                 )
 
 
+class ClearChatMessagesTest(unittest.TestCase):
+    """'이 대화 비우기' — 세션(제목·학기 맥락)은 남기고 메시지만 지운다."""
+
+    def test_clears_messages_but_keeps_session(self):
+        db = _make_db()
+        db.add(School(id=1, name="테스트")); db.flush()
+        db.add(College(id=1, school_id=1, name="테스트대학")); db.flush()
+        db.add(Department(id=100, college_id=1, name="테스트학과")); db.flush()
+        user = _make_student(db, department_id=100)
+        sess = TimetableChatSession(user_id=user.id, year="2026", semester="2학기", title="스레드")
+        db.add(sess); db.flush()
+        db.add(TimetableChatMessage(session_id=sess.id, role="user", content="안녕"))
+        db.add(TimetableChatMessage(session_id=sess.id, role="assistant", content="네"))
+        db.commit()
+
+        deleted = clear_chat_messages(db, user, sess.id)
+
+        self.assertEqual(2, deleted)
+        self.assertIsNotNone(db.get(TimetableChatSession, sess.id))
+        self.assertEqual(0, db.query(TimetableChatMessage).filter_by(session_id=sess.id).count())
+
+    def test_other_users_session_returns_none(self):
+        db = _make_db()
+        db.add(School(id=1, name="테스트")); db.flush()
+        db.add(College(id=1, school_id=1, name="테스트대학")); db.flush()
+        db.add(Department(id=100, college_id=1, name="테스트학과")); db.flush()
+        user = _make_student(db, department_id=100)
+        other = TimetableChatSession(user_id=999, year="2026", semester="2학기", title="남의 것")
+        db.add(other); db.commit()
+
+        self.assertIsNone(clear_chat_messages(db, user, other.id))
+
+
 class OfferingLookupTest(unittest.TestCase):
     """개설 조회가 `courses` 행 하나가 아니라 실제 `course_offerings`를 근거로 하는지.
 
@@ -534,6 +569,44 @@ class TimeConstraintParseTest(unittest.TestCase):
     def test_negative_form_is_not_guessed(self):
         """"화요일 빼고"는 의미가 반대라 지금은 제약으로 잡지 않는다 (오파싱 위험)."""
         self.assertIsNone(self.parse("화요일 빼고 짜주세요"))
+
+    def test_day_letters_inside_ordinary_words_are_not_days(self):
+        """'과목'·'필수'의 목·수를 요일로 읽으면 안 된다.
+
+        실제로 그렇게 동작했다. '만'/'위주'만 있으면 문장 전체에서 요일 글자를 긁어서
+        '전공필수과목만 넣어줘' → {수, 목}이 됐고, 그 제약이 후보 필터·검증·최종 응답
+        세 군데에서 강제돼 사용자는 이유 없이 수·목 수업만 받거나 빈 시간표를 받았다.
+        '만'은 한국어 요청에 워낙 흔해서 사실상 상시 발동하는 상태였다.
+        """
+        for msg in [
+            "전공 과목만 3개 추천해줘",
+            "전공필수만 추천해주세요",
+            "전공필수과목만 넣어줘",
+            "가볍게 3과목만 듣고 싶어요",
+            "졸업요건에 필요한 과목만 넣어줘",
+            "교양과목만 추천",
+            "수업만 3개 넣어줘",
+        ]:
+            parsed = self.parse(msg)
+            self.assertIsNone(
+                (parsed or {}).get("days"),
+                f"낱말 속 글자를 요일로 읽었다: {msg!r} -> {parsed}",
+            )
+
+    def test_yoil_suffix_does_not_add_sunday(self):
+        """'수요일'의 '일'이 일요일로 잡히면 안 된다.
+
+        예전에는 매치 문자열 전체를 훑어서 '…요일'을 언급하는 거의 모든 요청에
+        일요일이 섞여 들어갔다.
+        """
+        self.assertEqual({"월", "수"}, self.parse("월요일과 수요일만 넣어주세요")["days"])
+        self.assertEqual({"월", "수"}, self.parse("월/수요일에만 수업 넣어줘")["days"])
+        self.assertEqual({"금"}, self.parse("금요일 위주로 짜줘")["days"])
+
+    def test_explicit_single_day_still_works(self):
+        """한 글자짜리를 무시하되, '요일'이 붙으면 하루짜리 제약도 살아 있어야 한다."""
+        self.assertEqual({"월"}, self.parse("월요일만 수업 넣어줘")["days"])
+        self.assertEqual({"월", "수", "금"}, self.parse("월수금만 듣게 해줘")["days"])
 
 
 class TimeConstraintEnforcementTest(unittest.TestCase):

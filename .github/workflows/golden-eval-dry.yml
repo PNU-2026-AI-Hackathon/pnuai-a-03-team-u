@@ -12,12 +12,18 @@ on:
       - "backend/app/domains/planning/**"
       - "backend/app/domains/academics/**"
       - ".github/workflows/golden-eval-dry.yml"
+      # 잠금 버전이 바뀌면 하니스가 그 스택에서 여전히 뜨는지 확인해야 한다.
+      - "backend/requirements.txt"
+      - "backend/constraints.txt"
   pull_request:
     paths:
       - "backend/tests/eval/**"
       - "backend/app/domains/planning/**"
       - "backend/app/domains/academics/**"
       - ".github/workflows/golden-eval-dry.yml"
+      # 잠금 버전이 바뀌면 하니스가 그 스택에서 여전히 뜨는지 확인해야 한다.
+      - "backend/requirements.txt"
+      - "backend/constraints.txt"
 
 jobs:
   dry-run:
@@ -35,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -43,9 +49,11 @@ jobs:
         working-directory: backend
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          # -c constraints.txt 없이 설치하면 매번 최신 버전이 깔려서, 이 CI가
+          # 로컬에서 검증한 것과 다른 스택 위에서 회귀를 재게 된다(P1-3).
+          pip install -r requirements.txt -c constraints.txt
           # pytest는 프로덕션 의존 아니라서 requirements.txt에 없음. CI에서만 필요.
-          pip install pytest
+          pip install pytest==9.1.1
 
       - name: Dry-run golden dataset (no LLM)
         working-directory: backend

@@ -11,7 +11,7 @@ import logging
 import smtplib
 from email.message import EmailMessage
 
-from app.core.config import settings
+from app.core.config import is_dev_environment, settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,11 @@ def send_email(to: str, subject: str, body: str) -> bool:
         # 본문에는 비밀번호 재설정 링크(=계정 탈취에 바로 쓰이는 자격증명)가 들어 있다.
         # 로컬 개발에서 메일 서버 없이 흐름을 확인하려고 로그로 출력하는데, 배포에서
         # SMTP_HOST가 비어 있으면 로그 접근자가 임의 계정을 가져갈 수 있다.
-        # 그래서 local이 아니면 링크를 찍지 않는다 (security-privacy-plan.md P0-4).
-        if settings.ENV == "local":
+        # 그래서 개발 환경이 아니면 링크를 찍지 않는다 (security-privacy-plan.md P0-4).
+        # 판단 기준은 크롤러 폴백 가드(P1-4)와 반드시 같아야 한다 — 예전에는 여기만
+        # `ENV == "local"` 정확 일치라 `ENV=dev` 개발자는 폴백은 열리는데 링크는
+        # 안 찍혔다. 그래서 `is_dev_environment()` 하나로 통일했다.
+        if is_dev_environment():
             logger.warning(
                 "SMTP가 설정되지 않아 메일을 보내지 않았습니다. 아래 내용을 직접 확인하세요.\n"
                 "--- to: %s / subject: %s ---\n%s\n--- end ---",

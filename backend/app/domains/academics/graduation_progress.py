@@ -142,16 +142,29 @@ def _find_in_scope(db: Session, program: UserAcademicProgram, scope) -> Graduati
 def _count_matching_requirements(
     db: Session, program: UserAcademicProgram, requirement: GraduationRequirement
 ) -> int:
-    """이 프로그램 조건에 맞는 기준학점 행이 몇 개인지 (중복 감지용)."""
+    """실제로 고른 요건 행과 같은 조건인 행이 몇 개인지 (중복 감지용).
+
+    스코프는 **프로그램이 아니라 고른 행(`requirement`) 기준**이어야 한다. 프로그램
+    기준으로 세면 학과 단위 폴백 경로에서 경고가 절대 안 뜬다:
+
+        학생은 major_id가 있는데 전공 단위 요건 행이 없어 `_find_in_scope`가 학과 단위
+        행(major_id IS NULL)으로 폴백한다 → 그런데 프로그램 기준으로 세면
+        `major_id == program.major_id`로 거르므로 학과 단위 행은 하나도 안 세어져 0이
+        나온다 → `duplicate_count > 1`이 성립하지 않아 경고가 사라진다.
+
+    즉 경고가 필요한 바로 그 상황(폴백으로 집은 학과 단위 행이 중복일 때)에서만
+    조용해지는 셈이었다. curriculum_year도 이미 `requirement` 것을 쓰고 있으므로
+    (연도 폴백까지 반영), 스코프도 같은 기준으로 맞춘다.
+    """
     query = db.query(func.count(GraduationRequirement.id)).filter(
         GraduationRequirement.program_type == program.program_type,
         GraduationRequirement.curriculum_year == requirement.curriculum_year,
     )
-    if program.major_id is not None:
-        query = query.filter(GraduationRequirement.major_id == program.major_id)
+    if requirement.major_id is not None:
+        query = query.filter(GraduationRequirement.major_id == requirement.major_id)
     else:
         query = query.filter(
-            GraduationRequirement.department_id == program.department_id,
+            GraduationRequirement.department_id == requirement.department_id,
             GraduationRequirement.major_id.is_(None),
         )
     return query.scalar() or 0

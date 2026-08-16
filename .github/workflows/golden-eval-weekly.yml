@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -55,7 +55,10 @@ jobs:
         working-directory: backend
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          # 이 워크플로는 실제 LLM으로 주간 회귀를 재는 곳이라 버전 고정이 특히 중요하다.
+          # 핀이 없던 동안은 langchain/langchain-openai/openai가 매주 최신으로 깔려서,
+          # pass율이 떨어져도 프롬프트 회귀인지 라이브러리 변경인지 구분할 수 없었다(P1-3).
+          pip install -r requirements.txt -c constraints.txt
 
       - name: Sync latest cases to Langfuse dataset
         # 케이스 정의가 커밋 사이 바뀌었을 수 있으니 매 주 sync. Idempotent (같은 slug
