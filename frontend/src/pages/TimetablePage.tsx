@@ -651,6 +651,7 @@ export function TimetablePage() {
     key: `${offering.offering_id}-${time.day_of_week}-${time.start_time}`,
     name: offering.course_name ?? "과목",
     classroom: time.classroom,
+    timeLabel: `${time.start_time}-${time.end_time}`,
     tone: categoryTone(offering.category),
     dayIndex,
     rowStart: toGridRow(start),
@@ -1043,8 +1044,9 @@ export function TimetablePage() {
                   gridRow: `${block.rowStart} / span ${block.rowSpan}`,
                 }}
               >
-                <strong>{block.name}</strong>
-                {block.classroom ? <span>{block.classroom}</span> : null}
+                <strong title={block.name}>{block.name}</strong>
+                <span>{block.timeLabel}</span>
+                {block.classroom ? <span title={block.classroom}>{block.classroom}</span> : null}
               </div>
             ))}
           </div>
