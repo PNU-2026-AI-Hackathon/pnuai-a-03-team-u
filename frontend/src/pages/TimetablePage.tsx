@@ -760,9 +760,11 @@ export function TimetablePage() {
       {isConfirmingDelete && detail ? (
         <div className="timetable-delete-confirm" role="alertdialog" aria-label="시간표 삭제 확인">
           <p>
-            <strong>{detail.title}</strong>을(를) 삭제할까요?
-            {detail.item_count > 0 ? ` 담긴 과목 ${detail.item_count}개가 함께 지워집니다.` : null}
-            {" "}로드맵에 이미 반영한 과목은 그대로 남습니다.
+            <strong>{detail.title}</strong> 시간표를 삭제할까요?
+            <span>
+              {detail.item_count > 0 ? `담긴 과목 ${detail.item_count}개가 함께 지워집니다. ` : null}
+              로드맵에 이미 반영한 과목은 그대로 남습니다.
+            </span>
           </p>
           <div>
             <button type="button" onClick={() => setIsConfirmingDelete(false)}>취소</button>
@@ -1115,14 +1117,16 @@ export function TimetablePage() {
           {isConfirmingChatDelete && activeChatId !== null ? (
             <div className="ai-session-confirm" role="alertdialog" aria-label="대화 삭제 확인">
               <p>
-                이 대화를 삭제할까요?
-                {(() => {
-                  const target = chatSessions.find((s) => s.session_id === activeChatId);
-                  return target && target.message_count > 0
-                    ? ` 메시지 ${target.message_count}개가 함께 지워집니다.`
-                    : null;
-                })()}
-                <span> 되돌릴 수 없습니다.</span>
+                <strong>이 대화를 삭제할까요?</strong>
+                <span>
+                  {(() => {
+                    const target = chatSessions.find((s) => s.session_id === activeChatId);
+                    return target && target.message_count > 0
+                      ? `메시지 ${target.message_count}개가 함께 지워집니다. `
+                      : null;
+                  })()}
+                  되돌릴 수 없습니다.
+                </span>
               </p>
               <div className="ai-session-confirm-actions">
                 <button type="button" onClick={() => setIsConfirmingChatDelete(false)}>취소</button>

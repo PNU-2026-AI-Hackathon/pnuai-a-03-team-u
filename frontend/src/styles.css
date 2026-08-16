@@ -4664,53 +4664,6 @@ body.theme-dark .semester-course-status.status-completed {
   cursor: default;
 }
 
-/* 삭제 확인 바. 브라우저 confirm 대신 레일 안에서 올라온다 —
-   되돌릴 수 없는 동작이라 어떤 대화가 지워지는지 보면서 결정하게 한다. */
-.ai-session-confirm {
-  display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--red);
-  border-radius: 10px;
-  background: var(--rose);
-}
-
-.ai-session-confirm p {
-  margin: 0;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.ai-session-confirm p span {
-  color: var(--red);
-}
-
-.ai-session-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.ai-session-confirm-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 7px 14px;
-  border: 1px solid var(--gray-line);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.ai-session-confirm-delete {
-  border-color: var(--red);
-  background: var(--red);
-  color: #fff;
-}
-
 /* AI 대화 화면은 세션 목록 안에서 그 줄만 확인 줄로 바뀐다. */
 .chat-session-confirm {
   display: grid;
@@ -8198,7 +8151,8 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 /* 삭제 확인 바. 되돌릴 수 없는 동작이라 어떤 시간표가 지워지는지 보여주고 묻는다. */
-.timetable-delete-confirm {
+.timetable-delete-confirm,
+.ai-session-confirm {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -8209,19 +8163,31 @@ body.theme-dark .topnav .theme-mode-button {
   background: var(--rose);
 }
 
-.timetable-delete-confirm p {
+.timetable-delete-confirm p,
+.ai-session-confirm p {
+  display: grid;
+  gap: 3px;
   margin: 0;
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.5;
 }
 
-.timetable-delete-confirm > div {
+.timetable-delete-confirm p span,
+.ai-session-confirm p span {
+  color: var(--red);
+}
+
+.timetable-delete-confirm > div,
+.ai-session-confirm-actions {
   display: flex;
   flex: 0 0 auto;
+  justify-content: flex-end;
   gap: 8px;
 }
 
-.timetable-delete-confirm button {
+.timetable-delete-confirm button,
+.ai-session-confirm-actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -8229,14 +8195,16 @@ body.theme-dark .topnav .theme-mode-button {
   border: 1px solid var(--gray-line);
   border-radius: 8px;
   background: var(--panel);
+  color: var(--ink);
   font-size: 13px;
   cursor: pointer;
 }
 
-.timetable-delete-confirm-button {
+.timetable-delete-confirm-button,
+.ai-session-confirm-delete {
   border-color: var(--red) !important;
   background: var(--red) !important;
-  color: #fff;
+  color: #fff !important;
 }
 
 .timetable-empty-state {
@@ -9054,6 +9022,23 @@ body.theme-dark .timetable-panel {
 @media (max-width: 900px) {
   .timetable-columns {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timetable-delete-confirm,
+  .ai-session-confirm {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .timetable-delete-confirm > div,
+  .ai-session-confirm-actions {
+    width: 100%;
+  }
+
+  .timetable-delete-confirm button,
+  .ai-session-confirm-actions button {
+    justify-content: center;
+    flex: 1 1 0;
   }
 
   .timetable-filter-steps {
