@@ -8277,6 +8277,81 @@ body.theme-dark .topnav .theme-mode-button {
   color: var(--shell-accent);
 }
 
+.timetable-filter-status {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--shell-line);
+  border-radius: 16px;
+  background: var(--shell-canvas);
+}
+
+.timetable-filter-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.timetable-filter-step {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--shell-line);
+  border-radius: 13px;
+  background: var(--panel);
+}
+
+.timetable-filter-step.is-active {
+  border-color: #cfe4ff;
+  background: var(--shell-active);
+}
+
+.timetable-filter-step span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--shell-dim);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.timetable-filter-step strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timetable-filter-step.is-active strong {
+  color: var(--shell-accent);
+}
+
+.timetable-filter-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--line);
+  color: var(--shell-dim);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timetable-filter-summary strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+}
+
+.timetable-filter-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timetable-course-list {
   display: flex;
   flex-direction: column;
@@ -8817,6 +8892,19 @@ body.theme-dark .timetable-panel {
 @media (max-width: 900px) {
   .timetable-columns {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timetable-filter-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timetable-filter-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .timetable-filter-summary span {
+    white-space: normal;
   }
 
   .timetable-head {

@@ -338,6 +338,26 @@ export function TimetablePage() {
   const allPlaced = detail?.offerings ?? [];
   const totalCredits = detail?.total_credits ?? 0;
 
+  const selectedGroupLabel = COURSE_GROUPS.find((group) => group.key === groupKey)?.label ?? "갈래";
+  const majorStepItems = [
+    { label: "단과대", value: selectedCollege || "단과대 선택" },
+    { label: "학부", value: selectedDepartment?.name ?? (selectedCollege ? "학부 전체" : "단과대를 먼저") },
+    {
+      label: "전공",
+      value: selectedMajor || (selectedDepartment ? "학부 공통" : "전공 선택"),
+    },
+    { label: "이수구분", value: majorCategory || "전공 전체" },
+  ];
+  const searchSummary = groupKey === "major"
+    ? [
+        selectedGroupLabel,
+        selectedCollege,
+        selectedDepartment?.name,
+        selectedMajor || (selectedDepartment ? "학부 공통" : ""),
+        majorCategory || "전공 전체",
+      ].filter(Boolean).join(" · ")
+    : `${selectedGroupLabel} · 전교 개설 강좌`;
+
   /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
   const placedOfferingIds = new Set(allPlaced.map((offering) => offering.offering_id));
 
@@ -774,6 +794,26 @@ export function TimetablePage() {
                 {group.label}
               </button>
             ))}
+          </div>
+
+          <div className="timetable-filter-status" aria-label="현재 과목 검색 조건">
+            {groupKey === "major" ? (
+              <div className="timetable-filter-steps">
+                {majorStepItems.map((item) => (
+                  <div
+                    className={`timetable-filter-step ${item.value.includes("선택") || item.value.includes("먼저") ? "" : "is-active"}`}
+                    key={item.label}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <p className="timetable-filter-summary">
+              <strong>현재 검색 조건</strong>
+              <span>{searchSummary}</span>
+            </p>
           </div>
 
           {/* 2단계: 전공을 골랐을 때만 단과대 → 학부 → 전공으로 좁힌다. */}
