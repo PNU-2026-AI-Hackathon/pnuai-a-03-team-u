@@ -98,12 +98,17 @@ function toMinutes(value: string | null) {
   return hour * 60 + minute;
 }
 
+function formatOfferingTime(offering: SuggestedOffering) {
+  const slot = offering.times.find((time) => time.day_of_week && time.start_time);
+  if (!slot) return "시간 미정";
+  return `${slot.day_of_week} ${slot.start_time}${slot.end_time ? `-${slot.end_time}` : ""}`;
+}
+
 /** 분반 한 줄 요약. "전공 필수 3학점 · 월 10:00-11:15 · 김태완 교수" */
 function offeringSummary(offering: SuggestedOffering) {
-  const slot = offering.times.find((time) => time.day_of_week && time.start_time);
   return [
     [offering.category, offering.credits ? `${offering.credits}학점` : null].filter(Boolean).join(" "),
-    slot ? `${slot.day_of_week} ${slot.start_time}-${slot.end_time}` : null,
+    formatOfferingTime(offering),
     offering.professor ? `${offering.professor} 교수` : null,
   ]
     .filter(Boolean)
@@ -149,6 +154,7 @@ export function TimetablePage() {
   const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
+  const [activeOfferingActionId, setActiveOfferingActionId] = useState<number | null>(null);
   const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
   const [applyError, setApplyError] = useState("");
   /**
@@ -354,6 +360,14 @@ export function TimetablePage() {
 
   const allPlaced = detail?.offerings ?? [];
   const totalCredits = detail?.total_credits ?? 0;
+  const offeringEmptyTitle = groupKey === "major" && !selectedCollege
+    ? "단과대를 먼저 선택해 주세요"
+    : "조건에 맞는 개설 강좌가 없습니다";
+  const offeringEmptyDescription = groupKey === "major" && !selectedCollege
+    ? "전공 과목은 단과대와 학부를 선택하면 더 정확하게 찾을 수 있어요."
+    : search.trim()
+      ? "검색어를 줄이거나 이수구분 필터를 해제해 보세요."
+      : "다른 갈래를 고르거나 필터를 조금 넓혀보세요.";
 
   const selectedGroupLabel = COURSE_GROUPS.find((group) => group.key === groupKey)?.label ?? "갈래";
   const majorStepItems = [
@@ -541,6 +555,7 @@ export function TimetablePage() {
   async function addOfferings(offeringIds: number[]) {
     if (isApplying || offeringIds.length === 0) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringIds.length === 1 ? offeringIds[0] : null);
     setApplyError("");
     try {
       // 시간표가 하나도 없으면 먼저 만들어 준다. 담기 전에 생성을 강요하지 않는다.
@@ -557,12 +572,14 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 담지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
   async function removeOffering(offeringId: number) {
     if (activeId === null || isApplying) return;
     setIsApplying(true);
+    setActiveOfferingActionId(offeringId);
     setApplyError("");
     try {
       syncDetail(await removeTimetableItem(activeId, offeringId));
@@ -570,6 +587,7 @@ export function TimetablePage() {
       setApplyError(getApiErrorMessage(caught, "과목을 빼지 못했습니다."));
     } finally {
       setIsApplying(false);
+      setActiveOfferingActionId(null);
     }
   }
 
@@ -650,6 +668,7 @@ export function TimetablePage() {
     key: `${offering.offering_id}-${time.day_of_week}-${time.start_time}`,
     name: offering.course_name ?? "과목",
     classroom: time.classroom,
+    timeLabel: `${time.start_time}-${time.end_time}`,
     tone: categoryTone(offering.category),
     dayIndex,
     rowStart: toGridRow(start),
@@ -668,6 +687,21 @@ export function TimetablePage() {
           <p>시간표를 여러 개 만들어 비교하고, 마음에 드는 것을 로드맵에 반영하세요.</p>
         </div>
         <div className="timetable-head-actions">
+          <label className="timetable-select">
+            <span className="sr-only">시간표 선택</span>
+            <select
+              value={activeId ?? ""}
+              onChange={(event) => void handleSelectTimetable(Number(event.target.value))}
+              disabled={timetables.length === 0 || isRenaming}
+            >
+              {timetables.length === 0 ? <option value="">시간표 없음</option> : null}
+              {timetables.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.title} · {item.total_credits}학점
+                </option>
+              ))}
+            </select>
+          </label>
           {isRenaming ? (
             <form
               className="timetable-rename"
@@ -683,81 +717,69 @@ export function TimetablePage() {
                 maxLength={100}
                 onChange={(event) => setRenameDraft(event.target.value)}
               />
-              <button type="submit">확인</button>
-              <button type="button" onClick={() => setIsRenaming(false)}>취소</button>
+              <button className="timetable-rename-submit" type="submit">확인</button>
+              <button className="timetable-rename-cancel" type="button" onClick={() => setIsRenaming(false)}>취소</button>
             </form>
-          ) : (
-            <>
-              <label className="timetable-select">
-                <span className="sr-only">시간표 선택</span>
-                <select
-                  value={activeId ?? ""}
-                  onChange={(event) => void handleSelectTimetable(Number(event.target.value))}
-                  disabled={timetables.length === 0}
-                >
-                  {timetables.length === 0 ? <option value="">시간표 없음</option> : null}
-                  {timetables.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.title} · {item.total_credits}학점
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="timetable-tool"
-                type="button"
-                title="새 시간표 만들기"
-                aria-label="새 시간표 만들기"
-                onClick={() => void handleCreateTimetable()}
-              >
-                <Plus size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-tool"
-                type="button"
-                title="이름 바꾸기"
-                aria-label="이름 바꾸기"
-                disabled={detail === null}
-                onClick={() => {
-                  setRenameDraft(detail?.title ?? "");
-                  setIsRenaming(true);
-                  setIsConfirmingDelete(false);
-                }}
-              >
-                <Pencil size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-tool is-danger"
-                type="button"
-                title="시간표 삭제"
-                aria-label="시간표 삭제"
-                disabled={detail === null}
-                onClick={() => setIsConfirmingDelete(true)}
-              >
-                <Trash2 size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="timetable-save"
-                type="button"
-                title="이 시간표의 과목을 성장 로드맵에 반영합니다"
-                disabled={
-                  isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
-                }
-                onClick={() => void applyToRoadmap()}
-              >
-                {isApplying ? "처리 중…" : "로드맵에 반영"}
-              </button>
-            </>
-          )}
+          ) : null}
+          <button
+            className="timetable-tool"
+            type="button"
+            title="새 시간표 만들기"
+            data-tooltip="새 시간표 만들기"
+            aria-label="새 시간표 만들기"
+            disabled={isRenaming}
+            onClick={() => void handleCreateTimetable()}
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-tool"
+            type="button"
+            title="이름 바꾸기"
+            data-tooltip="이름 바꾸기"
+            aria-label="이름 바꾸기"
+            disabled={detail === null || isRenaming}
+            onClick={() => {
+              setRenameDraft(detail?.title ?? "");
+              setIsRenaming(true);
+              setIsConfirmingDelete(false);
+            }}
+          >
+            <Pencil size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-tool is-danger"
+            type="button"
+            title="시간표 삭제"
+            data-tooltip="시간표 삭제"
+            aria-label="시간표 삭제"
+            disabled={detail === null || isRenaming}
+            onClick={() => setIsConfirmingDelete(true)}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="timetable-save"
+            type="button"
+            title="이 시간표의 과목을 성장 로드맵에 반영합니다"
+            disabled={
+              isRenaming || isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
+            }
+            onClick={() => void applyToRoadmap()}
+          >
+            {isApplying ? "처리 중…" : "로드맵에 반영"}
+          </button>
         </div>
       </header>
 
       {isConfirmingDelete && detail ? (
         <div className="timetable-delete-confirm" role="alertdialog" aria-label="시간표 삭제 확인">
           <p>
-            <strong>{detail.title}</strong>을(를) 삭제할까요?
-            {detail.item_count > 0 ? ` 담긴 과목 ${detail.item_count}개가 함께 지워집니다.` : null}
-            {" "}로드맵에 이미 반영한 과목은 그대로 남습니다.
+            <strong>{detail.title}</strong> 시간표를 삭제할까요?
+            <span>
+              {detail.item_count > 0 ? `담긴 과목 ${detail.item_count}개가 함께 지워집니다. ` : null}
+              로드맵에 이미 반영한 과목은 그대로 남습니다.
+            </span>
           </p>
           <div>
             <button type="button" onClick={() => setIsConfirmingDelete(false)}>취소</button>
@@ -917,18 +939,44 @@ export function TimetablePage() {
           ) : null}
 
           <ul className="timetable-course-list">
-            {isSearchingOfferings ? <li className="timetable-empty">불러오는 중입니다…</li> : null}
+            {isSearchingOfferings ? (
+              <li className="timetable-empty">
+                <strong>개설 강좌를 불러오는 중입니다</strong>
+                <span>선택한 조건에 맞는 과목을 찾고 있어요.</span>
+              </li>
+            ) : null}
             {!isSearchingOfferings && offerings.length === 0 ? (
-              <li className="timetable-empty">이 조건으로 개설된 과목이 없습니다.</li>
+              <li className="timetable-empty">
+                <strong>{offeringEmptyTitle}</strong>
+                <span>{offeringEmptyDescription}</span>
+              </li>
             ) : null}
 
             {offerings.map((offering) => {
               const placed = placedOfferingIds.has(offering.offering_id);
+              const isCurrentAction = activeOfferingActionId === offering.offering_id;
+              const buttonLabel = isCurrentAction
+                ? placed ? "빼는 중…" : "담는 중…"
+                : placed ? "담김 · 빼기" : "담기";
               return (
                 <li className="timetable-course" key={offering.offering_id}>
-                  <div>
+                  <div className="timetable-course-info">
                     <strong>{offering.course_name ?? "과목"}</strong>
-                    <p>{offeringSummary(offering)}</p>
+                    <div className="timetable-course-tags" aria-label="과목 정보">
+                      {offering.category ? <span>{offering.category}</span> : null}
+                      {offering.credits ? <span>{offering.credits}학점</span> : null}
+                      {offering.section ? <span>{offering.section}분반</span> : null}
+                    </div>
+                    <dl className="timetable-course-meta">
+                      <div>
+                        <dt>시간</dt>
+                        <dd>{formatOfferingTime(offering)}</dd>
+                      </div>
+                      <div>
+                        <dt>교수</dt>
+                        <dd>{offering.professor ? `${offering.professor} 교수` : "미정"}</dd>
+                      </div>
+                    </dl>
                   </div>
                   <button
                     type="button"
@@ -942,7 +990,7 @@ export function TimetablePage() {
                     }
                   >
                     {placed ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                    {placed ? "담김 · 빼기" : "담기"}
+                    {buttonLabel}
                   </button>
                 </li>
               );
@@ -1013,8 +1061,9 @@ export function TimetablePage() {
                   gridRow: `${block.rowStart} / span ${block.rowSpan}`,
                 }}
               >
-                <strong>{block.name}</strong>
-                {block.classroom ? <span>{block.classroom}</span> : null}
+                <strong title={block.name}>{block.name}</strong>
+                <span>{block.timeLabel}</span>
+                {block.classroom ? <span title={block.classroom}>{block.classroom}</span> : null}
               </div>
             ))}
           </div>
@@ -1068,6 +1117,7 @@ export function TimetablePage() {
               type="button"
               aria-label="새 대화 시작"
               title="새 대화 시작"
+              data-tooltip="새 대화 시작"
               disabled={isSending}
               onClick={() => void handleCreateChatSession()}
             >
@@ -1078,6 +1128,7 @@ export function TimetablePage() {
               type="button"
               aria-label="이 대화 삭제"
               title="이 대화 삭제"
+              data-tooltip="이 대화 삭제"
               disabled={isSending || activeChatId === null}
               onClick={() => setIsConfirmingChatDelete(true)}
             >
@@ -1088,14 +1139,16 @@ export function TimetablePage() {
           {isConfirmingChatDelete && activeChatId !== null ? (
             <div className="ai-session-confirm" role="alertdialog" aria-label="대화 삭제 확인">
               <p>
-                이 대화를 삭제할까요?
-                {(() => {
-                  const target = chatSessions.find((s) => s.session_id === activeChatId);
-                  return target && target.message_count > 0
-                    ? ` 메시지 ${target.message_count}개가 함께 지워집니다.`
-                    : null;
-                })()}
-                <span> 되돌릴 수 없습니다.</span>
+                <strong>이 대화를 삭제할까요?</strong>
+                <span>
+                  {(() => {
+                    const target = chatSessions.find((s) => s.session_id === activeChatId);
+                    return target && target.message_count > 0
+                      ? `메시지 ${target.message_count}개가 함께 지워집니다. `
+                      : null;
+                  })()}
+                  되돌릴 수 없습니다.
+                </span>
               </p>
               <div className="ai-session-confirm-actions">
                 <button type="button" onClick={() => setIsConfirmingChatDelete(false)}>취소</button>
@@ -1112,10 +1165,16 @@ export function TimetablePage() {
           ) : null}
 
           <div className="timetable-chat" aria-live="polite">
-            {isChatLoading ? <p className="timetable-empty">지난 대화를 불러오는 중입니다…</p> : null}
+            {isChatLoading ? (
+              <p className="timetable-empty">
+                <strong>지난 대화를 불러오는 중입니다</strong>
+                <span>잠시만 기다려 주세요.</span>
+              </p>
+            ) : null}
             {!isChatLoading && chat.length === 0 ? (
               <p className="timetable-empty">
-                남은 요건이나 원하는 조건을 말하면 로드맵 기준으로 답해드립니다.
+                <strong>원하는 시간표 조건을 말해보세요</strong>
+                <span>예: 공강 만들기, 오전 수업 줄이기, 졸업요건 우선으로 추천해줘</span>
               </p>
             ) : (
               chat.map((entry) => (
