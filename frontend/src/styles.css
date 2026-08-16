@@ -8124,30 +8124,55 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-rename {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--shell-line);
+  border-radius: 12px;
+  background: var(--shell-canvas);
 }
 
 .timetable-rename input {
-  width: 200px;
+  width: min(220px, 42vw);
+  min-width: 150px;
   padding: 8px 12px;
   border: 1px solid var(--blue);
   border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
   font-size: 14px;
+  outline: none;
+}
+
+.timetable-rename input:focus {
+  box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.12);
 }
 
 .timetable-rename button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
   padding: 8px 14px;
   border: 1px solid var(--gray-line);
   border-radius: 8px;
   background: var(--panel);
+  color: var(--ink);
   font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
 }
 
-.timetable-rename button[type="submit"] {
-  border-color: var(--blue);
-  background: var(--blue);
-  color: #fff;
+.timetable-rename-submit {
+  border-color: var(--blue) !important;
+  background: var(--blue) !important;
+  color: #fff !important;
+}
+
+.timetable-rename-cancel:hover {
+  border-color: #bdd4f2;
+  color: var(--blue);
 }
 
 /* 삭제 확인 바. 되돌릴 수 없는 동작이라 어떤 시간표가 지워지는지 보여주고 묻는다. */
