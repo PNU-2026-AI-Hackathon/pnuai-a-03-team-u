@@ -6,6 +6,16 @@ export const PROFILE_OVERRIDES_KEY = "planUProfileOverrides";
 export const GRADUATION_OVERRIDE_KEY = "planUGraduationOverride";
 export const STUDENT_PROFILE_UPDATED_EVENT = "plan-u:student-profile-updated";
 
+/** 동기화 직후 사용자에게 보여줄 경고를 **페이지 리로드 너머로** 전달하는 자리.
+ *
+ * `InfoPage.handleSync`는 동기화가 끝나면 `window.location.reload()`로 화면 전체를
+ * 다시 그린다(파생 상태가 많아 부분 갱신보다 안전하다는 기존 선택). 그래서 경고를
+ * React state에만 담으면 리로드와 함께 사라진다 — my.pusan이 실패해도 사용자는
+ * "동기화 완료"만 보게 된다. 리로드 직전에 여기 적고, 다시 뜬 화면이 읽어서 띄운 뒤
+ * 지운다(1회성).
+ */
+export const SYNC_WARNING_KEY = "planUSyncWarning";
+
 export type ProfileOverrides = {
   name: string;
   department?: string;

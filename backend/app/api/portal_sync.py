@@ -11,13 +11,15 @@ from __future__ import annotations
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.core.ratelimit import PORTAL_SYNC_LIMIT, limiter
+from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
 from app.domains.academics.models import Major, StudentCourseRecord, UserAcademicProgram
 from app.domains.planning.history import sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap
@@ -45,8 +47,15 @@ router = APIRouter(prefix="/me", tags=["portal-sync"])
 
 
 class PortalSyncRequest(BaseModel):
+    """One-Stop 자격증명. 저장하지 않고 이 요청 처리 동안만 메모리에 있는다.
+
+    password를 SecretStr로 두는 이유: 저장은 안 하지만 예외 로깅·APM 연동·모델 repr에
+    본문이 딸려갈 수 있다. SecretStr이면 그런 경로에서 `**********`으로 찍힌다
+    (security-privacy-plan.md P0-3). 실제 값은 `.get_secret_value()`로만 꺼낸다.
+    """
+
     login_id: str
-    password: str
+    password: SecretStr
 
 
 class CourseRecordResponse(BaseModel):
@@ -112,14 +121,16 @@ class CourseRecordsReplaceRequest(BaseModel):
 
 
 @router.post("/portal-sync", response_model=PortalSyncResponse)
+@limiter.limit(PORTAL_SYNC_LIMIT)
 def sync_portal_data(
+    request: Request,
     payload: PortalSyncRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """학번/비밀번호로 One-Stop에 로그인해 학적부/성적/졸업요건을 가져와 저장한다."""
     try:
-        with pnu_session(payload.login_id, payload.password) as page:
+        with pnu_session(payload.login_id, payload.password.get_secret_value()) as page:
             student_record = fetch_student_record(page)
             grades_tables = fetch_all_grades(page)
             graduation_tables = fetch_graduation_requirement(page)
@@ -292,6 +303,7 @@ def _refine_liberal_area_categories(
             records_by_name.setdefault(key, []).append(r)
 
     updated = 0
+    unknown_areas: set[str] = set()
     for row in area_rows:
         raw = row.get("raw_record", {})
         student_course = raw.get("학생이수정보_교과목명", "").strip()
@@ -302,11 +314,43 @@ def _refine_liberal_area_categories(
         area_name = area_raw.split(":", 1)[-1].strip() if ":" in area_raw else area_raw.strip()
         if not area_name:
             continue
+
+        # **판정 엔진이 아는 영역명일 때만 덮어쓴다.**
+        # 이 값은 졸업요건 집계에서 `_CATEGORY_ROLLUP`이 '교양선택'으로 되돌리는데, 그
+        # 롤업은 고정된 7개 이름 목록(BALANCED_LIBERAL_AREAS)으로 동작한다. One-Stop 원문이
+        # 조금만 달라도(예: '사상과 역사'처럼 공백 하나) 롤업이 못 알아보고 그 학점이
+        # 교양선택 집계에서 통째로 사라진다 — 2026-08-13에 고친 버그가 그대로 재발한다.
+        # 모르는 이름이면 덮어쓰지 않고 '교양선택'을 유지한다(집계는 정확, 세부영역 조언만 못함).
+        normalized_area = _match_known_liberal_area(area_name)
+        if normalized_area is None:
+            unknown_areas.add(area_name)
+            continue
+
         for rec in records_by_name.get(_norm(student_course), []):
-            if rec.category != area_name:
-                rec.category = area_name
+            if rec.category != normalized_area:
+                rec.category = normalized_area
                 updated += 1
+
+    if unknown_areas:
+        logging.getLogger(__name__).warning(
+            "One-Stop 균형교양 영역명을 판정 엔진이 모른다 (user_id=%s): %s. "
+            "덮어쓰지 않고 '교양선택'을 유지했다 — BALANCED_LIBERAL_AREAS 갱신이 필요한지 확인할 것.",
+            user_id, sorted(unknown_areas),
+        )
     return updated
+
+
+def _match_known_liberal_area(area_name: str) -> str | None:
+    """One-Stop 영역명을 판정 엔진이 아는 표준 이름으로 정규화. 모르면 None.
+
+    공백 차이 정도는 흡수한다("사상과 역사" → "사상과역사"). 그 이상 다르면 새 영역이
+    생겼거나 표기 체계가 바뀐 것이므로 조용히 추측하지 말고 None을 돌려준다.
+    """
+    compact = area_name.replace(" ", "")
+    for known in BALANCED_LIBERAL_AREAS:
+        if compact == known.replace(" ", ""):
+            return known
+    return None
 
 
 def _list_course_records(db: Session, user_id: int) -> list[StudentCourseRecord]:

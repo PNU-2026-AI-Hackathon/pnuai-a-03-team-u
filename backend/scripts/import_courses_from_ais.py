@@ -69,6 +69,8 @@ def import_courses(courses_csv: Path, mapping_path: Path, dry_run: bool = False)
     # SessionLocal이 autoflush=False라 같은 실행 안의 add가 이후 조회에 안 보인다.
     # 같은 단위에 같은 과목코드가 두 번 나오는 경우(교직과목 권장시점 2개 등)를 여기서 걸러낸다.
     seen_unit_course: set[tuple] = set()
+    # 같은 과목명·학과인데 course_code가 갈리는 케이스 (합치면 안 되지만 조회 시 주의 필요).
+    alias_groups: list[str] = []
     try:
         for r in rows:
             unit = units.get(r["ais_dept_code"])
@@ -109,6 +111,25 @@ def import_courses(courses_csv: Path, mapping_path: Path, dry_run: bool = False)
                 .one_or_none()
             )
             if course is None:
+                # 같은 (과목명, 학과, 전공)인데 course_code만 다른 행이 이미 있으면 기록해둔다.
+                # 이걸 합치면 안 된다 — 부산대가 같은 교양 과목명에 개설 주체별로 다른
+                # 교과목코드를 발급하기 때문이고, 코드는 수강신청에 필요하다. 문제는 **개설
+                # (course_offerings)이 이 형제 행들에 흩어져 붙는다**는 점이다. 조회가 한 행만
+                # 보면 분반이 0인 행을 집어 "이번 학기 미개설"이라고 오답한다(2026-08-13 실제
+                # 사고: 공학작문및발표 28개 분반이 안 보였다). 조회 측 대응은
+                # timetable_chat._sibling_course_ids에 있고, 여기서는 그룹이 새로 생기는 걸
+                # 적재 시점에 드러내 검토 대상으로 남긴다.
+                sibling = (
+                    db.query(Course)
+                    .filter_by(department_id=dept_id, major_id=major_id,
+                               course_name=values["course_name"])
+                    .first()
+                )
+                if sibling is not None:
+                    alias_groups.append(
+                        f"{values['course_name']} (dept={dept_id}, major={major_id}): "
+                        f"기존 {sibling.course_code} + 신규 {r['course_code']}"
+                    )
                 db.add(Course(course_code=r["course_code"], department_id=dept_id,
                               major_id=major_id, **values))
                 created += 1
@@ -129,6 +150,16 @@ def import_courses(courses_csv: Path, mapping_path: Path, dry_run: bool = False)
     print(f"입력 {len(rows)}행 → 신규 {created} / 갱신 {updated} / 교양 중복 제거 "
           f"{len([r for r in rows if GENERAL_ED_KEYWORD in r['category']]) - len(seen_ge)} / "
           f"매핑 없는 단위 스킵 {skipped_unit} / 실행 내 중복 스킵 {dup_in_run}" + (" [dry-run, 롤백됨]" if dry_run else ""))
+
+    if alias_groups:
+        print(f"\n⚠️  같은 과목명·학과인데 course_code가 갈린 행 {len(alias_groups)}건이 새로 생겼다.")
+        for line in alias_groups[:20]:
+            print("   -", line)
+        if len(alias_groups) > 20:
+            print(f"   ... 외 {len(alias_groups) - 20}건")
+        print("   → 행을 합치지 마라 (교과목코드는 수강신청에 필요). 대신 개설이 형제 행에")
+        print("     흩어지므로 적재 후 아래로 전체 현황을 확인할 것:")
+        print("     python scripts/report_course_alias_groups.py")
 
 
 if __name__ == "__main__":

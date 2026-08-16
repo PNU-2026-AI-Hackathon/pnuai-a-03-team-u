@@ -39,7 +39,9 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", default=False,
                         help="브라우저 헤드리스 모드. 기본은 창 띄워 육안 확인")
     args = parser.parse_args()
-    # 인자가 없어도 pnu_session.login()이 settings.PNU_LOGIN_ID/PW로 자동 폴백한다.
+    # 인자가 없으면 pnu_session.login()이 settings.PNU_LOGIN_ID/PW로 폴백하는데,
+    # 그 폴백은 ENV가 local/dev일 때만 허용된다 (security-privacy-plan.md P1-4).
+    # 다른 환경에서 돌릴 땐 --login-id/--login-pw를 직접 넘겨야 한다.
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=args.headless)

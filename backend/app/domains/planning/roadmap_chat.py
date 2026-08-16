@@ -44,7 +44,9 @@ from app.domains.planning.models import (
     CourseRoadmapItem,
     PendingRoadmapChange,
 )
-from app.domains.users.admission import TRANSFER_ENTRY_GRADE, is_transfer
+from app.domains.users.admission import (
+    PRE_ADMISSION_SEMESTERS, TRANSFER_ENTRY_GRADE, is_transfer,
+)
 from app.domains.users.models import User
 
 _DEFAULT_CURRICULUM_YEAR = 2026
@@ -56,15 +58,25 @@ MAX_TOOL_ITERATIONS = 8
 # 이 세부영역명으로 override 한다. 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
 # 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
 # 미이수로 오인할 수 있다.
-_BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
-    "사상과역사",
-    "사회와문화",
-    "문학과예술",
-    "과학과기술",
-    "건강과레포츠",
-    "외국어",
-    "융복합",
+# 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
+# (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
+from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+from app.domains.academics.program_status import (
+    ACTIVE_PROGRAM_STATUSES, is_active_program_status,
 )
+
+_BALANCED_LIBERAL_AREAS = BALANCED_LIBERAL_AREAS
+
+
+# program_type → 사용자에게 보여줄 한글 명칭. 컨텍스트 블록과 도구 응답이 같은 값을 써야
+# LLM이 한쪽 표기만 보고 다른 이름으로 부르지 않는다.
+# `UserAcademicProgram.program_type`의 실제 값과 정확히 맞춘다 (auth._VALID_PROGRAM_TYPES).
+_PROGRAM_TYPE_LABELS: dict[str, str] = {
+    "primary": "주전공",
+    "dual": "복수전공",
+    "minor": "부전공",
+    "interdisciplinary": "융합·연계전공",
+}
 
 
 def _current_academic_term() -> tuple[int, int]:
@@ -195,19 +207,23 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
   마라. **효원핵심교양·기초교양 같은 학과 지정 교양(category="교양필수")도 졸업요건이라
   남은 학점 있으면 전공과 나란히 추천해라.**
 - **미이수 전공기초·전공필수는 finish_response의 첫 번째 추천 항목으로 무조건 배치해라.**
-  `get_graduation_progress`에서 `전공기초`/`전공필수`의 `remaining_credits > 0`이거나
-  `get_roadmap_items.completed_courses`에서 학과 커리큘럼의 저학년 전공기초·필수 과목이
-  누락돼 있으면, 그 과목이 진로와 무관해 보여도 **다른 진로 관련 전공선택보다 반드시
-  먼저** 추천해라. 예: 3학년인데 이산수학(전공기초) 미이수면 finish_response 첫 문단에
-  "**전공기초 이산수학이 미이수라 이번 학기 최우선 추천**"이라고 명시하고 그 다음에
-  진로 관련 과목을 이어라. 이 순서를 뒤집으면(진로 관련 전공선택 먼저 나열하고 전공기초는
-  뒤에 언급) 사용자가 우선순위를 잘못 잡아 다음 학기 필수 이수 부담이 커진다.
+  대상은 `get_roadmap_items.missing_required_available`에 그대로 담겨 온다 — 도구가
+  "미이수 + 그 학기 개설" 조건을 이미 확인한 목록이니 네가 따로 대조하지 마라. 목록에
+  과목이 있으면 그게 진로와 무관해 보여도 **다른 진로 관련 전공선택보다 반드시 먼저**
+  추천하고, 각 항목의 `program_label`로 어느 전공 요건인지(주전공/부전공/복수전공) 밝혀라.
+  **목록이 비어 있으면 미이수 필수가 없다는 뜻이니 그 얘기를 꺼내지 마라** — 목록에 없는
+  과목을 미이수라고 하면 이미 이수한 과목을 다시 들으라고 하는 셈이 된다. 이 순서를
+  뒤집으면(진로 관련 전공선택 먼저 나열하고 전공기초는 뒤에 언급) 사용자가 우선순위를
+  잘못 잡아 다음 학기 필수 이수 부담이 커진다.
+  **단 이 목록은 우선순위만 정한다 — 답변 범위를 여기로 좁히지 마라.** 목록에 안 나온
+  프로그램(특히 주전공)과 남은 이수구분도 평소대로 빠짐없이 함께 안내해라. 목록에 뜬
+  전공만 다루고 나머지를 빠뜨리면 학생이 다른 전공은 다 됐다고 오해한다.
 - search_courses 결과에 description(교과목개요)이 있으면 과목명만 보고 판단하지 말고
   그 내용을 실제로 읽고 학생의 진로/관심사와 맞는지 확인해라. 과목명에 키워드가 없어도
   description 내용상 관련 있는 과목일 수 있다.
 - **이미 로드맵에 있는 과목(get_roadmap_items 결과의 course_id 목록)은 다시 create로 제안하지 마라 — 같은 과목이 두 번 만들어지는 걸 도구 단에서 거절한다.** 학기/학년만 옮기고 싶으면 그 항목의 `id`로 action='update'를 호출해라.
 - **이미 이수한 과목(get_roadmap_items 결과의 `completed_courses`)은 다시 추천하지 마라.** 성적표에서 파싱된 이수내역은 `course_id` 매핑이 대부분 안 돼 있어 로드맵 중복 가드로는 잡히지 않는다. finish_response에서 언급하는 과목명이 `completed_courses`에 있는 이름과 겹치는지 반드시 이름 기준으로 재확인해라. 이수기록과 이름이 정확히 일치하는 create는 도구 단에서도 거절한다.
-- **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예: 이수기록에 '데이터구조'가 있고 후보에 '자료구조'가 있을 때, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
+- **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예를 들어 이수기록의 표기와 교육과정 표기가 한 글자만 다른 경우가 있는데, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
 - 기존 항목의 학기/학년을 바꾸고 싶으면 propose_change(action="update", item_id=...)를,
   항목을 빼고 싶으면 propose_change(action="delete", item_id=...)를 써라.
 - **너는 실제로 아무것도 저장하지 않는다.** propose_change는 "제안"만 만든다.
@@ -321,6 +337,16 @@ _CONDITIONAL_RULES: dict[str, str] = {
   없이는 도구가 이수 완료 재추천으로 거절한다. 자격 없는 과목(retake_candidates에
   없음 = B- 이상)에 억지로 is_retake 넘기면 도구가 거절.""",
 
+    "narrow_scope_request": """
+- **이번 요청은 범위가 좁다 — 요청한 것 하나만 처리해라**: 사용자가 대상을 콕 집고
+  "그것만"류 표현으로 범위를 못박았다. 그 항목에 대한 `propose_change` **딱 하나만**
+  호출하고 바로 `finish_response`로 끝내라.
+  - 같은 학기에 다른 항목이 보여도 건드리지 마라. 묶어서 옮기지 마라.
+  - 물어보지도 않은 과목 추천·재수강 권유·졸업요건 브리핑을 덧붙이지 마라.
+  - 관련 조언이 떠오르면 제안(propose_change) 대신 finish_response 문장 한 줄로만 언급해라.
+  실제 관측: 한 과목만 옮겨달라는 요청에 같은 학기의 다른 과목까지 함께 옮겨서, 사용자가
+  요청하지 않은 변경이 승인 대기에 올라갔다.""",
+
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
   이미 이수한 세부영역과 미이수 세부영역이 프로필 블록에 노출돼 있다. **미이수 세부영역
@@ -330,7 +356,112 @@ _CONDITIONAL_RULES: dict[str, str] = {
 }
 
 
-def _select_applicable_rules(db: Session, user: User) -> list[str]:
+def _career_looks_mismatched(db: Session, user: User) -> bool:
+    """진로 목표가 주전공 학과 커리큘럼과 동떨어져 보이는지 판정하는 cheap probe.
+
+    판정: 진로 문구가 알려진 진로군(`CAREER_ALIASES`)에 걸리면, 그 진로군 키워드에
+    해당하는 과목이 학생의 주전공 학과 개설과목에 **하나도 없을 때만** mismatch로 본다.
+    진로군에 안 걸리면(예: "재무분석가", "자동차 엔지니어") 판단 근거가 없으므로 False —
+    모르는 걸 mismatch로 단정하지 않는다.
+
+    이전 구현은 "진로 목표가 있고 부·복수전공이 없으면" 무조건 mismatch 규칙을 붙였다.
+    그래서 정컴 학생 + "백엔드 개발자"처럼 완벽히 일치하는 경우에도 매 대화마다 "부전공/
+    복수전공을 제안해라"는 강한 지시가 시스템 프롬프트에 실렸다 — 불필요한 부전공 권유를
+    유발하고, 프롬프트 fatigue로 다른 규칙의 준수도까지 떨어뜨린다
+    (`docs/backend/...`/골든 하니스 2026-08 관측).
+    """
+    if user.department_id is None or not user.career_goal:
+        return False
+
+    from app.ai.rag.career_keywords import CAREER_KEYWORDS, career_alias_groups
+
+    career = user.career_goal.strip()
+    groups = career_alias_groups(career)
+    if not groups:
+        return False
+
+    rows = db.execute(
+        select(Course.course_name, Course.description).where(
+            Course.department_id == user.department_id
+        )
+    ).all()
+    if not rows:
+        # 학과 개설과목 데이터가 없으면 아무것도 판정할 수 없다. 데이터 공백을
+        # mismatch로 오인해서 엉뚱한 부전공 권유를 하지 않는다.
+        return False
+
+    haystack = " ".join(f"{name or ''} {desc or ''}" for name, desc in rows).lower()
+
+    # 신호 1 — 진로군 키워드가 학과 개설과목에 등장하는가
+    if any(kw.lower() in haystack for kw in {k for g in groups for k in CAREER_KEYWORDS[g]}):
+        return False
+
+    # 신호 2 — 진로 문구 자체가 과목명과 겹치는가 (2글자 단위).
+    # alias가 느슨해서 생기는 오탐을 잡는다: "재무분석가"는 '분석' 때문에 data 진로군에
+    # 걸리지만, 경영학과에 '재무관리'·'기업재무'가 있으므로 mismatch가 아니다.
+    bigrams = {career[i:i + 2] for i in range(len(career) - 1) if not career[i:i + 2].isspace()}
+    if any(bg.lower() in haystack for bg in bigrams if len(bg.strip()) == 2):
+        return False
+
+    return True
+
+
+# "이것만 해줘"류 범위 한정 표현. 조사·어미 변형까지 다 잡으려 하지 않고, 오탐이 거의
+# 없는 명확한 표현만 둔다 — 넓은 요청에 이 규칙이 잘못 붙으면 정상적인 다중 추천이 막힌다.
+_NARROW_SCOPE_MARKERS = (
+    "그것만", "그거만", "이것만", "이거만", "하나만", "한 개만", "딱 하나",
+    "그 과목만", "이 과목만", "다른 건 건드리지", "다른건 건드리지",
+    "다른 건 그대로", "추가 추천은 필요 없", "추천은 안 해도",
+)
+
+
+def _looks_like_narrow_scope_request(message: str | None) -> bool:
+    """사용자 메시지가 "이것만 처리해줘"라고 범위를 못박았는지.
+
+    학생 DB 상태가 아니라 이번 턴 메시지로만 판정하는 유일한 조건부 규칙이다.
+    CORE에도 같은 취지의 규칙이 있지만 긴 프롬프트 뒤쪽에 묻혀 준수도가 낮았다
+    (골든 케이스 26에서 N=3 중 2회 위반: "데이터베이스만 옮겨줘"에 컴퓨터네트워크까지
+    같이 이동). 신호가 명확할 때만 프롬프트 끝에 짧고 강한 규칙을 덧붙인다.
+    """
+    if not message:
+        return False
+    compact = message.replace(" ", "")
+    return any(marker.replace(" ", "") in compact for marker in _NARROW_SCOPE_MARKERS)
+
+
+def _has_term_gap(db: Session, user: User) -> bool:
+    """마지막 이수 학기와 현재 학기 사이에 공백이 있으면 True (= 엇학기).
+
+    현재 학기가 2026-2라면:
+      마지막 이수 2026-1 → 간격 1학기 = 정상 (직전 학기까지 이수)
+      마지막 이수 2026-2 → 간격 0     = 정상 (이번 학기 기록이 벌써 들어온 경우)
+      마지막 이수 2024-1 → 간격 5학기 = 휴학 이력 → 엇학기
+
+    이수 기록이 없으면(신입·편입·미동기화) 판정하지 않는다 — 근거가 없다.
+    '입학전성적'처럼 학기를 특정할 수 없는 lump-sum 기록도 제외한다.
+    """
+    rows = db.execute(
+        select(StudentCourseRecord.year, StudentCourseRecord.semester).where(
+            StudentCourseRecord.user_id == user.id,
+            StudentCourseRecord.year.is_not(None),
+            StudentCourseRecord.semester.not_in(list(PRE_ADMISSION_SEMESTERS)),
+        )
+    ).all()
+
+    absolute_terms = []
+    for year, semester in rows:
+        sem_int = _semester_str_to_int(semester)
+        if sem_int is None or not str(year).isdigit():
+            continue  # 계절수업·전학기 등은 순번을 매길 수 없다
+        absolute_terms.append(int(year) * 2 + sem_int)
+    if not absolute_terms:
+        return False
+
+    cy, cs = _current_academic_term()
+    return (cy * 2 + cs) - max(absolute_terms) >= 2
+
+
+def _select_applicable_rules(db: Session, user: User, message: str | None = None) -> list[str]:
     """학생 상태를 cheap probe로 확인해 활성화할 조건부 규칙 키 목록 반환.
 
     각 probe는 SQL COUNT 등 가벼운 쿼리만. 이미 계산 완료된 값(예: critical_missing)
@@ -344,42 +475,31 @@ def _select_applicable_rules(db: Session, user: User) -> list[str]:
         select(func.count(UserAcademicProgram.id)).where(
             UserAcademicProgram.user_id == user.id,
             UserAcademicProgram.program_type != "primary",
-            UserAcademicProgram.status == "active",
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
         )
     )
     has_non_primary = bool(non_primary_count)
     if has_non_primary:
         applicable.append("non_primary_programs")
-    elif user.career_goal:
-        # 진로는 있는데 non-primary 없음 → mismatch 가능성 (LLM이 실제 판단)
+    elif _career_looks_mismatched(db, user):
+        # 진로군 키워드에 맞는 과목이 주전공 학과에 하나도 없을 때만 (probe 주석 참고).
         applicable.append("career_dept_mismatch")
 
     # 2. 편입생 (admission_type)
     if is_transfer(user.admission_type):
         applicable.append("transfer_student")
 
-    # 3. 엇학기 (SCR '입학전성적' 없이 curriculum_year와 실제 이수 순번 misalign)
-    #    간이 판정: SCR count > 0 이고 최신 SCR의 year_taken이 curriculum_year + 4년 이상
-    #    지났으면 휴학 이력 가능성. 확정은 어렵지만 프롬프트에 힌트만 노출하는 정도라 넉넉히.
-    scr_years = db.scalars(
-        select(StudentCourseRecord.year).where(
-            StudentCourseRecord.user_id == user.id,
-            StudentCourseRecord.year.is_not(None),
-            StudentCourseRecord.semester != "입학전성적",
-        )
-    ).all()
-    if scr_years:
-        try:
-            year_ints = [int(y) for y in scr_years if str(y).isdigit()]
-            primary_prog = db.scalars(
-                select(UserAcademicProgram).filter_by(user_id=user.id, program_type="primary")
-            ).first()
-            if primary_prog and primary_prog.curriculum_year:
-                cy = int(str(primary_prog.curriculum_year))
-                if year_ints and (max(year_ints) - cy) >= 4:
-                    applicable.append("staggered_semester")
-        except (TypeError, ValueError):
-            pass
+    # 3. 엇학기 — 마지막 이수 학기와 현재 학기 사이에 공백이 있는가.
+    #
+    #    옛 판정은 "최신 SCR 연도 - curriculum_year >= 4"였는데, 이건 엇학기가 아니라
+    #    "입학한 지 오래됐나"를 재는 것이라 정작 대상인 한 학기 휴학생이 안 걸렸다
+    #    (골든 케이스 10이 규칙을 한 번도 못 받고 3/3 실패).
+    #
+    #    "이수한 학기 수 < 경과 학기 수"도 안 된다 — 포털 미동기화나 부분 동기화로 기록이
+    #    비어 있는 학생이 전부 걸린다. **마지막 이수 학기**만 보는 게 맞다:
+    #    정상 재학생은 직전 학기까지 이수해 있고, 휴학했다면 그 지점에서 끊긴다.
+    if _has_term_gap(db, user):
+        applicable.append("staggered_semester")
 
     # 4. 자동 판정 필드들 — 실제 계산해서 비어있지 않은 경우만 규칙 추가
     #    (get_roadmap_items가 매 대화 첫 턴에 어차피 이 값들을 다시 계산하니 double-compute
@@ -412,14 +532,21 @@ def _select_applicable_rules(db: Session, user: User) -> list[str]:
     if has_liberal:
         applicable.append("liberal_area_partial")
 
+    # 6. 범위 한정 요청 — 유일하게 DB가 아니라 이번 턴 메시지로 판정한다.
+    #    맨 끝에 붙여서 프롬프트 마지막 줄이 되게 한다 (recency).
+    if _looks_like_narrow_scope_request(message):
+        applicable.append("narrow_scope_request")
+
     return applicable
 
 
-def _build_system_prompt(db: Session, user: User) -> tuple[str, list[str]]:
+def _build_system_prompt(
+    db: Session, user: User, message: str | None = None
+) -> tuple[str, list[str]]:
     """core + applicable conditional rules + student context block 결합한 최종 시스템
     프롬프트. 두 번째 리턴은 적용된 rule 키 목록 (관측·디버깅용, 프롬프트 안 실림).
     """
-    rules = _select_applicable_rules(db, user)
+    rules = _select_applicable_rules(db, user, message)
     conditional_text = "".join(_CONDITIONAL_RULES[k] for k in rules)
     return _CORE_PROMPT + conditional_text, rules
 
@@ -738,6 +865,95 @@ def _compute_critical_missing_required(
     return critical
 
 
+def _compute_missing_required_available(
+    db: Session, user: User, roadmap_id: int | None, reference_semester: str
+) -> list[dict]:
+    """미이수 전공기초·전공필수 중 **대상 학기에 실제로 담을 수 있는** 과목 목록.
+
+    `_compute_critical_missing_required`의 짝이다:
+      - critical  = 미이수 + 그 학기에 개설 **안 됨** → 졸업 위험 경고
+      - 이 함수   = 미이수 + 그 학기에 개설 **됨**   → 이번 학기 최우선 추천 대상
+
+    왜 도구가 주는가: 예전엔 프롬프트가 "get_graduation_progress의 전공기초 remaining과
+    completed_courses와 학과 커리큘럼을 대조해서 누락된 저학년 필수를 먼저 추천해라"라고
+    시켰다. LLM이 세 소스를 크로스체크해야 해서 자주 놓쳤고, 그걸 보완하려고 넣은 구체적
+    예시("이산수학 미이수면...")는 **이미 이수한 학생에게도 그대로 복사**되는 환각을 낳았다.
+    예시를 빼자 이번엔 규칙 준수가 무너졌다(케이스 12가 0/3).
+    → 크로스체크를 도구로 내리고 프롬프트는 "이 목록을 먼저 추천해라"만 말하게 한다.
+    """
+    critical_ids = {
+        c["course_id"] for c in
+        _compute_critical_missing_required(db, user, roadmap_id, reference_semester)
+    }
+
+    def _norm(n: str | None) -> str:
+        if not n:
+            return ""
+        roman = {"Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV"}
+        t = "".join(roman.get(ch, ch) for ch in n)
+        return t.replace("(", "").replace(")", "").replace(" ", "").strip()
+
+    completed_norms: set[str] = set()
+    for r in db.scalars(
+        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
+    ).all():
+        completed_norms.add(_norm(r.raw_course_name))
+    if roadmap_id is not None:
+        for it in db.scalars(
+            select(CourseRoadmapItem).where(
+                CourseRoadmapItem.roadmap_id == roadmap_id,
+                CourseRoadmapItem.status == "completed",
+            )
+        ).all():
+            completed_norms.add(_norm(it.course_name))
+
+    ref_char = str(reference_semester).replace("학기", "").strip()
+
+    # **활성 프로그램 전부**를 훑는다. 주전공만 보면 복수·부전공 학생의 목록에 그 프로그램
+    # 과목이 하나도 안 들어가고, 규칙이 "이 목록을 앞에 배치해라"라고 시키는 탓에 답변이
+    # 주전공으로만 채워져 **사용자가 물어본 프로그램이 통째로 빠진다**
+    # (골든 케이스 09: "복수전공 수학과 뭐부터?"에 정컴 과목만 답해서 3/3 → 1/3).
+    programs = db.scalars(
+        select(UserAcademicProgram).where(
+            UserAcademicProgram.user_id == user.id,
+            UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
+        )
+    ).all()
+    scopes = [(p.department_id, p.major_id, p.program_type) for p in programs if p.department_id]
+    if not scopes:
+        scopes = [(user.department_id, user.major_id, "primary")]
+
+    available: list[dict] = []
+    seen_ids: set[int] = set()
+    for dept_id, major_id, program_type in scopes:
+        q = select(Course).where(
+            Course.department_id == dept_id,
+            Course.category.in_(["전공필수", "전공기초"]),
+        )
+        if major_id is not None:
+            q = q.where(or_(Course.major_id == major_id, Course.major_id.is_(None)))
+        for c in db.scalars(q).all():
+            if c.id in critical_ids or c.id in seen_ids:
+                continue
+            if _norm(c.course_name) in completed_norms:
+                continue
+            # 그 학기에 열리는 것만: 해당 학기 전용이거나 학기 무관 개설.
+            if not (c.semester == ref_char or c.semester in ("1,2", "전학기")):
+                continue
+            seen_ids.add(c.id)
+            available.append({
+                "course_id": c.id,
+                "course_name": c.course_name,
+                "category": c.category,
+                "credits": float(c.credits) if c.credits is not None else None,
+                "grade": c.year,
+                # 어느 프로그램 요건인지 밝힌다 — 안 밝히면 LLM이 전부 주전공으로 뭉뚱그린다.
+                "program_type": program_type,
+                "program_label": _PROGRAM_TYPE_LABELS.get(program_type, program_type),
+            })
+    return available
+
+
 # 부산대 재수강 규정 상 C+(2.5) 이하만 재수강 가능. 학사 규정이 바뀌면 이 값만 수정.
 # 실제 규정 근거: 학사관리규정 재수강 조항 (기준은 대학·연도별 조금씩 다를 수 있음).
 _RETAKE_GRADE_POINT_THRESHOLD = 2.5
@@ -775,8 +991,9 @@ def _compute_retake_candidates(db: Session, user: User) -> list[dict]:
 
     LLM에게는 **권유 후보**로 노출한다. 학생이 명시적으로 GPA 개선/재수강 관심을
     표할 때만 이 목록에서 후보를 제시하고, 그렇지 않으면 매번 강권하지 마라.
-    실제 재수강 등록은 별도 UI 흐름 (지금 propose_change로 create하면 도구 단
-    completed_courses_guard가 막는다 — 재수강 propose는 후속 이슈).
+    사용자가 특정 과목을 콕 집어 재수강을 요청하면 `propose_change(..., is_retake=True)`로
+    로드맵에 넣을 수 있다 — 그 플래그가 있어야만 completed_courses_guard를 우회하고,
+    이 목록에 없는 과목(B- 이상)에 넘기면 도구가 거절한다. 골든 케이스 22가 이 흐름을 지킨다.
     """
 
     def _norm(n: str | None) -> str:
@@ -1009,6 +1226,10 @@ class _ToolContext:
             "programs": [
                 {
                     "program_type": p.program_type,
+                    # 한글 명칭을 같이 준다. 영문 코드만 주면 LLM이 추측해서 연계전공(48학점)을
+                    # "부전공"이라 부르는 일이 있었다 — 부전공은 21학점이라 학생이 요구 학점을
+                    # 오해한다 (골든 케이스 06에서 관측).
+                    "program_label": _PROGRAM_TYPE_LABELS.get(p.program_type, p.program_type),
                     "department_id": p.department_id,
                     "major_id": p.major_id,
                     "requirement_found": p.requirement_found,
@@ -1042,7 +1263,8 @@ class _ToolContext:
         # 학생의 non-primary 프로그램 순회
         programs = self.db.scalars(
             select(UserAcademicProgram)
-            .where(UserAcademicProgram.user_id == self.user.id, UserAcademicProgram.status == "active")
+            .where(UserAcademicProgram.user_id == self.user.id,
+                   UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
             .where(UserAcademicProgram.program_type != "primary")
         ).all()
 
@@ -1242,6 +1464,9 @@ class _ToolContext:
             # 졸업 위험 감지: 학과 필수인데 미이수 + 개설학기가 다음 학기와 어긋난 목록.
             # 비어있지 않으면 LLM이 finish_response에서 사용자에게 위험을 반드시 알려야 한다.
             "critical_missing_required": self._critical_missing_required(f"{ns}학기"),
+            "missing_required_available": _compute_missing_required_available(
+                self.db, self.user, self.roadmap.id, f"{ns}학기"
+            ),
             # 재수강 후보 (성적 낮은 이수 과목). **권유 정보**로 노출 — 학생이 GPA 개선
             # 관심 표하거나 명시적으로 재수강 물을 때만 제시. 물어보지 않았는데 매번
             # 강권하지 마라.
@@ -1274,8 +1499,8 @@ class _ToolContext:
         if program_type and program_type != "primary":
             target_prog = self.db.scalars(
                 select(UserAcademicProgram).filter_by(
-                    user_id=self.user.id, program_type=program_type, status="active"
-                )
+                    user_id=self.user.id, program_type=program_type,
+                ).where(UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES))
             ).first()
             if target_prog is None or target_prog.department_id is None:
                 return {"results": [], "note": f"{program_type} 프로그램이 학적에 없거나 학과 정보 부족."}
@@ -1620,6 +1845,28 @@ class _ToolContext:
                 )
             }
 
+        if action == "create" and course_id is None:
+            # 마지막 관문. course_id 없는 create는 항상 빈 항목을 만든다: 이 도구는
+            # course_name을 받지 않고 PendingRoadmapChange에도 그 컬럼이 없어서,
+            # apply_pending_changes가 이름·학점·이수구분을 전부 Course에서 가져온다
+            # (`course_name=course.course_name if course else None`). 승인하면 과목명도
+            # 학점도 없는 로드맵 행이 생기고 요건 집계에도 안 잡힌다.
+            #
+            # 더 나쁜 건, 이수·중복·재수강·계절수업 가드가 전부 `course_obj is not None`
+            # 분기 안에 있어서 통째로 우회된다는 점이다 — 골든 케이스 22에서 실제로
+            # `is_retake=True, course_id=None`이 모든 검증을 지나쳐 빈 항목을 만들었다.
+            #
+            # 위치가 마지막인 이유: 과거 학기·학년·학점 상한처럼 더 구체적인 위반이
+            # 있으면 그 에러를 먼저 보여주는 게 LLM이 고치기 쉽다.
+            return {
+                "error": (
+                    "create에는 course_id가 필요합니다. search_courses로 대상 과목을 먼저 "
+                    "찾아 course_id를 확인한 뒤 다시 호출하세요. 이미 이수한 과목을 재수강 "
+                    "제안하는 경우에도 마찬가지입니다 — retake_candidates의 과목명으로 "
+                    "search_courses를 호출해 course_id를 얻은 뒤 is_retake=True와 함께 넘기세요."
+                )
+            }
+
         change = PendingRoadmapChange(
             roadmap_id=self.roadmap.id,
             item_id=item_id,
@@ -1664,6 +1911,19 @@ def _load_history(db: Session, session_id: int) -> list[CourseRoadmapChatMessage
     return list(reversed(latest))
 
 
+def _program_required_credits(db: Session, program: UserAcademicProgram) -> int | None:
+    """이 학적 프로그램의 졸업 요구 총학점. 없으면 None.
+
+    프로필 블록에 실어 LLM이 프로그램 유형만 보고 학점을 추측하지 않게 한다 —
+    융합·연계전공은 21(SW융합트랙)·36(복수전공)·42·48(정식 연계전공)로 갈리는데,
+    이름만으로는 구분이 안 돼 실제로 오인이 관측됐다.
+    """
+    from app.domains.academics.graduation_progress import _find_requirement
+
+    requirement = _find_requirement(db, program)
+    return requirement.required_total_credits if requirement else None
+
+
 def _build_student_context_block(db: Session, user: User) -> str:
     """이 학생의 진로/전공/부전공/이수기록을 요약해 시스템 프롬프트에 붙일 블록으로 만든다.
     LLM이 매 턴 이 정보를 보고 진로에 맞는 과목·부족한 이수구분·이미 이수한 과목을
@@ -1682,17 +1942,18 @@ def _build_student_context_block(db: Session, user: User) -> str:
         # (auth._VALID_PROGRAM_TYPES). 예전엔 "double"/"teaching"처럼 존재하지 않는
         # 키가 적혀 있어서 복수전공 학생이 LLM에게 "dual: OO학과"로 전달됐다.
         # SW융합트랙·연계전공·융합전공은 전부 interdisciplinary로 들어온다.
-        label = {
-            "primary": "주전공",
-            "dual": "복수전공",
-            "minor": "부전공",
-            "interdisciplinary": "융합·연계전공",
-        }.get(p.program_type or "", p.program_type or "unknown")
+        label = _PROGRAM_TYPE_LABELS.get(p.program_type or "", p.program_type or "unknown")
         line = f"  - {label}: {dept_name}"
         if major_name:
             line += f" / {major_name}"
         if p.curriculum_year:
             line += f" ({p.curriculum_year} 교육과정)"
+        # 요구 학점을 여기 같이 실어준다. 이게 없으면 LLM이 도구를 호출하고도 "48학점
+        # 연계전공"을 21학점 SW융합트랙으로 오인하는 일이 있었다 (골든 케이스 06).
+        # 프로그램 유형만으로는 21/36/42/48이 구분되지 않기 때문이다.
+        required = _program_required_credits(db, p)
+        if required is not None:
+            line += f" — 요구 {required}학점"
         program_lines.append(line)
     if not program_lines:
         program_lines.append("  - (등록된 학적 프로그램 없음)")
@@ -1761,7 +2022,8 @@ def _build_student_context_block(db: Session, user: User) -> str:
         if track_grs:
             enrolled_major_ids = {
                 p.major_id for p in programs
-                if p.program_type == "interdisciplinary" and p.status == "active"
+                if p.program_type == "interdisciplinary"
+                and is_active_program_status(p.status)
             }
             lines = []
             for g in track_grs:
@@ -1788,8 +2050,11 @@ def _build_student_context_block(db: Session, user: User) -> str:
 
 - **학적 프로그램(전공/부전공 등)**:
 {chr(10).join(program_lines)}
-  → 복수전공/부전공이 있으면 그쪽 이수학점 요건도 병행해 챙겨야 한다. 없으면 주전공 요건만
-    본다. get_graduation_progress는 현재 주전공 기준으로만 답한다는 걸 감안해라.
+  → 복수전공/부전공/연계전공이 있으면 **그 프로그램의 요구 학점도 반드시 함께 안내해라**.
+    위에 학점이 적혀 있으면 그게 그 프로그램의 졸업 요구 학점이다 — 주전공 요건만 답하고
+    넘어가면 학생이 다전공 이수 계획을 통째로 놓친다.
+    `get_graduation_progress`는 **활성 프로그램 전부**(주전공·부전공·복수전공·융합)의 남은
+    학점을 함께 돌려준다. 그룹별 세부 규칙까지 필요하면 `get_program_evaluations`를 더 불러라.
 
 - **이수 완료 과목(성적표 원문 표기, 학과 커리큘럼 표기와 차이 있을 수 있음)**:
 {chr(10).join(completed_lines)}
@@ -1924,7 +2189,9 @@ def run_roadmap_chat(
         with trace.span("load_history_and_context", as_type="retriever"):
             history = _load_history(db, session.id)
             context_block = _build_student_context_block(db, user)
-            base_prompt, applied_rules = _build_system_prompt(db, user)
+            # message를 넘기는 이유: 범위 한정 요청("그것만요") 규칙은 학생 DB 상태가
+            # 아니라 이번 턴 문장으로만 판정된다.
+            base_prompt, applied_rules = _build_system_prompt(db, user, message)
 
         system_prompt = base_prompt + "\n\n" + context_block
         messages: list = [SystemMessage(content=system_prompt)]
@@ -2058,7 +2325,15 @@ def run_roadmap_chat(
         trace.score("tool_calls", non_finish_tool_calls)
         trace.score("pending_changes", len(ctx.pending_changes))
 
-    return {"reply": final_text, "pending_changes": ctx.pending_changes, "session_id": session.id}
+    return {
+        "reply": final_text,
+        "pending_changes": ctx.pending_changes,
+        "session_id": session.id,
+        # 아래 둘은 API 응답에는 안 쓰이고 평가 하니스(tests/eval)가 읽는다. timetable_chat의
+        # 반환 형태와 맞춰 두 에이전트를 같은 기준으로 채점할 수 있게 한다.
+        "finished": finished,          # finish_response로 정상 종료했는지 (폴백 요약이면 False)
+        "iterations": iterations_used,  # LLM 왕복 횟수 (도구 호출 수 아님)
+    }
 
 
 def apply_pending_changes(
@@ -2070,6 +2345,22 @@ def apply_pending_changes(
     is_confirmed=true로 저장한다(승인 자체가 확정 행위라 이중 확정을 요구하지 않는다).
     거절된 항목은 그냥 status="rejected"로 남기고 버린다.
     """
+    def _owned_item(db: Session, item_id: int | None, roadmap_id: int) -> CourseRoadmapItem | None:
+        """이 로드맵에 속한 항목일 때만 돌려준다. 아니면 None.
+
+        `change` 자체는 위에서 `change.roadmap_id != roadmap.id`로 걸러지지만,
+        `change.item_id`는 그 검사에 포함되지 않는다. 지금은 propose_change가 제안을
+        만들 때 항목 소유권을 확인하므로 남의 item_id가 담긴 행이 생기지 않지만,
+        **승인은 남의 로드맵 항목을 수정/삭제하는 경로**라 한 겹 위에서만 지키기엔
+        위험하다. 반영 직전에 다시 확인한다 (defense in depth).
+        """
+        if item_id is None:
+            return None
+        item = db.get(CourseRoadmapItem, item_id)
+        if item is None or item.roadmap_id != roadmap_id:
+            return None
+        return item
+
     applied: list[int] = []
     rejected: list[int] = []
 
@@ -2099,7 +2390,7 @@ def apply_pending_changes(
             )
             db.add(item)
         elif change.action == "update":
-            item = db.get(CourseRoadmapItem, change.item_id)
+            item = _owned_item(db, change.item_id, roadmap.id)
             if item is not None:
                 if change.course_id is not None:
                     course = db.get(Course, change.course_id)
@@ -2125,7 +2416,7 @@ def apply_pending_changes(
                 item.source = "ai"
                 item.is_confirmed = True
         elif change.action == "delete":
-            item = db.get(CourseRoadmapItem, change.item_id)
+            item = _owned_item(db, change.item_id, roadmap.id)
             if item is not None:
                 # pending_roadmap_changes.item_id가 이 item을 가리키고 있으면(이번
                 # change 자신 포함, 같은 item을 겨냥한 다른 미해결 제안도 포함) FK

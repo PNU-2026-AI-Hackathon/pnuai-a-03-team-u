@@ -5152,6 +5152,15 @@ body.theme-dark .semester-course-status.status-completed {
   font-weight: 800;
 }
 
+.sync-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #a45b05;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .sync-note {
   grid-column: 1 / -1;
   margin: 0;
@@ -7655,6 +7664,19 @@ body.theme-dark .topnav .theme-mode-button {
   gap: 12px;
 }
 
+.onboarding-badge.is-partial {
+  background: #fdf1de;
+  color: #a45b05;
+}
+
+.onboarding-warning {
+  margin: 0;
+  color: #a45b05;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
 .onboarding-note {
   margin: 0;
   color: var(--shell-dim);
@@ -8012,10 +8034,14 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-head-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
+  min-width: 0;
 }
 
 .timetable-select select {
+  max-width: 260px;
   padding: 10px 14px;
   border: 0;
   border-radius: 999px;
@@ -8162,7 +8188,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-columns {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(280px, 0.8fr) minmax(520px, 1.3fr) minmax(320px, 0.9fr);
   gap: 20px;
   align-items: start;
 }
@@ -8175,6 +8201,7 @@ body.theme-dark .topnav .theme-mode-button {
   border: 1px solid var(--shell-line);
   border-radius: 20px;
   background: var(--panel);
+  min-width: 0;
 }
 
 .timetable-panel h3 {
@@ -8250,6 +8277,81 @@ body.theme-dark .topnav .theme-mode-button {
   color: var(--shell-accent);
 }
 
+.timetable-filter-status {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--shell-line);
+  border-radius: 16px;
+  background: var(--shell-canvas);
+}
+
+.timetable-filter-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.timetable-filter-step {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--shell-line);
+  border-radius: 13px;
+  background: var(--panel);
+}
+
+.timetable-filter-step.is-active {
+  border-color: #cfe4ff;
+  background: var(--shell-active);
+}
+
+.timetable-filter-step span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--shell-dim);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.timetable-filter-step strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timetable-filter-step.is-active strong {
+  color: var(--shell-accent);
+}
+
+.timetable-filter-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--line);
+  color: var(--shell-dim);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timetable-filter-summary strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+}
+
+.timetable-filter-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timetable-course-list {
   display: flex;
   flex-direction: column;
@@ -8279,6 +8381,11 @@ body.theme-dark .topnav .theme-mode-button {
 .timetable-course-info {
   display: grid;
   gap: 9px;
+  min-width: 0;
+}
+
+/* #152 반응형 보강 — 카드 내부 어떤 div든 넘침 방지 (course-info와 중복돼도 무해) */
+.timetable-course > div {
   min-width: 0;
 }
 
@@ -8417,7 +8524,7 @@ body.theme-dark .topnav .theme-mode-button {
 
 .timetable-grid {
   display: grid;
-  grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+  grid-template-columns: 44px repeat(5, minmax(86px, 1fr));
   /* 1행은 요일 머리글이라 따로 높이를 준다. 아래 칸이 5분 단위로 잘게 쪼개져
      있어서 grid-auto-rows를 그대로 받으면 머리글이 눌린다. */
   grid-template-rows: 40px;
@@ -8429,7 +8536,7 @@ body.theme-dark .topnav .theme-mode-button {
   grid-auto-rows: calc(72px / 12);
   border: 1px solid var(--gray-line);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .timetable-grid-corner,
@@ -8476,6 +8583,7 @@ body.theme-dark .topnav .theme-mode-button {
   display: block;
   font-size: 12px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .timetable-block span {
@@ -8827,7 +8935,7 @@ body.theme-dark .timetable-panel {
 
 @media (max-width: 1400px) {
   .timetable-columns {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.1fr);
   }
 
   .timetable-ai {
@@ -8838,6 +8946,19 @@ body.theme-dark .timetable-panel {
 @media (max-width: 900px) {
   .timetable-columns {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timetable-filter-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timetable-filter-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .timetable-filter-summary span {
+    white-space: normal;
   }
 
   .timetable-head {
