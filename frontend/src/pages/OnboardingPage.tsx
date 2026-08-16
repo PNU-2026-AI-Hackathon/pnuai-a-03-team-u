@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Check } from "lucide-react";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
-import { summarizePortalSync, syncFromPortal } from "../api/portal";
+import { MY_PUSAN_SYNC_FAILED_MESSAGE, summarizePortalSync, syncFromPortal } from "../api/portal";
 import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -131,7 +131,11 @@ export function OnboardingPage() {
               <header>
                 <span className="onboarding-avatar">{displayName.slice(0, 1)}</span>
                 <h2>불러온 정보 미리보기</h2>
-                {summary ? <span className="onboarding-badge">동기화 완료</span> : null}
+                {summary ? (
+                  <span className={`onboarding-badge${summary.myPusanFailed ? " is-partial" : ""}`}>
+                    {summary.myPusanFailed ? "일부만 완료" : "동기화 완료"}
+                  </span>
+                ) : null}
               </header>
 
               {summary ? (
@@ -149,6 +153,11 @@ export function OnboardingPage() {
                       </li>
                     ))}
                   </ul>
+                  {summary.myPusanFailed ? (
+                    <p className="onboarding-warning" role="status">
+                      {MY_PUSAN_SYNC_FAILED_MESSAGE}
+                    </p>
+                  ) : null}
                   <button className="auth-submit" type="button" onClick={() => setStep(3)}>
                     확인하고 시작하기
                   </button>

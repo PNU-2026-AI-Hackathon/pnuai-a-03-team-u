@@ -113,6 +113,7 @@ def upsert_extracurricular_activities(
                 user_id=user_id, title=title, start_date=start_date, end_date=end_date,
                 **values,
             ))
+            db.flush()   # autoflush=False — flush 없으면 같은 루프 안 중복 행이 그대로 저장된다
             created += 1
         else:
             changed = False
@@ -160,6 +161,11 @@ def upsert_certifications(db: Session, user_id: int, rows: list[dict]) -> tuple[
         )
         if existing is None:
             db.add(UserCertification(user_id=user_id, name=display_name, expires_at=None))
+            # SessionLocal이 autoflush=False라 flush를 안 하면 방금 add한 행이
+            # 이 루프의 다음 조회에 안 보인다 — 크롤 결과에 같은 자격증이 두 번
+            # 들어오면 그대로 중복 저장된다 (2026-08-14 실측: autoflush=True인
+            # 테스트 세션에서는 재현되지 않아 놓치기 쉬운 버그).
+            db.flush()
             created += 1
     db.commit()
     return created, updated
@@ -189,6 +195,7 @@ def upsert_language_scores(db: Session, user_id: int, rows: list[dict]) -> tuple
             db.add(UserLanguageScore(
                 user_id=user_id, test_name=test_name, score=score, expires_at=None,
             ))
+            db.flush()   # 위와 같은 이유 (autoflush=False + 루프 안 조회)
             created += 1
     db.commit()
     return created, updated

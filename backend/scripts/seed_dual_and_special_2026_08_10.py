@@ -250,6 +250,13 @@ def _upsert_gr(
             required_total_credits=total_credits,
             special_rules=special,
         ))
+        # SessionLocal이 autoflush=False라, flush를 안 하면 방금 add한 행이 **같은 실행의
+        # 이후 조회에 보이지 않는다**. 이 스크립트는 한 실행에서 같은 (학과, program_type)을
+        # 두 번 건드릴 수 있다 — 별표 2 대량 처리와 이수 불가 학과 마킹이 겹치는 경우다
+        # (실측: 간호학과 dept=95 dual이 133건 중 유일하게 2회 호출된다).
+        # flush가 없으면 두 번째 호출이 위 조회에서 못 찾고 또 add해서 중복 행이 생긴다 —
+        # 2026-08-13에 정리한 간호학과 dual 2026 중복(created_at 34µs 차이)의 실제 원인이다.
+        db.flush()
     return "insert"
 
 

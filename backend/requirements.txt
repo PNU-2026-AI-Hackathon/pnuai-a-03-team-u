@@ -12,6 +12,10 @@ pgvector
 python-jose[cryptography]
 bcrypt
 python-multipart
+# 엔드포인트별 레이트 리밋 (로그인 brute force, 챗 LLM 비용 폭탄 차단).
+# 기본은 in-memory 저장소 — 워커 여러 개로 스케일아웃하면 RATE_LIMIT_STORAGE_URI에
+# redis://를 지정해야 한도가 프로세스별로 쪼개지지 않는다. app/core/ratelimit.py 참고.
+slowapi
 
 # AI / RAG (LangChain)
 langchain

@@ -189,12 +189,60 @@ def _est_cost_usd(model: str, in_tok: int, out_tok_total: int) -> float | None:
     return (in_tok * p[0] + out_tok_total * p[1]) / 1_000_000
 
 
+def _declared_tool_names(agent: str) -> set[str]:
+    """에이전트가 LLM에 노출하는 도구 이름 집합. 하드코딩 대신 실제 _TOOLS에서 뽑는다."""
+    from app.domains.planning import roadmap_chat as rc_mod
+    from app.domains.planning import timetable_chat as tc_mod
+
+    tools = rc_mod._TOOLS if agent == "roadmap" else tc_mod._TOOLS
+    return {t["function"]["name"] for t in tools}
+
+
+def _validate_expectations(case: EvalCase) -> list[str]:
+    """assertion 명세 자체의 정합성을 LLM 없이 정적 검사한다.
+
+    도구를 리네임했는데 케이스의 `tool_called` target을 안 고치면, 그 assertion은
+    live에서 조용히 '항상 실패'(또는 tool_not_called면 '항상 통과')로 변해 회귀 감지력을
+    잃는다. dry-run에서 미리 잡는다.
+    """
+    problems: list[str] = []
+    valid_tools = _declared_tool_names(case.agent)
+    for exp in case.expectations:
+        if exp.kind in ("tool_called", "tool_not_called"):
+            if exp.target not in valid_tools:
+                problems.append(
+                    f"{exp.kind} target '{exp.target}'은 {case.agent} 에이전트의 도구가 "
+                    f"아님 (실제: {sorted(valid_tools)})"
+                )
+        elif exp.kind in ("pending_change_count", "schedules_count"):
+            if not (isinstance(exp.target, tuple) and len(exp.target) == 2
+                    and exp.target[0] in ("==", "<=", ">=")):
+                problems.append(f"{exp.kind} target은 (op, n) 튜플이어야 함: {exp.target!r}")
+        elif exp.kind == "custom" and not callable(exp.target):
+            problems.append(f"custom target은 callable이어야 함: {exp.target!r}")
+        elif exp.kind in ("response_mentions", "response_absent", "llm_judge"):
+            if not isinstance(exp.target, str) or not exp.target.strip():
+                problems.append(f"{exp.kind} target은 비어있지 않은 문자열이어야 함")
+    # 시간표 케이스가 pending_change_count를, 로드맵 케이스가 schedules_count를 거는 건
+    # 항상 0이라 무의미한 검사가 된다.
+    kinds = {e.kind for e in case.expectations}
+    if case.agent == "timetable" and "pending_change_count" in kinds:
+        problems.append("시간표 케이스에 pending_change_count assertion은 항상 0이라 무의미")
+    if case.agent == "roadmap" and "schedules_count" in kinds:
+        problems.append("로드맵 케이스에 schedules_count assertion은 항상 0이라 무의미")
+    return problems
+
+
 def run_dry(case: EvalCase) -> CaseOutcome:
-    """LLM 없이 시드 + 컨텍스트 블록 + tool 스모크 호출."""
+    """LLM 없이 시드 + 컨텍스트 블록 + tool 스모크 호출 + assertion 명세 정적 검사."""
     from app.domains.planning import roadmap_chat as rc_mod
     from app.domains.planning import timetable_chat as tc_mod
 
     try:
+        spec_problems = _validate_expectations(case)
+        if spec_problems:
+            return CaseOutcome(slug=case.slug, ok=False, failures=spec_problems)
+
         db, user, roadmap = build_persona_db(case.persona)
         # 학생 컨텍스트 블록이 렌더되는지 (모든 hierarchy 조회 통과 확인).
         block = rc_mod._build_student_context_block(db, user)
@@ -223,6 +271,23 @@ def run_dry(case: EvalCase) -> CaseOutcome:
             slug=case.slug, ok=False, failures=[],
             error=f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=4)}",
         )
+
+
+def _pending_change_view(change) -> dict:
+    """PendingRoadmapChange ORM 객체를 assertion이 읽기 좋은 평범한 dict으로.
+
+    세션이 닫힌 뒤 lazy load로 터지지 않도록 여기서 값을 뽑아 고정한다.
+    """
+    return {
+        "action": getattr(change, "action", None),
+        "course_id": getattr(change, "course_id", None),
+        "item_id": getattr(change, "item_id", None),
+        "planned_grade": getattr(change, "planned_grade", None),
+        "planned_year": getattr(change, "planned_year", None),
+        "planned_semester": getattr(change, "planned_semester", None),
+        "program_type": getattr(change, "program_type", None),
+        "reason": getattr(change, "reason", None),
+    }
 
 
 @contextlib.contextmanager
@@ -285,8 +350,55 @@ def _spy_token_usage():
         yield log
 
 
+# 일시적 실패(429·연결 끊김 등)가 나면 그 케이스는 "실패"로 집계돼 pass율을 오염시킨다. 실제로
+# 26케이스 × N=3 스윕에서 **실패 20건 중 12건이 429**였다 — 모델 품질이 아니라 하니스가
+# 만들어낸 실패다. 케이스 하나가 입력 66k 토큰을 쓰기도 해서 연속 실행이면 1분 안에 한도를
+# 넘는다. 429는 재시도로 흡수하고, 진짜 assertion 실패만 결과에 남긴다.
+_RATE_LIMIT_BACKOFF_S = (20, 45, 90)
+
+
+# 재시도해야 하는 일시적 실패 시그니처. 모델 품질과 무관하게 스윕 결과를 오염시킨다.
+#
+# 429(TPM 초과)뿐 아니라 **연결 오류**도 넣는다 — 노트북이 절전에 들어가거나 네트워크가
+# 잠깐 끊기면 `APIConnectionError`가 무더기로 나고, 실제로 78회 중 21회가 그렇게 죽어
+# 스윕 하나가 통째로 무효가 됐다(2026-08-14). 판정 결과를 보고 코드를 고치는 판단에
+# 쓰이므로, 인프라 잡음이 섞이면 잘못된 결론을 내리게 된다.
+_TRANSIENT_ERROR_MARKERS = (
+    "ratelimiterror", "rate limit", "rate_limit",      # 429
+    "apiconnectionerror", "connection error",           # 네트워크 끊김
+    "apitimeouterror", "timeout",                       # 응답 지연
+    "internalservererror", "502", "503", "504",         # 프로바이더 일시 장애
+)
+
+
+def _hit_transient_error(outcome: CaseOutcome) -> bool:
+    """이 결과가 일시적 인프라 실패 때문인지. 두 경로를 모두 본다.
+
+    - 에이전트 LLM 오류 → 예외로 터져 `error`에 담긴다.
+    - 판정 LLM(gpt-4o-mini) 오류 → `_llm_judge`가 예외를 삼키고 `judge_error: ...`를
+      failure 문자열로 돌려주므로 `failures`에 담긴다.
+    """
+    blobs = [outcome.error or ""] + list(outcome.failures)
+    joined = " ".join(blobs).lower()
+    return any(m in joined for m in _TRANSIENT_ERROR_MARKERS)
+
+
 def run_live(case: EvalCase) -> CaseOutcome:
-    """LLM 실호출 후 assertion 채점. wall-clock latency도 함께 잰다."""
+    """LLM 실호출 후 assertion 채점. 429는 백오프 재시도로 흡수한다."""
+    outcome = _run_live_once(case)
+    for i, backoff in enumerate(_RATE_LIMIT_BACKOFF_S, start=1):
+        if not _hit_transient_error(outcome):
+            return outcome
+        reason = (outcome.error or " ".join(outcome.failures))[:60]
+        print(f"       (일시적 실패 — {backoff}s 대기 후 재시도 "
+              f"{i}/{len(_RATE_LIMIT_BACKOFF_S)}: {reason})")
+        time.sleep(backoff)
+        outcome = _run_live_once(case)
+    return outcome  # 재시도를 다 써도 실패면 그대로 남긴다
+
+
+def _run_live_once(case: EvalCase) -> CaseOutcome:
+    """run_live의 1회 실행분. 재시도 판정은 호출부가 한다."""
     from app.domains.planning import roadmap_chat as rc_mod
     from app.domains.planning import timetable_chat as tc_mod
 
@@ -299,14 +411,19 @@ def run_live(case: EvalCase) -> CaseOutcome:
             if case.agent == "roadmap":
                 with _spy_roadmap_tool_calls() as tool_log:
                     out = rc_mod.run_roadmap_chat(db, user, roadmap, case.prompt)
-                # finish_response는 spy에 안 잡히므로 (dispatch 경유 X) 수동 태깅.
-                tool_log.append({"name": "finish_response", "args": {}})
-                # iterations는 roadmap_chat이 return 안 주니 tool 호출 수로 근사.
-                iterations = len(tool_log)
+                # finish_response는 dispatch를 안 거쳐서 spy에 안 잡힌다. 예전에는 무조건
+                # 태깅해서 `tool_called finish_response` assertion이 항상 통과하는 무의미한
+                # 검사가 됐다 — 이제 run_roadmap_chat이 돌려주는 실제 종료 여부로 태깅한다.
+                if out.get("finished"):
+                    tool_log.append({"name": "finish_response", "args": {}})
+                # iterations는 LLM 왕복 수 (도구 호출 수 아님) — timetable 쪽과 같은 의미.
+                iterations = int(out.get("iterations", 0) or 0)
+                pending = list(out.get("pending_changes", []) or [])
                 result = EvalResult(
                     reply=out.get("reply", ""), tool_calls=tool_log,
                     iterations_used=iterations,
-                    pending_changes_count=len(out.get("pending_changes", []) or []),
+                    pending_changes_count=len(pending),
+                    pending_changes=[_pending_change_view(c) for c in pending],
                 )
             else:
                 out = tc_mod.run_timetable_chat(
@@ -315,11 +432,13 @@ def run_live(case: EvalCase) -> CaseOutcome:
                     message=case.prompt,
                 )
                 iterations = int(out.get("iterations", 0) or 0)
+                schedules = list(out.get("schedules", []) or [])
                 result = EvalResult(
                     reply=out.get("reply", ""),
                     tool_calls=list(out.get("tool_calls", []) or []),
                     iterations_used=iterations,
-                    schedules_count=len(out.get("schedules", []) or []),
+                    schedules_count=len(schedules),
+                    schedules=schedules,
                 )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -516,8 +635,13 @@ def main() -> int:
 
     if args.langfuse_run:
         # Langfuse experiment 모드 — dataset.run_experiment로 실행. observe_agent_call이
-        # 만든 trace가 dataset run에 자동 링크된다. --runs > 1이면 하나의 케이스가 N번
-        # 반복되며, 각 반복이 별개 trace(같은 dataset item)로 기록된다.
+        # 만든 trace가 dataset run에 자동 링크된다.
+        #
+        # `run_experiment`는 dataset item당 task를 딱 한 번만 부른다. 예전에는 `--runs 3`을
+        # 넘겨도 라벨의 "(N=3)"만 바뀌고 실제로는 1회만 돌았다 — weekly CI가 N=3이라고
+        # 적어두고 실제로는 N=1을 관측하고 있었다. 이제 experiment 자체를 N번 돌려서
+        # (`-r1`, `-r2`, ...) 반복분이 별개 dataset run으로 남게 한다. Langfuse UI에서는
+        # 같은 run_group으로 묶여 비교된다.
         from .langfuse_sync import run_experiment_for_model
         slug_to_case = {c.slug: c for c in cases}
         for m in models:
@@ -528,8 +652,6 @@ def main() -> int:
                 case = slug_to_case.get(item.id)
                 if case is None:
                     return {"skipped": f"no local case for slug {item.id}"}
-                # runs>1이면 dataset item당 여러 실행이지만 SDK는 task 한 번만 호출.
-                # 확률성 분산은 하니스 --runs가 아니라 experiment를 여러 번 돌려서 처리.
                 outcome = run_live(case)
                 return {
                     "reply": outcome.reply_preview,
@@ -551,15 +673,18 @@ def main() -> int:
             def _ev_iterations(*, output, **_kw):
                 return {"name": "iterations", "value": float(output.get("iterations") or 0)}
 
-            with _override_model(m):
-                info = run_experiment_for_model(
-                    run_name=args.langfuse_run, model_override=m,
-                    task_fn=_task,
-                    evaluators=[_ev_passed, _ev_latency, _ev_iterations],
-                )
-            print(f"→ Langfuse run: {info['run_name']}")
-            if info.get("url"):
-                print(f"→ URL: {info['url']}")
+            for r in range(runs):
+                run_label = args.langfuse_run if runs == 1 else f"{args.langfuse_run}-r{r + 1}"
+                with _override_model(m):
+                    info = run_experiment_for_model(
+                        run_name=run_label, model_override=m,
+                        task_fn=_task,
+                        evaluators=[_ev_passed, _ev_latency, _ev_iterations],
+                        run_group=args.langfuse_run,
+                    )
+                print(f"→ Langfuse run ({r + 1}/{runs}): {info['run_name']}")
+                if info.get("url"):
+                    print(f"→ URL: {info['url']}")
         return 0
 
     for m in models:
