@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.tracks import (
     EnrollRequest, cancel_track, enroll_track,
-    list_available_tracks, list_enrolled_tracks,
+    list_available_tracks, list_enrolled_tracks, preview_tracks,
 )
 from app.core.db import Base
 from app.domains.academics.models import (
@@ -107,6 +107,28 @@ class AvailableTracksTest(unittest.TestCase):
         user = User(id=101, email="x@x.com", password_hash="x", name="?", department_id=None)
         db.add(user); db.commit()
         self.assertEqual([], list_available_tracks(current_user=user, db=db))
+
+
+class PreviewTracksTest(unittest.TestCase):
+    """회원가입 홍보 카드용 공개 조회 — 인증 없이 학과 이름으로 찾는다."""
+
+    def test_track_department_returns_preview(self):
+        db = _make_db(); _seed(db); db.commit()
+        previews = preview_tracks(department="심리학과", db=db)
+        self.assertEqual(1, len(previews))
+        self.assertEqual("심리데이터사이언스(SW융합트랙)", previews[0].track_name)
+        self.assertEqual(66, previews[0].major_id)
+
+    def test_exact_name_match_only(self):
+        """부분 일치를 허용하면 오타에도 카드가 떠서 잘못된 안내가 된다."""
+        db = _make_db(); _seed(db); db.commit()
+        self.assertEqual([], preview_tracks(department="심리학", db=db))
+        self.assertEqual([], preview_tracks(department="", db=db))
+
+    def test_department_without_track_returns_empty(self):
+        db = _make_db(); _seed(db)
+        db.add(Department(id=99, college_id=1, name="트랙없는학과")); db.commit()
+        self.assertEqual([], preview_tracks(department="트랙없는학과", db=db))
 
 
 class EnrollmentTest(unittest.TestCase):

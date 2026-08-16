@@ -156,10 +156,47 @@ Plan-U는 **부산대 재학생의 성적·이수내역·자격증·어학점수
   (`scripts/purge_langfuse_user.py`) + 탈퇴 API가 그 해시를 응답에 포함.
   보존기간 정책(예: 90일 자동 만료)을 Langfuse 프로젝트 설정에 적용
 
-**P1-3. 의존성 버전 핀 없음 + 스캔 없음**
+**P1-3. 의존성 버전 핀 없음 + 스캔 없음** — ✅ 구현 완료 (2026-08-15)
 - `requirements.txt`에 `==` 핀이 하나도 없다 → 빌드 재현 불가, 공급망 침해에 무방비
 - 조치: `pip freeze > constraints.txt` 방식으로 핀 고정(직접 의존성은 `requirements.txt`에
   범위, 전이 의존성은 constraints), CI에 `pip-audit` + `gitleaks` 워크플로 추가
+- **구현**: `backend/constraints.txt`(113개 패키지) 신설. 설치는 항상
+  `pip install -r requirements.txt -c constraints.txt`. golden-eval 워크플로 2개도
+  이 방식으로 바꿨다.
+  - 버전은 "오늘 최신"이 아니라 **챗 골든 스윕 72/78을 실제로 낸 개발 환경 버전**으로
+    고정했다. 핀 없이 새로 설치하면 `openai` 2.44→**3.1**(메이저), `cryptography`
+    49→50, `wrapt` 1.17→2.3, `langchain-core` 1.4.8→1.5.5가 깔린다 —
+    즉 **주간 golden-eval CI가 로컬 검증본과 다른 스택 위에서 회귀를 재고 있었다.**
+    LLM 회귀 감시가 라이브러리 버전 때문에 흔들리면 감시 자체가 무의미하다.
+  - 검증: CI와 같은 Python 3.12에서 이 버전 집합이 설치되는 것을 확인.
+- **신규 워크플로 `.github/workflows/security-scan.yml`** (PR·main push·주간 cron)
+  - `gitleaks` — **실패 시 머지 차단.** 시크릿은 푸시되면 키 폐기 말고 되돌릴 방법이 없다.
+    공식 `gitleaks-action@v2`는 조직 소유 레포에서 `GITLEAKS_LICENSE`를 요구하므로
+    바이너리(8.30.0)를 직접 받아 쓴다.
+  - `pip-audit` — **보고만 하고 막지 않는다.** 남의 라이브러리 CVE는 즉시 못 고치는데
+    막으면 무관한 PR이 전부 멈춘다. 결과는 Job Summary에 남긴다.
+- **`.gitleaks.toml`**: 기본 룰 + 프로젝트 전용 룰 3개. 무작위 값으로 심어서 확인해보니
+  **기본 룰셋은 이 프로젝트가 실제로 쓰는 시크릿 3종(OpenAI `sk-proj-`, Anthropic
+  `sk-ant-`, 비밀번호 포함 Postgres URI)을 전부 못 잡았다** — 기본만 믿었으면 통과
+  도장짜리 게이트가 될 뻔했다. 오탐 허용은 확인된 것만 좁게(문서의 잘린 JWT 예시,
+  `.env.example`의 빈 값 줄, 로컬 docker `postgres:postgres@localhost`).
+  - 검증: 히스토리 422커밋 전수 스캔 = 실제 시크릿 0건(유일한 검출은 API 문서의
+    잘린 JWT 예시로 오탐 확인). 심어둔 실키 형태 6종은 6/6 검출.
+- **첫 실행 성과**: `pip-audit`가 취약점 9건(4개 패키지)을 즉시 찾았다 —
+  `aiohttp` 3.14.1(WebSocket 업그레이드 경유 request smuggling 등 3건, 3.14.3에서 수정),
+  `pyasn1` 0.6.3(ASN.1 디코더 DoS 3건, 0.6.4에서 수정),
+  `cryptography` 49.0.0(PKCS#7 Bleichenbacher 오라클, 50.0.0에서 수정),
+  `ecdsa` 0.19.2(Minerva 타이밍 공격, **업스트림 수정 계획 없음**).
+  - `ecdsa`는 `python-jose[cryptography]`가 끌고 오는데, 우리 JWT는
+    `JWT_ALGORITHM="HS256"`(HMAC)이라 서명에 ECDSA를 쓰지 않는다 → 인증 경로와 무관.
+  - `cryptography`의 취약 API(`pkcs7_decrypt_*`)도 우리 코드에서 쓰지 않는다. 메이저
+    업그레이드는 `python-jose` 호환 확인이 필요해 별도 작업으로 분리한다.
+  - **조치**: 수정본이 있는 `aiohttp` 3.14.1→**3.14.3**, `pyasn1` 0.6.3→**0.6.4**로
+    올렸다(패치 릴리스). 상향 후 Python 3.12 설치 재확인 + 재감사 결과
+    **9건 → 2건**.
+  - **남은 2건은 수용**한다(위 근거대로 우리 경로에서 도달 불가). 다음에 다시 볼 조건:
+    ① `python-jose`를 걷어내거나 `cryptography` 50 호환이 확인되면 상향,
+    ② PKCS#7 복호화나 ECDSA 서명을 쓰기 시작하면 즉시 재평가.
 
 **P1-4. 개발자 개인 학교 계정이 크롤러 기본값으로 폴백된다** — ✅ 구현 완료
 - `crawlers/pnu_session.py:103` — 인자 없으면 `settings.PNU_LOGIN_ID/PW` 사용.
