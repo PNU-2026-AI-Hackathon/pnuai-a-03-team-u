@@ -7795,17 +7795,6 @@ body.theme-dark .topnav .theme-mode-button {
   font-size: 20px;
 }
 
-.onboarding-avatar {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--shell-grad);
-  color: #fff;
-  font-weight: 700;
-  place-items: center;
-}
-
 .onboarding-badge {
   padding: 4px 10px;
   border-radius: 999px;

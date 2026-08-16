@@ -164,7 +164,6 @@ export function OnboardingPage() {
 
             <div className="auth-panel onboarding-preview">
               <header>
-                <span className="onboarding-avatar">{displayName.slice(0, 1)}</span>
                 <h2>불러온 정보 미리보기</h2>
                 {summary ? (
                   <span className={`onboarding-badge${summary.myPusanFailed ? " is-partial" : ""}`}>
