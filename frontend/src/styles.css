@@ -317,9 +317,13 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 20px;
+  gap: clamp(14px, 1.4vw, 22px);
   min-height: 100px;
   border-bottom: 1px solid var(--gray-line);
+}
+
+.topbar > div:first-child {
+  min-width: 0;
 }
 
 /* Figma Frame 116 — 내 정보 칩 (아바타 + 라벨, #F3F5F9) */
@@ -368,6 +372,8 @@ h1 {
   display: flex;
   min-width: 0;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -556,12 +562,17 @@ h1 {
 }
 
 .user-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
   padding: 8px 12px;
   border-radius: 20px;
   background: var(--gray-soft);
   color: var(--ink);
   font-weight: 800;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .user-chip.active {
@@ -10066,12 +10077,14 @@ body.theme-dark .auth-track-card {
 /* --- AI 챗 공통 — 말풍선·마크다운 (로드맵 레일이 timetable-chat을 공유) ---- */
 
 .timetable-chat-row .chat-bubble {
-  max-width: 90%;
+  max-width: min(90%, 560px);
+  min-width: 0;
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--panel);
   font-size: 14px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* 로드맵 레일은 폭이 좁고 세로 공간이 아쉬워 높이만 레일 기준으로 맞춘다 */
