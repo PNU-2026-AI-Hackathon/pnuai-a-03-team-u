@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, ClipboardCheck } from "lucide-react";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
 import { MY_PUSAN_SYNC_FAILED_MESSAGE, summarizePortalSync, syncFromPortal } from "../api/portal";
@@ -164,7 +164,7 @@ export function OnboardingPage() {
 
             <div className="auth-panel onboarding-preview">
               <header>
-                <h2>불러온 정보 미리보기</h2>
+                <h2><ClipboardCheck size={20} aria-hidden="true" /> 불러온 정보 미리보기</h2>
                 {summary ? (
                   <span className={`onboarding-badge${summary.myPusanFailed ? " is-partial" : ""}`}>
                     {summary.myPusanFailed ? "일부만 완료" : "동기화 완료"}

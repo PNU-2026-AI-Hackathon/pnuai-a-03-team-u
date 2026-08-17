@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
-import { BookOpen, CircleHelp, Mail, Megaphone, MessageCircle } from "lucide-react";
+import { BookOpen, CalendarDays, CircleHelp, Home, Mail, Map, Megaphone, MessageCircle } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -106,18 +106,18 @@ export function AppLayout() {
 
         <nav className="nav-stack">
           <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/" end>
-            <span className="nav-icon">⌂</span>
+            <span className="nav-icon"><Home size={19} strokeWidth={2.2} aria-hidden="true" /></span>
             <span>Home</span>
           </NavLink>
           <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/roadmap">
-            <span className="nav-icon">⌁</span>
+            <span className="nav-icon"><Map size={19} strokeWidth={2.2} aria-hidden="true" /></span>
             <span>성장 로드맵</span>
           </NavLink>
           <NavLink
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
             to="/timetable"
           >
-            <span className="nav-icon">▣</span>
+            <span className="nav-icon"><CalendarDays size={19} strokeWidth={2.2} aria-hidden="true" /></span>
             <span>시간표 작성</span>
           </NavLink>
         </nav>
@@ -174,7 +174,8 @@ export function AppLayout() {
                 onClick={() => setHelpOpen(true)}
                 onFocus={() => setHelpOpen(true)}
               >
-                <CircleHelp size={18} aria-hidden="true" />
+                <CircleHelp size={17} aria-hidden="true" />
+                <span>도움말</span>
               </button>
               <div
                 className="topbar-help-menu"
