@@ -388,6 +388,15 @@ export function TimetablePage() {
         majorCategory || "전공 전체",
       ].filter(Boolean).join(" · ")
     : `${selectedGroupLabel} · 전교 개설 강좌`;
+  const hasCourseFilters = search.trim() || selectedCollege || selectedDepartment || selectedMajor || majorCategory;
+
+  function resetCourseFilters() {
+    setSearch("");
+    setSelectedCollege("");
+    setSelectedDepartment(null);
+    setSelectedMajor("");
+    setMajorCategory("");
+  }
 
   /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
   const placedOfferingIds = new Set(allPlaced.map((offering) => offering.offering_id));
@@ -836,6 +845,12 @@ export function TimetablePage() {
           </div>
 
           <div className="timetable-filter-status" aria-label="현재 과목 검색 조건">
+            <div className="timetable-filter-status-head">
+              <span>필터 상태</span>
+              <button type="button" onClick={resetCourseFilters} disabled={!hasCourseFilters}>
+                <RotateCcw size={13} aria-hidden="true" /> 초기화
+              </button>
+            </div>
             {groupKey === "major" ? (
               <div className="timetable-filter-steps">
                 {majorStepItems.map((item) => (
@@ -1007,7 +1022,14 @@ export function TimetablePage() {
               <span className="timetable-badge is-warn">시간 충돌 {conflictCount}</span>
             ) : null}
           </div>
-          <p className="timetable-hint">담기 버튼으로 과목을 넣고 빼면서 후보를 비교하세요</p>
+          {allPlaced.length === 0 ? (
+            <div className="timetable-grid-empty">
+              <strong>아직 담은 과목이 없습니다</strong>
+              <span>왼쪽 과목 목록에서 담기 버튼을 누르면 주간 시간표에 바로 표시됩니다.</span>
+            </div>
+          ) : (
+            <p className="timetable-hint">담기 버튼으로 과목을 넣고 빼면서 후보를 비교하세요</p>
+          )}
           {/* 담은 과목은 있는데 그릴 블록이 하나도 없으면 화면이 고장난 것처럼 보인다.
               수강편람 크롤링이 아직 요일·시각을 못 채운 분반이 많아서 생기는 일이다. */}
           {allPlaced.length > 0 && blocks.length === 0 ? (
