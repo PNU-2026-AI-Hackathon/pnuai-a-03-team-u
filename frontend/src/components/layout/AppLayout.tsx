@@ -174,7 +174,8 @@ export function AppLayout() {
                 onClick={() => setHelpOpen(true)}
                 onFocus={() => setHelpOpen(true)}
               >
-                <CircleHelp size={18} aria-hidden="true" />
+                <CircleHelp size={17} aria-hidden="true" />
+                <span>도움말</span>
               </button>
               <div
                 className="topbar-help-menu"
