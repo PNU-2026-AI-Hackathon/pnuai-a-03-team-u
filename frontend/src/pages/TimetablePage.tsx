@@ -513,6 +513,7 @@ export function TimetablePage() {
         TARGET_SEMESTER,
         message,
         activeChatId ?? undefined,
+        detail?.id,
       );
       setActiveChatId(response.session_id);
       // 새 세션이 생겼으면 목록 요약을 갱신한다.

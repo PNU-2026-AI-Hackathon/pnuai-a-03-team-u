@@ -439,7 +439,7 @@ def case_timetable_cs_junior() -> EvalCase:
             ExpectedBehavior("tool_called", "list_offered_courses",
                              reason="offerings에서 실제 후보 뽑는 유일 경로"),
             ExpectedBehavior("schedules_count", (">=", 1),
-                             reason="validate_timetable로 검증된 조합이 최소 1개 나와야 함"),
+                             reason="build_timetable(규칙 엔진)이 만든 조합이 최소 1개 나와야 함"),
         ],
     )
 
@@ -591,8 +591,10 @@ def case_tt_time_constraint() -> EvalCase:
         prompt="이번 학기 시간표 짜주세요. 조건 있어요 — 월수 오전에만 수업 넣어주세요.",
         timetable_year="2026", timetable_semester="2학기",
         expectations=[
-            ExpectedBehavior("tool_called", "validate_timetable",
-                             reason="후보 조합 검증 없이 답변하면 안 됨"),
+            ExpectedBehavior("tool_called", "build_timetable",
+                             reason="후보 조합 구성·검증 없이 답변하면 안 됨. 조합 구성은 이제 "
+                                    "규칙 엔진(build_timetable)이 하고, validate_timetable은 "
+                                    "사용자가 특정 조합을 콕 집어 물을 때만 쓴다"),
             ExpectedBehavior("schedules_count", (">=", 1),
                              reason="6001·6002는 시간이 안 겹쳐 제약 안에서 조합이 나와야 정상. "
                                     "이게 없으면 아래 custom이 빈 결과로 공허하게 통과한다"),

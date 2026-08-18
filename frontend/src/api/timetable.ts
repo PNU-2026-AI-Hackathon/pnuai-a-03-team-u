@@ -132,6 +132,13 @@ export type TimetableChatSuggestion = {
   /** 승인 카드에 그릴 분반 상세. offering_ids만으로는 무엇을 담는지 알 수 없다. */
   offerings: SuggestedOffering[];
   total_credits: number;
+  /**
+   * offering_ids = 이미 담아둔 것 + 이번에 새로 추가되는 것. 추천은 사용자가 담아둔
+   * 시간표 위에 얹히므로, 승인 카드에서 "새로 들어가는 건 이것"을 구분하려면 이 둘이
+   * 필요하다. 담기 API는 멱등이라 전체를 그대로 적용해도 안전하다.
+   */
+  locked_offering_ids: number[];
+  added_offering_ids: number[];
 };
 
 export type TimetableChatResponse = {
@@ -152,12 +159,17 @@ export async function chatWithTimetableAgent(
   semester: string,
   message: string,
   sessionId?: number,
+  planId?: number,
 ) {
   const { data } = await apiClient.post<TimetableChatResponse>("/agent/timetable/recommend", {
     year,
     semester,
     message,
     session_id: sessionId ?? null,
+    // 지금 화면에 열어둔 시간표. 서버는 여기 담긴 강좌를 고정해 놓고 그 위에 얹어
+    // 추천한다. 안 보내면 그 학기의 "가장 최근 수정한" 시간표로 폴백하는데, 시간표를
+    // 여러 개 만들어 비교하는 중이면 보고 있지 않은 쪽이 잡힐 수 있다.
+    plan_id: planId ?? null,
   });
   return data;
 }

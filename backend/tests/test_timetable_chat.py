@@ -20,7 +20,7 @@ from app.domains.academics.models import (
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning import timetable_chat as timetable_chat_mod
 from app.domains.planning.models import (
-    CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange,
+    CoursePlan, CoursePlanItem, CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange,
     TimetableChatMessage, TimetableChatSession,
 )
 from app.domains.planning.timetable_chat import (
@@ -36,6 +36,9 @@ _TABLES = [
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__,
     TimetableChatSession.__table__, TimetableChatMessage.__table__,
+    # 시간표 챗이 "사용자가 UI에서 직접 담아둔 강좌"를 읽는다 — 없으면 run_timetable_chat이
+    # 테이블 부재로 죽는다.
+    CoursePlan.__table__, CoursePlanItem.__table__,
 ]
 
 
@@ -126,6 +129,160 @@ class ValidateTimetableTest(unittest.TestCase):
         self.assertEqual(19, result["credit_cap"])
         self.assertTrue(result["over_credit_cap"])
         self.assertFalse(result["ok"])
+
+
+def _add_section(db, *, course_id, offering_id, section, day, start, end,
+                 year="2026", semester="2학기"):
+    """이미 있는 과목에 분반을 하나 더 붙인다 (같은 course_id, 다른 offering)."""
+    db.add(CourseOffering(
+        id=offering_id, course_id=course_id, year=year, semester=semester,
+        section=section, professor="교수",
+    ))
+    db.add(CourseTime(
+        offering_id=offering_id, day_of_week=day,
+        start_time=datetime.time.fromisoformat(start),
+        end_time=datetime.time.fromisoformat(end),
+    ))
+
+
+class ValidateTimetableRejectsInvalidCombosTest(unittest.TestCase):
+    """검증기가 조용히 통과시키던 두 가지 — 실계정 재현으로 발견 (2026-08-16)."""
+
+    def test_same_course_two_sections_rejected(self):
+        """같은 과목의 다른 분반을 함께 담으면 거절해야 한다.
+
+        시간이 안 겹치면 충돌 검사에 안 걸려서 예전엔 `ok: true`로 통과했다. 실제로
+        확률및통계 140분반+141분반 조합이 '6학점'으로 집계돼, 한 과목을 두 번 듣는
+        시간표가 목표 학점을 채운 것처럼 보였다.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="확률및통계",
+                                  credits=3.0, day="화", start="09:00", end="10:15")
+        _add_section(db, course_id=1, offering_id=102, section="141",
+                     day="화", start="10:30", end="11:45")
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.validate_timetable(offering_ids=[101, 102])
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("duplicate_course", result["reason"])
+        self.assertEqual([101, 102], result["duplicates"][0]["offering_ids"])
+
+    def test_already_completed_course_rejected(self):
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="자료구조",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="자료구조", credits=3.0,
+            year=2024, semester="1학기",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.validate_timetable(offering_ids=[101])
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("already_completed", result["reason"])
+
+
+class BuildTimetableTest(unittest.TestCase):
+    """조합 구성을 LLM이 아니라 규칙 엔진이 한다 (2026-08-17)."""
+
+    def test_prefers_filling_credits_over_fewer_days(self):
+        """학점을 채우는 조합이 과목 1개짜리보다 위에 와야 한다.
+
+        `timetable._rank_schedules`(요일 수 1순위)를 그대로 쓰면 1과목(1일) 조합이
+        4과목(3일) 조합을 제친다 — 실측에서 12학점이 가능한 후보 풀에 3학점짜리
+        단과목이 1·2위로 나왔다.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        for i, day in enumerate(["월", "화", "수", "목"]):
+            _add_course_with_offering(
+                db, course_id=i + 1, offering_id=101 + i, name=f"과목{i}", credits=3.0,
+                day=day, start="09:00", end="10:15",
+            )
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.build_timetable(offering_ids=[101, 102, 103, 104], target_credits=12)
+
+        self.assertTrue(result["ok"])
+        top = result["schedules"][0]
+        self.assertEqual([101, 102, 103, 104], top["offering_ids"])
+        self.assertEqual(12.0, top["total_credits"])
+        self.assertTrue(top["reaches_target_credits"])
+
+    def test_picks_one_section_per_course(self):
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="확률및통계",
+                                  credits=3.0, day="화", start="09:00", end="10:15")
+        _add_section(db, course_id=1, offering_id=102, section="141",
+                     day="화", start="10:30", end="11:45")
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.build_timetable(offering_ids=[101, 102], target_credits=6)
+
+        self.assertTrue(result["ok"])
+        for schedule in result["schedules"]:
+            self.assertEqual(1, len(schedule["offering_ids"]))
+            self.assertEqual(3.0, schedule["total_credits"])
+
+    def test_builds_on_top_of_user_placed_timetable(self):
+        """사용자가 시간표 UI에서 직접 담아둔 강좌를 고정하고 그 위에 얹는다."""
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="이미담은과목",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        # 담아둔 강의와 시간이 겹치는 후보 → 제외돼야 한다.
+        _add_course_with_offering(db, course_id=2, offering_id=102, name="겹치는과목",
+                                  credits=3.0, day="월", start="09:30", end="10:45")
+        _add_course_with_offering(db, course_id=3, offering_id=103, name="안겹치는과목",
+                                  credits=3.0, day="화", start="09:00", end="10:15")
+        plan = CoursePlan(id=7, user_id=user.id, year="2026", semester="2학기", title="내 시간표")
+        db.add(plan)
+        db.add(CoursePlanItem(plan_id=7, offering_id=101, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=7)
+
+        result = ctx.build_timetable(offering_ids=[102, 103], target_credits=6)
+
+        self.assertTrue(result["ok"])
+        top = result["schedules"][0]
+        # 고정분 + 새로 담을 것이 모두 offering_ids에 있고, 겹치는 후보는 빠진다.
+        self.assertEqual([101, 103], top["offering_ids"])
+        self.assertEqual([101], top["locked_offering_ids"])
+        self.assertEqual([103], top["added_offering_ids"])
+        self.assertNotIn(102, top["offering_ids"])
+        self.assertTrue(
+            any("겹침" in d["reason"] for d in result["dropped"]),
+            msg=f"겹쳐서 빠졌다는 사유가 있어야 한다: {result['dropped']}",
+        )
+
+    def test_ignores_placed_timetable_when_asked(self):
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="이미담은과목",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        _add_course_with_offering(db, course_id=2, offering_id=102, name="겹치는과목",
+                                  credits=3.0, day="월", start="09:30", end="10:45")
+        db.add(CoursePlan(id=7, user_id=user.id, year="2026", semester="2학기"))
+        db.add(CoursePlanItem(plan_id=7, offering_id=101, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=7)
+
+        result = ctx.build_timetable(
+            offering_ids=[102], target_credits=3, ignore_current_timetable=True,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([102], result["schedules"][0]["offering_ids"])
+        self.assertEqual([], result["schedules"][0]["locked_offering_ids"])
 
 
 class StudentContextTest(unittest.TestCase):
@@ -306,7 +463,14 @@ class RunTimetableChatIntegrationTest(unittest.TestCase):
                 message="백엔드 하고 싶은데 이번 학기 뭐 들으면 좋아요?",
             )
 
-        self.assertEqual("백엔드 진로에 맞춰 두 과목을 짜봤어요.", result["reply"])
+        # 응답 = LLM이 쓴 설명 + 서버가 DB 값으로 붙인 과목 목록.
+        # 목록을 LLM에게 맡기면 과목명·학점을 지어내서 화면의 시간표와 어긋난다
+        # (_render_schedule_summary 참고). 대화 기록에는 텍스트만 남으므로 이 목록이
+        # 새로고침 후 "무엇을 추천받았는지"의 유일한 기록이기도 하다.
+        self.assertTrue(result["reply"].startswith("백엔드 진로에 맞춰 두 과목을 짜봤어요."))
+        self.assertIn("📋 총 6학점", result["reply"])
+        self.assertIn("백엔드시스템 (전공선택, 3학점) — 월 09:00-10:15", result["reply"])
+        self.assertIn("서버프로그래밍 (전공선택, 3학점) — 화 09:00-10:15", result["reply"])
         self.assertEqual(1, len(result["schedules"]))
         self.assertEqual([101, 102], result["schedules"][0]["offering_ids"])
         # 도구 호출 순서 확인
@@ -322,7 +486,8 @@ class RunTimetableChatIntegrationTest(unittest.TestCase):
         self.assertEqual(2, len(messages))
         self.assertEqual("user", messages[0].role)
         self.assertEqual("assistant", messages[1].role)
-        self.assertEqual("백엔드 진로에 맞춰 두 과목을 짜봤어요.", messages[1].content)
+        # 저장되는 내용도 화면에 나간 응답과 같아야 한다 (목록 포함).
+        self.assertEqual(result["reply"], messages[1].content)
 
 
 class SessionPersistenceTest(unittest.TestCase):
