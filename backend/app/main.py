@@ -87,10 +87,42 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRespons
     )
 
 
+def _warn_if_hierarchy_sparse() -> None:
+    """학과 수가 비정상적으로 적으면 기동 로그로 경고한다.
+
+    새 PC에서 클론한 뒤 시드를 건너뛰거나 .env가 로컬 DB를 가리키면, 회원가입
+    get-or-create가 만든 학과 한두 개만 남아 "자동완성에 의생명융합공학부만
+    나온다" 같은 증상이 된다. 원인을 몇 초 만에 알 수 있게 기동 시점에 짚는다.
+    부산대 정식 편제는 학과 120여 개다.
+    """
+    import logging
+    from sqlalchemy import text as sql_text
+
+    from app.core.db import SessionLocal
+
+    try:
+        db = SessionLocal()
+        try:
+            count = db.execute(sql_text("select count(*) from departments")).scalar() or 0
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001 - 진단용이라 기동을 막지 않는다
+        logging.getLogger(__name__).warning("학과 수 점검 실패 (DB 연결 확인 필요): %s", exc)
+        return
+    if count < 50:
+        logging.getLogger(__name__).warning(
+            "departments가 %d건뿐입니다 — 학과 자동완성이 반쪽이 됩니다. "
+            "팀 공유 DB(.env DATABASE_URL)를 쓰거나, 로컬 DB라면 "
+            "`python -m scripts.seed_school_hierarchy_full`을 실행하세요.",
+            count,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.start()
     langfuse_startup_log()
+    _warn_if_hierarchy_sparse()
     yield
     scheduler.shutdown()
     # 아직 안 보낸 trace를 배출한다. Langfuse가 꺼져 있으면 no-op.

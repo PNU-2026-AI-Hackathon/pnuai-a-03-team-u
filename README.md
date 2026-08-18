@@ -238,7 +238,7 @@ $ python3 -m venv .venv && source .venv/bin/activate
 $ pip install -r requirements.txt
 $ cp .env.example .env            # DATABASE_URL, OPENAI_API_KEY, JWT_SECRET_KEY 등 입력
 $ alembic upgrade head            # DB 스키마 생성
-$ python scripts/seed_school_hierarchy.py   # 단과대·학과·전공 시드
+$ python -m scripts.seed_school_hierarchy_full   # 단과대·학과·전공 전체 시드 (121개 학과, 재실행 안전)
 $ uvicorn app.main:app --reload --port 8000
 ```
 
