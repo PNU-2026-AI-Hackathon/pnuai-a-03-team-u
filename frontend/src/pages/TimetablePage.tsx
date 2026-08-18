@@ -527,7 +527,17 @@ export function TimetablePage() {
       // 화면에 그릴 수 있는 분반이 실린 제안만 승인 카드로 띄운다.
       const next = response.schedules.find((item) => item.offerings.length > 0) ?? null;
       setSuggestion(next);
-      setSelectedOfferingIds(new Set(next?.offerings.map((o) => o.offering_id) ?? []));
+      // 추천 조합에는 이미 담아둔 분반도 포함돼 있다(그래야 최종 시간표가 온전히
+      // 보인다). 기본 체크는 **새로 추가되는 것만** — 이미 담긴 걸 같이 세면
+      // "N개 담기" 숫자가 실제로 추가되는 개수와 어긋난다.
+      const alreadyPlaced = new Set(next?.locked_offering_ids ?? []);
+      setSelectedOfferingIds(
+        new Set(
+          (next?.offerings ?? [])
+            .map((o) => o.offering_id)
+            .filter((id) => !alreadyPlaced.has(id)),
+        ),
+      );
       setApplyResult(null);
       setApplyError("");
     } catch (caught) {
@@ -1220,25 +1230,31 @@ export function TimetablePage() {
                 {suggestion.rationale ? <p>{suggestion.rationale}</p> : null}
               </div>
               <ul>
-                {suggestion.offerings.map((offering) => (
-                  <li key={offering.offering_id}>
-                    <label className="timetable-proposal-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedOfferingIds.has(offering.offering_id)}
-                        disabled={isApplying}
-                        onChange={() => toggleOffering(offering.offering_id)}
-                      />
-                      <span>
-                        <strong>
-                          {offering.course_name ?? `분반 ${offering.offering_id}`}
-                          {offering.section ? ` (${offering.section})` : ""}
-                        </strong>
-                        <small>{offeringSummary(offering)}</small>
-                      </span>
-                    </label>
-                  </li>
-                ))}
+                {suggestion.offerings.map((offering) => {
+                  const alreadyPlaced = suggestion.locked_offering_ids.includes(
+                    offering.offering_id,
+                  );
+                  return (
+                    <li key={offering.offering_id}>
+                      <label className="timetable-proposal-row">
+                        <input
+                          type="checkbox"
+                          checked={selectedOfferingIds.has(offering.offering_id)}
+                          disabled={isApplying || alreadyPlaced}
+                          onChange={() => toggleOffering(offering.offering_id)}
+                        />
+                        <span>
+                          <strong>
+                            {offering.course_name ?? `분반 ${offering.offering_id}`}
+                            {offering.section ? ` (${offering.section})` : ""}
+                            {alreadyPlaced ? <em> · 이미 담김</em> : null}
+                          </strong>
+                          <small>{offeringSummary(offering)}</small>
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
               </ul>
               {applyError ? (
                 <p className="timetable-proposal-error" role="alert">{applyError}</p>
