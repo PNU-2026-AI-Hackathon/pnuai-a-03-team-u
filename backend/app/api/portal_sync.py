@@ -143,7 +143,7 @@ def sync_portal_data(
             expected_info = extract_graduation_expected_info(page)
             current_year, current_semester = _current_academic_term()
             consultation_status = fetch_current_term_consultation_status(
-                page, current_year, current_semester
+                page, current_year, current_semester, user_id=current_user.id
             )
             # my.pusan.ac.kr는 별도 서브도메인이라 SSO 세션 공유 여부를 검증할 필요가
             # 있다. 이수 프로그램 크롤이 실패해도(로그인 튕김·페이지 구조 변경) 전체

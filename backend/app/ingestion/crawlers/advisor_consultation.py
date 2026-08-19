@@ -39,52 +39,100 @@ def _row_to_academic_term(date_str: str) -> tuple[int, int] | None:
     return year, 2
 
 
-def _fetch_consultation_table(page: Page) -> tuple[list[str], list[list[str]]] | None:
+def _find_consultation_table(tables: list[list[list[str]]]) -> tuple[list[str], list[list[str]]] | None:
+    """여러 표 중 기대한 컬럼을 가진 표를 찾는다. 없으면 None.
+
+    예전엔 `tables[0]`만 봤다. `extract_tables`는 `'main table, .content table, table'`로
+    **페이지의 모든 표**를 문서 순서대로 돌려주므로, 검색 필터나 레이아웃용 표가 앞에
+    하나 끼면 상담내역 표가 있어도 못 찾는다. 재시도로는 절대 안 고쳐지는 실패 유형이고,
+    원인 미상 간헐 실패의 유력 가설 중 하나다(독립 리뷰 지적).
+    """
+    for table in tables:
+        if not table:
+            continue
+        header = table[0]
+        if _DATE_COLUMN in header and _STATUS_COLUMN in header:
+            return header, table[1:]
+    return None
+
+
+def _describe_tables(tables: list[list[list[str]]]) -> str:
+    """로그용 표 구조 요약. 컬럼명과 행 수만 — 상담내용·교수명 같은 값은 넣지 않는다
+    (CLAUDE.md 개인정보 원칙). 헤더와 행 수는 PII가 아니고, 그게 있어야 나중에
+    "표가 왜 안 잡혔는지"를 판별할 수 있다."""
+    if not tables:
+        return "표 없음"
+    return " | ".join(
+        f"[{i}] 행{len(tbl)} 헤더={tbl[0] if tbl else []}" for i, tbl in enumerate(tables[:4])
+    )
+
+
+def _fetch_consultation_table(
+    page: Page, user_id: int | None = None
+) -> tuple[list[str], list[list[str]]] | None:
     """상담내역 표를 (헤더, 데이터행)으로 읽는다. 못 읽으면 None.
 
     **"표가 안 그려졌다"와 "신청 내역이 없다"를 구분한다.** 예전엔 둘 다 `None`이라
     호출부가 실패를 알 방법이 없었다 — 상담을 완료한 학생인데도 조용히 갱신이 안 됐다.
 
-    - 표 자체가 없거나 기대한 컬럼이 없으면 **크롤 실패**로 보고 한 번 더 시도한다.
+    - 기대한 컬럼을 가진 표를 못 찾으면 **크롤 실패**로 보고 한 번 더 시도한다.
     - 헤더는 정상인데 행이 0이면 **정상적인 "신청 내역 없음"** 이므로 재시도하지 않는다
       (상담을 한 번도 신청 안 한 학생이 흔하고, 그 경우 재시도는 순수 낭비다).
-      다만 관측된 간헐 실패가 이 형태였을 가능성도 있어서 info 로그를 남긴다.
+      다만 관측된 간헐 실패가 이 형태였을 가능성이 남아 있어 warning으로 남긴다.
+
+    네비게이션/추출 예외는 **이번 시도의 실패로만 처리한다.** 감싸지 않으면 재시도가
+    portal-sync 전체를 502로 만든다 — 원래는 상담 여부만 갱신 안 되고 학적부·성적·
+    졸업요건은 정상 저장되던 상황이라, 문제를 보이게 만들려다 blast radius를 키우게 된다
+    (독립 리뷰 지적). 재시도는 정의상 "페이지가 이상한 상태"에서만 도는데, `goto_menu`는
+    그 상태에서 `selectMenu` 미정의로 터질 수 있다(`pnu_session` 참고).
     """
+    scope = f"user_id={user_id}" if user_id is not None else "user_id=?"
     for attempt in range(1, _FETCH_ATTEMPTS + 1):
-        goto_menu(page, menu_codes.ADVISOR_CONSULTATION)
-        tables = extract_tables(page)
-        if tables and tables[0]:
-            header = tables[0][0]
-            if _DATE_COLUMN in header and _STATUS_COLUMN in header:
-                rows = tables[0][1:]
+        tables: list[list[list[str]]] = []
+        try:
+            goto_menu(page, menu_codes.ADVISOR_CONSULTATION)
+            tables = extract_tables(page)
+        except Exception as exc:  # noqa: BLE001 - 이번 시도만 실패로 처리 (위 docstring 참고)
+            _logger.warning(
+                "지도교수 상담내역 조회 중 예외 (%s, 시도 %d/%d): %s",
+                scope, attempt, _FETCH_ATTEMPTS, exc,
+            )
+        else:
+            found = _find_consultation_table(tables)
+            if found is not None:
+                header, rows = found
                 if not rows:
-                    _logger.info(
-                        "지도교수 상담내역 표에 데이터 행이 없다 (헤더는 정상). "
+                    _logger.warning(
+                        "지도교수 상담내역 표에 데이터 행이 없다 (%s, 헤더는 정상). "
                         "신청 내역이 없는 게 정상이지만, 간헐적 크롤 실패도 이 형태로 "
-                        "보일 수 있어 남긴다."
+                        "보일 수 있다. 표 구조: %s",
+                        scope, _describe_tables(tables),
                     )
                 return header, rows
-        if attempt < _FETCH_ATTEMPTS:
             _logger.warning(
-                "지도교수 상담내역 표를 읽지 못했다 (시도 %d/%d, 표 %d개). 재시도한다.",
-                attempt, _FETCH_ATTEMPTS, len(tables or []),
+                "지도교수 상담내역 표를 찾지 못했다 (%s, 시도 %d/%d). 표 구조: %s",
+                scope, attempt, _FETCH_ATTEMPTS, _describe_tables(tables),
             )
+
+        if attempt < _FETCH_ATTEMPTS:
             page.wait_for_timeout(_RETRY_WAIT_MS)
 
     _logger.warning(
-        "지도교수 상담내역 표를 %d회 시도했지만 읽지 못했다 — 이번 동기화에서는 "
-        "상담 여부를 갱신하지 않는다(기존 값 유지).", _FETCH_ATTEMPTS,
+        "지도교수 상담내역 표를 %d회 시도했지만 읽지 못했다 (%s) — 이번 동기화에서는 "
+        "상담 여부를 갱신하지 않는다(기존 값 유지).", _FETCH_ATTEMPTS, scope,
     )
     return None
 
 
-def fetch_current_term_consultation_status(page: Page, year: int, semester: int) -> str | None:
+def fetch_current_term_consultation_status(
+    page: Page, year: int, semester: int, user_id: int | None = None
+) -> str | None:
     """지정한 학년도/학기에 해당하는 상담 신청의 "상태"를 가져온다.
 
     같은 학기에 여러 건이 있으면 상담희망일시가 가장 최근인 것을 쓴다.
     해당 학기 신청 내역이 없으면 None.
     """
-    fetched = _fetch_consultation_table(page)
+    fetched = _fetch_consultation_table(page, user_id=user_id)
     if fetched is None:
         return None
     header, rows = fetched
