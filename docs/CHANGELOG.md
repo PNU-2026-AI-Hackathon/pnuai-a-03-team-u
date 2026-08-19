@@ -23,7 +23,7 @@
   `c3d4e5f6a7b8_unique_graduation_requirement_scope.py`가 2026-07-09 PR #51의
   `c3d4e5f6a7b8_add_department_name_and_plan_item_snapshots.py`와 **같은 id**를 썼다.
   같은 id를 가진 파일이 둘이 되자 alembic이 한 노드에 서로 다른 부모(`b2c3d4e5f6a7`,
-  `125c05c5df60`)를 붙였고, 19개 리비전짜리 고리가 생겼다.
+  `125c05c5df60`)를 붙였고, 고리가 생겼다(`CycleDetected`가 23개 리비전을 지목).
 - **왜 3일간 안 보였나**: 마이그레이션을 실행할 때만 터진다. import도 되고, 테스트도
   통과하고, 앱도 뜬다.
 - **고침**: 새 id(`883cd0847a1e`) 발급 + 갈래를 만들지 않도록 당시 head였던
@@ -33,9 +33,16 @@
   없이 수동 적용된 상태. 마이그레이션 본문이 `CREATE UNIQUE INDEX IF NOT EXISTS`라
   다시 돌려도 no-op이다.
 - **로컬 리허설 2종 통과**(CLAUDE.md 원칙):
-  1. 빈 DB에서 `upgrade head` 완주 → 29테이블 + 인덱스 생성
+  1. 빈 DB에서 `upgrade head` 완주 → 29테이블 + 인덱스 생성.
+     단 **`CREATE EXTENSION vector`를 먼저 해줘야 한다** — init 리비전이 `VECTOR(1536)`
+     컬럼을 쓰는데 그 확장을 만드는 마이그레이션이 레포에 없다(선행 결함, 이 PR 범위 밖).
+     진짜 빈 DB에서는 `type "vector" does not exist`로 죽는다.
   2. **Supabase 상태 시뮬레이션**(인덱스는 있고 version만 `8f3c21b47ae0`) → 마이그레이션이
      no-op으로 지나가고 head로 stamp됨
+- **CI 워크플로 추가**(`.github/workflows/migration-graph.yml`): 마이그레이션 변경 시
+  그래프 정합성을 검사한다. 기존 워크플로 3개 중 어느 것도 `backend/migrations/**`를
+  트리거 path로 갖고 있지 않아, 테스트만 넣으면 **같은 사고가 또 나도 CI는 통과**한다
+  (독립 리뷰에서 지적받아 추가).
 - **회귀 테스트 추가**(`backend/tests/test_migrations.py`): 중복 revision id 검사 +
   그래프 빌드/단일 head 검사. 수정 전 상태에서 두 테스트 모두 실패하는 것까지 확인했다.
   새 마이그레이션은 id를 손으로 짓지 말고 `alembic revision -m "..."`이 발급하게 할 것.

@@ -3,7 +3,7 @@
 ⚠️ 이 파일은 원래 revision id가 `c3d4e5f6a7b8`이었는데, 그건 2026-07-09
 `c3d4e5f6a7b8_add_department_name_and_plan_item_snapshots.py`(PR #51)가 이미 쓰던
 id였다. 같은 id를 가진 파일이 둘이 되면서 alembic이 한 노드에 서로 다른 부모를 붙여
-**리비전 그래프에 19개짜리 사이클**이 생겼고, `alembic current`/`heads`/`upgrade`가
+**리비전 그래프에 사이클**이 생겼고(alembic이 23개 리비전을 지목), `alembic current`/`heads`/`upgrade`가
 전부 `CycleDetected`로 죽었다(2026-08-19 발견). id를 새로 발급하고, 갈래를 만들지
 않도록 당시 head였던 `8f3c21b47ae0` 뒤로 붙였다.
 
