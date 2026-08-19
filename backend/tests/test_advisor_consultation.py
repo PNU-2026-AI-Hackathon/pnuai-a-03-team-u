@@ -21,17 +21,20 @@ _ROW = ["진로 및 취업", "대면상담", "김태운", "문의", "2026-05-15"
 class _FakePage:
     """extract_tables가 돌려줄 값을 시도 횟수별로 주입한다."""
 
-    def __init__(self, per_attempt, raise_on_attempts=()):
+    def __init__(self, per_attempt, raise_on_attempts=(), wait_raises=False):
         self._per_attempt = per_attempt
         # 이 시도 번호(1-indexed)에서 goto_menu가 터진다. 재시도는 정의상 "페이지가
         # 이상한 상태"에서만 도는데, goto_menu는 그 상태에서 selectMenu 미정의로
         # ReferenceError를 낸다 — 그게 portal-sync 전체를 502로 만들면 안 된다.
         self._raise_on_attempts = set(raise_on_attempts)
+        self.wait_raises = wait_raises
         self.navigations = 0
         self.waits = 0
 
     def wait_for_timeout(self, ms):
         self.waits += 1
+        if self.wait_raises:
+            raise RuntimeError("Target page, context or browser has been closed")
 
     def tables_for_current_attempt(self):
         i = min(self.navigations - 1, len(self._per_attempt) - 1)
@@ -39,8 +42,10 @@ class _FakePage:
 
 
 class _Harness(unittest.TestCase):
-    def run_fetch(self, per_attempt, year=2026, semester=1, raise_on_attempts=()):
-        page = _FakePage(per_attempt, raise_on_attempts=raise_on_attempts)
+    def run_fetch(self, per_attempt, year=2026, semester=1, raise_on_attempts=(),
+                  wait_raises=False):
+        page = _FakePage(per_attempt, raise_on_attempts=raise_on_attempts,
+                         wait_raises=wait_raises)
 
         def _goto(p, menu_cd):
             p.navigations += 1
@@ -116,6 +121,21 @@ class ConsultationFetchTest(_Harness):
         self.assertEqual("완료", status)
         self.assertEqual(1, page.navigations)   # 재시도 없이 첫 시도에 찾는다
 
+    def test_retry_wait_exception_does_not_escape(self):
+        """재시도 **대기** 중 예외도 감싸야 한다.
+
+        1차 수정에서 `goto_menu`만 감쌌더니 `wait_for_timeout`이 try 밖에 남아,
+        페이지가 닫힌 상태(`TargetClosedError`)에서 그대로 새어나가 portal-sync가
+        502가 되는 경로가 남았다(2차 리뷰에서 재현).
+        """
+        status, page = self.run_fetch([[], []], raise_on_attempts=(1,), wait_raises=True)
+        self.assertIsNone(status)   # 예외가 밖으로 안 나간다
+
+    def test_table_with_rows_wins_over_header_only_match(self):
+        """헤더/바디가 다른 표로 갈린 레이아웃에서 행 0짜리에 멈추면 안 된다."""
+        status, page = self.run_fetch([[[_HEADER], [_HEADER, _ROW]]])
+        self.assertEqual("완료", status)
+
     def test_latest_row_wins_within_same_term(self):
         older = list(_ROW); older[5], older[6] = "2026-03-02 10:00:00", "신청"
         status, _ = self.run_fetch([[[_HEADER, older, _ROW]]])
@@ -124,3 +144,27 @@ class ConsultationFetchTest(_Harness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DescribeTablesPrivacyTest(unittest.TestCase):
+    """로그 요약에 값이 새면 안 된다 (CLAUDE.md 개인정보 원칙 2).
+
+    처음엔 첫 행을 통째로 찍었는데, `extract_tables`는 th/td를 구분하지 않아
+    "첫 행 = 헤더"라는 보장이 없다. 학적부처럼 첫 행이 데이터인 표가 섞이면
+    학번·성명이 매번 로그에 남는다 — 실제로 재현됐다.
+    """
+
+    def test_values_are_masked_but_known_columns_kept(self):
+        학적부 = [["학번", "202055512", "성명", "홍길동"]]
+        상담 = [_HEADER, _ROW]
+        out = mod._describe_tables([학적부, 상담])
+
+        for leaked in ("202055512", "홍길동", "김태운", "문의", "2026-05-18 18:00:00"):
+            self.assertNotIn(leaked, out, msg=f"값이 로그에 샜다: {leaked!r} in {out!r}")
+        # 진단에 필요한 것은 남는다
+        self.assertIn("상담희망일시", out)
+        self.assertIn("상태", out)
+        self.assertIn("행2", out)
+
+    def test_empty_tables(self):
+        self.assertEqual("표 없음", mod._describe_tables([]))

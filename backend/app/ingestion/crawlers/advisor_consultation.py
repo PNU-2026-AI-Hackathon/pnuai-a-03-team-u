@@ -47,23 +47,48 @@ def _find_consultation_table(tables: list[list[list[str]]]) -> tuple[list[str], 
     하나 끼면 상담내역 표가 있어도 못 찾는다. 재시도로는 절대 안 고쳐지는 실패 유형이고,
     원인 미상 간헐 실패의 유력 가설 중 하나다(독립 리뷰 지적).
     """
+    fallback: tuple[list[str], list[list[str]]] | None = None
     for table in tables:
         if not table:
             continue
         header = table[0]
         if _DATE_COLUMN in header and _STATUS_COLUMN in header:
-            return header, table[1:]
-    return None
+            if len(table) > 1:
+                return header, table[1:]
+            # 헤더/바디가 다른 표로 갈린 레이아웃이면 행 있는 표가 뒤에 올 수 있다.
+            # 행 0짜리에서 멈추지 말고 계속 보되, 끝까지 없으면 이걸 쓴다.
+            fallback = fallback or (header, [])
+    return fallback
+
+
+# 로그에 남겨도 되는 셀 값 = **우리가 아는 컬럼명**뿐. 그 외는 전부 값으로 취급해 가린다.
+_KNOWN_COLUMNS = frozenset({
+    "상담구분", "상담형태", "교수", "상담내용", "학생신청일자", _DATE_COLUMN, _STATUS_COLUMN,
+    "No", "번호", "학년도", "학기",
+})
 
 
 def _describe_tables(tables: list[list[list[str]]]) -> str:
-    """로그용 표 구조 요약. 컬럼명과 행 수만 — 상담내용·교수명 같은 값은 넣지 않는다
-    (CLAUDE.md 개인정보 원칙). 헤더와 행 수는 PII가 아니고, 그게 있어야 나중에
-    "표가 왜 안 잡혔는지"를 판별할 수 있다."""
+    """로그용 표 구조 요약. **아는 컬럼명만 그대로, 나머지는 가린다.**
+
+    처음엔 첫 행을 통째로 찍었는데, 그건 "첫 행 = 헤더"라는 보장이 있을 때만 안전하다.
+    `extract_tables`는 `th`/`td`를 구분하지 않고 `tr` 순서대로만 뽑고, 이 레포에는 이미
+    첫 행이 데이터인 표가 있다(`table_to_label_value_pairs`가 그런 가로형 정보 테이블용
+    으로 존재하고 학적부가 그 형태다). 상담 페이지에 학생 기본정보 블록이 같이 있으면
+    **학번·성명이 매번 로그에 남는다.** 실제로 재현됐다 (독립 2차 리뷰 지적,
+    CLAUDE.md 개인정보 원칙 2).
+
+    진단에 필요한 건 "기대한 컬럼이 있었나"이지 값이 아니다.
+    """
     if not tables:
         return "표 없음"
+
+    def _cells(row: list[str]) -> str:
+        return ",".join(c if c in _KNOWN_COLUMNS else "·" for c in row[:12])
+
     return " | ".join(
-        f"[{i}] 행{len(tbl)} 헤더={tbl[0] if tbl else []}" for i, tbl in enumerate(tables[:4])
+        f"[{i}] 행{len(tbl)}x열{len(tbl[0]) if tbl else 0} 첫행={_cells(tbl[0]) if tbl else ''}"
+        for i, tbl in enumerate(tables[:4])
     )
 
 
@@ -102,11 +127,12 @@ def _fetch_consultation_table(
             if found is not None:
                 header, rows = found
                 if not rows:
+                    # 이 경로는 "상담 신청을 한 번도 안 한 학생"이라는 흔한 정상 케이스다.
+                    # 표 덤프까지 붙이면 매 동기화마다 남는 상시 로그가 된다 — 개수만.
                     _logger.warning(
-                        "지도교수 상담내역 표에 데이터 행이 없다 (%s, 헤더는 정상). "
-                        "신청 내역이 없는 게 정상이지만, 간헐적 크롤 실패도 이 형태로 "
-                        "보일 수 있다. 표 구조: %s",
-                        scope, _describe_tables(tables),
+                        "지도교수 상담내역 표에 데이터 행이 없다 (%s, 헤더는 정상, 표 %d개). "
+                        "신청 내역이 없는 게 정상이지만, 간헐적 크롤 실패도 이 형태로 보일 수 있다.",
+                        scope, len(tables),
                     )
                 return header, rows
             _logger.warning(
@@ -115,7 +141,13 @@ def _fetch_consultation_table(
             )
 
         if attempt < _FETCH_ATTEMPTS:
-            page.wait_for_timeout(_RETRY_WAIT_MS)
+            try:
+                page.wait_for_timeout(_RETRY_WAIT_MS)
+            except Exception as exc:  # noqa: BLE001 - 페이지가 닫혔으면 여기서도 터진다.
+                # 이것도 감싸야 한다. 안 그러면 1차 리뷰가 지적한 502 승격 경로가
+                # 좁아지기만 하고 그대로 남는다(2차 리뷰에서 재현됨).
+                _logger.warning("지도교수 상담내역 재시도 대기 중 예외 (%s): %s", scope, exc)
+                break
 
     _logger.warning(
         "지도교수 상담내역 표를 %d회 시도했지만 읽지 못했다 (%s) — 이번 동기화에서는 "
