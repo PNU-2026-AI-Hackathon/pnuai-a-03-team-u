@@ -499,10 +499,10 @@ class TimetableChatFollowupsTest(unittest.TestCase):
     def test_exact_budget_fit_is_allowed(self):
         """남은 예산 == 후보 학점이면 담을 수 있다.
 
-        (참고: `remaining_budget < cheapest` 판정을 `<=`로 바꾸는 변이는 이 테스트로
-        안 잡힌다. 그 검사는 `if not combos:` 안에 있어서, 딱 맞는 조합이 실제로
-        만들어지면 도달하지 않기 때문이다. 그래도 "딱 맞으면 담긴다"는 동작 자체는
-        고정할 값어치가 있다.)
+        (이 테스트로는 `<`/`<=` 변이를 못 잡는다 — 딱 맞는 조합이 실제로 만들어지면
+        `if not combos:` 안으로 안 들어가기 때문이다. **다만 그 분기 자체는 도달 가능하다**
+        — 처음엔 "도달 불가"라고 적었는데 독립 리뷰가 반례를 실증했다.
+        `test_budget_boundary_with_unaffordable_required_course`가 그 경로를 덮는다.)
         """
         db = _make_db()
         user = _make_student(db)   # 학점 상한 19
@@ -524,6 +524,63 @@ class TimetableChatFollowupsTest(unittest.TestCase):
 
         self.assertTrue(result["ok"], msg=f"경계에서 오거부: {result.get('reason')}")
         self.assertIn(490, result["schedules"][0]["offering_ids"])
+
+    def test_budget_boundary_with_unaffordable_required_course(self):
+        """남은 예산 == 최소 후보 학점인데 조합이 안 되는 경로.
+
+        필수 지정 과목이 예산을 넘으면 조합이 비고, 그때 `remaining_budget < cheapest`
+        분기에 **실제로 도달한다**(리뷰가 실증한 반례). `<=`로 바뀌면 "1학점 남는데
+        가장 작은 과목이 1학점이라 무엇도 못 담는다"는 **자기모순 힌트**가 나간다 —
+        1학점짜리는 담을 수 있는데도.
+        """
+        db = _make_db()
+        user = _make_student(db)   # 상한 19
+        for i in range(6):
+            _add_course_with_offering(
+                db, course_id=1 + i, offering_id=400 + i, name=f"담은{i}", credits=3.0,
+                day="월화수목금토"[i], start="09:00", end="10:15",
+            )
+        _add_course_with_offering(db, course_id=90, offering_id=490, name="비싼필수",
+                                  credits=3.0, day="일", start="09:00", end="10:15")
+        _add_course_with_offering(db, course_id=91, offering_id=491, name="싼후보",
+                                  credits=1.0, day="일", start="11:00", end="11:45")
+        db.add(CoursePlan(id=9, user_id=user.id, year="2026", semester="2학기"))
+        for i in range(6):
+            db.add(CoursePlanItem(plan_id=9, offering_id=400 + i, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=9)
+
+        result = ctx.build_timetable(
+            offering_ids=[490, 491], must_include_offering_ids=[490],
+        )
+
+        self.assertFalse(result["ok"])
+        # 예산 소진이 아니다 — 1학점짜리는 담을 수 있고, 못 담는 건 필수 지정 때문이다.
+        self.assertEqual("no_feasible_combination", result["reason"])
+
+    def test_must_include_violating_time_constraint_is_rejected(self):
+        """시간 제약을 어기는 분반을 필수 지정하면 거절해야 한다.
+
+        `locked_ids`를 차집합에서 빼면서 정상 거절 경로가 뚫리지 않았는지 고정한다.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=701, name="월요과목",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        _add_course_with_offering(db, course_id=2, offering_id=702, name="화요과목",
+                                  credits=3.0, day="화", start="09:00", end="10:15")
+        db.flush()
+        # 사용자가 "화요일만" 이라고 요청한 상황
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기",
+                                    time_constraint={"days": {"화"}})
+
+        result = ctx.build_timetable(
+            offering_ids=[701, 702], must_include_offering_ids=[701],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("must_include_unavailable", result["reason"])
+        self.assertIn("요일", result["unavailable"][0]["reason"])
 
     def test_time_conflict_is_not_reported_as_budget_exhaustion(self):
         """예산은 남는데 시간이 겹쳐 못 만드는 경우 — 반대 방향 오답도 막는다."""
