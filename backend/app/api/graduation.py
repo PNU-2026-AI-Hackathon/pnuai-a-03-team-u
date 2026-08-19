@@ -11,10 +11,15 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, model_validator
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.domains.academics.models import (
+    StudentGraduationCategory,
+    StudentGraduationRequirement,
+)
 from app.domains.academics.graduation_progress import (
     CategoryProgress,
     ProgramProgress,
@@ -188,3 +193,96 @@ def delete_graduation_override(
 ):
     current_user.graduation_override = None
     db.commit()
+
+
+# --- 학교 공식 판정 스냅샷 -------------------------------------------------
+#
+# 위의 `GET /me/graduation`은 **우리 엔진의 추정**이다 — 우리가 수집한 학과 기준학점
+# (`graduation_requirements`)과 성적표 카테고리 합계를 대조한 결과. 아래는 **학교가
+# 직접 판정한 값**(One-Stop 졸업예정정보)이라 성격이 다르다.
+#
+# 둘을 한 응답에 섞지 않는 이유: 어긋날 때 어느 쪽이 학교 판정인지 구분이 안 되면
+# 사용자가 잘못된 쪽을 믿는다. 어긋나면 **학교 쪽이 맞다.**
+
+
+class OfficialCategoryResponse(BaseModel):
+    program_type: str
+    category: str
+    required_credits: float | None
+    earned_credits: float | None
+    registered_credits: float | None
+    expected_credits: float | None
+    satisfied: bool | None
+    failure_reason: str | None
+
+
+class OfficialRequirementResponse(BaseModel):
+    program_type: str
+    requirement_name: str
+    detail_name: str
+    pass_type: str | None
+    acquired_date: str | None
+    satisfied: bool | None
+    note: str | None
+
+
+class OfficialGraduationStatusResponse(BaseModel):
+    """학교 공식 판정 스냅샷. 한 번도 동기화 안 했으면 전부 빈 배열 + synced_at=None."""
+
+    user_id: int
+    synced_at: str | None
+    categories: list[OfficialCategoryResponse]
+    requirements: list[OfficialRequirementResponse]
+
+
+@router.get("/official", response_model=OfficialGraduationStatusResponse)
+def get_official_graduation_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OfficialGraduationStatusResponse:
+    """One-Stop 졸업예정정보에서 가져온 **학교 공식** 졸업 판정.
+
+    포털 동기화(`POST /me/portal-sync`) 시점의 스냅샷이라 실시간이 아니다 —
+    `synced_at`으로 언제 기준인지 알려준다.
+    """
+    categories = db.scalars(
+        select(StudentGraduationCategory)
+        .where(StudentGraduationCategory.user_id == current_user.id)
+        .order_by(StudentGraduationCategory.program_type, StudentGraduationCategory.id)
+    ).all()
+    requirements = db.scalars(
+        select(StudentGraduationRequirement)
+        .where(StudentGraduationRequirement.user_id == current_user.id)
+        .order_by(StudentGraduationRequirement.program_type, StudentGraduationRequirement.id)
+    ).all()
+
+    stamps = [row.synced_at for row in (*categories, *requirements) if row.synced_at]
+    return OfficialGraduationStatusResponse(
+        user_id=current_user.id,
+        synced_at=max(stamps).isoformat() if stamps else None,
+        categories=[
+            OfficialCategoryResponse(
+                program_type=row.program_type,
+                category=row.category,
+                required_credits=_decimal_to_float(row.required_credits),
+                earned_credits=_decimal_to_float(row.earned_credits),
+                registered_credits=_decimal_to_float(row.registered_credits),
+                expected_credits=_decimal_to_float(row.expected_credits),
+                satisfied=row.satisfied,
+                failure_reason=row.failure_reason,
+            )
+            for row in categories
+        ],
+        requirements=[
+            OfficialRequirementResponse(
+                program_type=row.program_type,
+                requirement_name=row.requirement_name,
+                detail_name=row.detail_name,
+                pass_type=row.pass_type,
+                acquired_date=row.acquired_date,
+                satisfied=row.satisfied,
+                note=row.note,
+            )
+            for row in requirements
+        ],
+    )

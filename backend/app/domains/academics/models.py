@@ -1,4 +1,14 @@
-from sqlalchemy import JSON, ForeignKey, Integer, Numeric, String, UniqueConstraint
+import datetime
+
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -160,3 +170,88 @@ class ProgramCourse(TimestampMixin, Base):
     # 프로그램 안에서의 이수구분(전선/일선 등). 원 학과에서의 category와 다를 수 있다.
     category: Mapped[str | None] = mapped_column(String(50))
     curriculum_year: Mapped[str | None] = mapped_column(String(10))
+
+
+class StudentGraduationCategory(TimestampMixin, Base):
+    """One-Stop 졸업예정정보의 **학교 공식** 이수구분별 판정 스냅샷.
+
+    `graduation_requirements`(학과별 기준학점 원문)와 혼동하면 안 된다. 그건 "학과 규정"
+    이고 이건 **이 학생에 대한 학교의 판정 결과**다. 우리 엔진이 성적 합계로 추정하는
+    `/me/graduation`과 달리 학교가 직접 계산한 값이라, 어긋나면 이쪽이 맞다.
+
+    학교 원문(menuCD 000000000000089, 표 1 `subject_category_completion`) 예:
+
+        학적신청구분  사정구분      기준학점  취득학점  이수여부  졸업불가사유
+        주전공        전공필수      33        26        N         전공필수학점미달
+        주전공        총이수학점    133       87        N         총이수학점 학점미달
+
+    `category`에는 이수구분(전공필수/교양선택…)뿐 아니라 총이수학점·졸업기준평점평균·
+    최소전공인정학점 같은 **집계 항목도 같은 표에 섞여 온다.** 원문 구조가 그러하므로
+    분리하지 않고 그대로 담는다 — 가공하면 학교 판정과 대조가 안 된다.
+    """
+
+    __tablename__ = "student_graduation_categories"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "program_type", "category",
+            name="uq_student_graduation_categories_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # 학적신청구분 원문 (주전공/복수전공/부전공/연합전공).
+    program_type: Mapped[str] = mapped_column(String(30))
+    # 사정구분 원문 (전공필수/교양선택/총이수학점/졸업기준평점평균 …).
+    category: Mapped[str] = mapped_column(String(50))
+    required_credits: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    earned_credits: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    registered_credits: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    expected_credits: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    # 이수여부 Y/N을 그대로 두지 않고 bool로. 원문에 Y/N 외 값이 오면 None.
+    satisfied: Mapped[bool | None] = mapped_column()
+    # 졸업불가사유 원문 ("전공필수학점미달" 등). 없으면 빈 문자열이 아니라 None.
+    failure_reason: Mapped[str | None] = mapped_column(String(200))
+    synced_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+
+
+class StudentGraduationRequirement(TimestampMixin, Base):
+    """One-Stop 졸업예정정보의 **학교 공식** 졸업요건(자격) 판정 스냅샷.
+
+    표준외국어능력시험·TOPCIT·졸업과제처럼 **학점이 아닌 요건**이다. 원래 이걸 못
+    가져온다고 알고 있었는데(2026-08-16), 실은 크롤링은 되고 있었고 `portal_sync`가
+    버리고 있었다.
+
+    학교 원문(menuCD 000000000000089, 표 6 `graduation_requirement_completion`) 예:
+
+        학적신청구분  졸업요건명           상세졸업요건명  합격구분  취득일자  이수여부
+        주전공        표준외국어능력시험                                     N
+        주전공        TOPCIT                                                 N
+        주전공        졸업과제                                               N
+
+    어학 **점수**의 주된 출처는 my.pusan(`user_language_scores`)이다. 다만 `note`가
+    원문의 `학생이수정보_비고_예외사항_상세내역_점수` 컬럼에서 오므로 **점수가 실릴 수
+    있는 자리**다. 이 테이블의 역할은 "학교가 그 요건을 충족으로 봤는가"이고, 점수
+    조회는 `user_language_scores`를 쓰는 게 맞다.
+    """
+
+    __tablename__ = "student_graduation_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "program_type", "requirement_name", "detail_name",
+            name="uq_student_graduation_requirements_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    program_type: Mapped[str] = mapped_column(String(30))
+    requirement_name: Mapped[str] = mapped_column(String(100))
+    # 상세졸업요건명. 원문에서 비어 있는 경우가 많아 빈 문자열로 정규화한다 —
+    # UNIQUE 키에 들어가는데 NULL이면 Postgres가 서로 다른 행으로 본다.
+    detail_name: Mapped[str] = mapped_column(String(200), default="")
+    pass_type: Mapped[str | None] = mapped_column(String(50))
+    acquired_date: Mapped[str | None] = mapped_column(String(30))
+    satisfied: Mapped[bool | None] = mapped_column()
+    note: Mapped[str | None] = mapped_column(String(500))
+    synced_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
