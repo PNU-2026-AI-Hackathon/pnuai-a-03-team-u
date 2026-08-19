@@ -18,6 +18,8 @@ export type PortalSyncResult = {
    * 안 들어온 상태가 된다.
    */
   my_pusan_sso_ok: boolean;
+  /** sso_ok=false일 때 왜 실패했는지(서버가 채운다). 없을 수도 있다(구버전 백엔드). */
+  my_pusan_error?: string | null;
   activities_created: number;
   activities_updated: number;
   certifications_created: number;
@@ -38,6 +40,17 @@ export const MY_PUSAN_SYNC_FAILED_MESSAGE =
  */
 export function isMyPusanSyncFailed(result: { my_pusan_sso_ok?: boolean }) {
   return result.my_pusan_sso_ok === false;
+}
+
+/** my.pusan 실패 안내 문구. 서버가 사유를 줬으면 뒤에 붙인다.
+ *
+ * 사유가 없으면 기존 문구 그대로다 — 구버전 백엔드나 목 데이터에서도 안전하다.
+ * 사유를 안 보여주면 사용자는 학교 장애인지 자기 계정 문제인지 알 수 없고, 우리도
+ * 문의를 받았을 때 되물을 것밖에 없다.
+ */
+export function myPusanSyncFailedMessage(result: { my_pusan_error?: string | null }) {
+  const reason = (result.my_pusan_error ?? "").trim();
+  return reason ? `${MY_PUSAN_SYNC_FAILED_MESSAGE}\n(사유: ${reason})` : MY_PUSAN_SYNC_FAILED_MESSAGE;
 }
 
 /** 학생지원시스템에서 학적·이수 정보를 끌어온다. 회원가입 STEP 2에서 쓴다. */
@@ -77,6 +90,7 @@ export function summarizePortalSync(result: PortalSyncResult) {
     academicStatus: [record["학년"], record["학적상태"]].filter(Boolean).join(" ") || null,
     graduationTableCount: result.graduation_table_count,
     myPusanFailed: isMyPusanSyncFailed(result),
+    myPusanFailedMessage: myPusanSyncFailedMessage(result),
     // 비교과·자격증·어학에서 실제로 저장된 건수 합계. 0이면 "가져올 게 없었다"와
     // "가져오지 못했다"가 구분되지 않으므로 myPusanFailed와 함께 봐야 한다.
     extracurricularSaved:
