@@ -33,6 +33,7 @@ class _FakePage:
         self._evaluate_raises_until = evaluate_raises_until
         self._networkidle_timeout = networkidle_timeout
         self.waited_networkidle = False
+        self.goto_kwargs: dict = {}
 
     @property
     def url(self):
@@ -40,6 +41,11 @@ class _FakePage:
 
     def goto(self, url, **kwargs):
         self._i = 0
+        # 어떤 인자로 열었는지 기록한다. `wait_until`이 networkidle로 되돌아가면 이
+        # 사태의 원인(무한 왕복에서 networkidle이 영영 안 옴)이 그대로 재발하는데,
+        # 예전 가짜 Page는 kwargs를 버려서 **근본 수정 자체가 테스트로 고정되지
+        # 않았다**(독립 2차 리뷰의 뮤테이션에서 생존).
+        self.goto_kwargs = dict(kwargs)
         if self._goto_timeout:
             raise PlaywrightTimeoutError("timeout")
 
@@ -102,6 +108,49 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertIsNotNone(reason)
         self.assertIn("시간 내에 열리지 않았습니다", reason)
 
+    def test_page_is_opened_without_waiting_for_networkidle(self):
+        """`networkidle`로 열면 이 사태의 원인이 그대로 재발한다.
+
+        rSSO가 무한 왕복하면 networkidle은 영영 오지 않는다 — 30초를 버리고 그 다음
+        evaluate가 터진 게 이 크롤러가 조용히 실패하던 이유였다.
+        """
+        page = _FakePage([_CERT] * 5, ready_at=1)
+        _open_certificate_page(page)
+        self.assertEqual("domcontentloaded", page.goto_kwargs.get("wait_until"))
+        # goto 타임아웃도 고정한다. 뒤에 폴링이 붙으므로 30초를 다 쓰면 루프가 아닌
+        # 실패에서 총 대기가 오히려 예전보다 길어진다.
+        self.assertLessEqual(page.goto_kwargs.get("timeout", 10**9), 10_000)
+
+    def test_repeated_same_sso_url_is_not_counted_as_loop(self):
+        """같은 loginCheck.php URL에 오래 머무는 건 왕복이 아니다.
+
+        URL 중복 제거를 빼면 "느리게 한 번 지나가는 중"을 루프로 오판한다.
+        (독립 리뷰 1·2차 모두에서 생존한 뮤테이션 — 이번에 덮는다.)
+        """
+        page = _FakePage([_SSO] * 6 + [_CERT] * 5, ready_at=6)
+        self.assertIsNone(_open_certificate_page(page))
+
+    def test_flapping_login_form_does_not_trigger_failure(self):
+        """폼이 떴다 사라졌다 하면 연속 카운터가 리셋돼야 한다.
+
+        `_LOGIN_FORM_CONFIRM_POLLS`가 실제로 일하는 유일한 경우다 — 리셋이 없으면
+        경유 중 잠깐 그려진 폼이 누적돼 "로그인 실패"로 오판한다.
+        """
+        page = _FakePage([_LOGIN, _CERT] * 20 + [_CERT] * 5, ready_at=41, login_form=True)
+        reason = _open_certificate_page(page)
+        self.assertNotIn("로그인이 되지 않아", reason or "")
+
+    def test_settle_budget_is_not_shorter_than_before(self):
+        """느리지만 정상인 핸드셰이크의 성공 예산을 줄이면 안 된다.
+
+        main은 networkidle 30초 예산이었다. 총 폴링 예산을 15초로 줄이면 학교 SSO가
+        느릴 때(=이 코드가 겨냥한 바로 그 상황) 정상 로그인이 하드 실패로 뒤집힌다.
+        루프·폼 고착은 각각 3초·8초에 이미 조기 반환하므로 예산을 길게 둬도 손해가 없다.
+        """
+        from app.ingestion.crawlers.my_pusan_extracurricular import _PAGE_SETTLE_TIMEOUT_MS
+
+        self.assertGreaterEqual(_PAGE_SETTLE_TIMEOUT_MS, 25_000)
+
     def test_slow_handshake_through_login_page_still_succeeds(self):
         """느리지만 복구되는 핸드셰이크를 하드 실패로 뒤집으면 안 된다.
 
@@ -151,6 +200,12 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertNotIn("SECRET123", reason)
         self.assertNotIn("202012345", reason)
         self.assertIn("my.pusan.ac.kr/x", reason)   # 어디서 멈췄는지는 남는다
+
+    def test_failure_reason_masks_id_in_path(self):
+        """쿼리스트링만 떼면 경로에 박힌 학번은 그대로 나간다."""
+        page = _FakePage(["https://my.pusan.ac.kr/student/202012345/detail"] * 70)
+        reason = _open_certificate_page(page)
+        self.assertNotIn("202012345", reason or "")
 
     def test_goto_timeout_still_judges_by_final_location(self):
         """goto가 타임아웃 나도 실제 도달 지점으로 판단해야 한다."""

@@ -188,7 +188,7 @@ export function OnboardingPage() {
                     ))}
                   </ul>
                   {summary.myPusanFailed ? (
-                    <p className="onboarding-warning" role="status" style={{ whiteSpace: "pre-line" }}>
+                    <p className="onboarding-warning" role="status">
                       {summary.myPusanFailedMessage}
                     </p>
                   ) : null}

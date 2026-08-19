@@ -24,6 +24,8 @@
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
@@ -103,7 +105,19 @@ _EXTRACT_JS = """
 # 프로그램·자격증·어학이 그냥 비어 보였다** — 왜 비었는지 알 방법이 없었다.
 #
 # 그래서 (a) 루프를 감지하는 즉시 포기하고 (b) 왜 실패했는지 사유를 돌려준다.
-def _safe_location(url: str) -> str:
+_ID_SEGMENT_RE = re.compile(r"(?<![0-9])[0-9]{6,}(?![0-9])")
+
+
+def _mask_id_segments(path: str) -> str:
+    """경로에 박힌 학번류 긴 숫자를 가린다.
+
+    지금 알려진 my.pusan 경로엔 없지만, `/student/202012345/...` 같은 URL이 생기면
+    쿼리스트링만 떼는 걸로는 안 막힌다 (독립 2차 리뷰 지적).
+    """
+    return _ID_SEGMENT_RE.sub("<id>", path)
+
+
+def safe_location(url: str) -> str:
     """진단용 URL에서 쿼리스트링을 떼어낸다.
 
     rSSO 왕복 URL에는 SSO 토큰이나 학번이 파라미터로 붙을 수 있는데, 이 문자열은
@@ -117,21 +131,31 @@ def _safe_location(url: str) -> str:
         parts = urlsplit(url)
     except ValueError:
         return "(알 수 없음)"
-    return f"{parts.scheme}://{parts.netloc}{parts.path}" if parts.scheme else url.split("?")[0]
+    path = _mask_id_segments(parts.path)
+    if not parts.scheme:
+        return _mask_id_segments(url.split("?")[0].split("#")[0])
+    return f"{parts.scheme}://{parts.netloc}{path}"
 
 
 _LOGIN_HOST = "login.pusan.ac.kr"
 _SSO_CHECK_PATH = "/modules/pusan/rsso/loginCheck.php"
-_PAGE_SETTLE_TIMEOUT_MS = 15_000
+# 총 폴링 예산. main은 `networkidle` 30초를 썼는데 이걸 15초로 줄이면 **느리지만 정상인
+# 핸드셰이크의 성공 예산이 절반으로 준다** — 하필 이 코드가 겨냥한 "학교 SSO 부하"에서
+# 그런 지연이 난다(독립 2차 리뷰 지적). 루프는 3초, 로그인 폼 고착은 8초에 이미 조기
+# 반환하므로, 이 값을 30초로 되돌려도 **실패 조기감지 이득은 하나도 잃지 않는다.**
+_PAGE_SETTLE_TIMEOUT_MS = 30_000
 _PAGE_POLL_INTERVAL_MS = 500
 # 실패로 단정하기 전에 최소한 이만큼은 지켜본다. **정상 핸드셰이크도 login.pusan.ac.kr을
 # 거쳐 간다** — 첫 폴링에서 그 host를 봤다고 실패로 처리하면 멀쩡한 로그인을 실패로
 # 오판한다(이 함수를 고치면서 실제로 그렇게 만들었다가 잡았다).
 _MIN_OBSERVE_MS = 8_000
-# 로그인 폼이 뜬 채로 **연속** 이만큼 관찰돼야 로그인 실패로 확정한다. 한 시점만 보고
-# 단정하면 느린(그러나 복구되는) 핸드셰이크를 하드 실패로 뒤집는다 — 독립 리뷰가
-# 4초짜리 핸드셰이크로 재현했다. 하필 이 코드가 겨냥한 상황(학교 SSO 부하)에서 정확히
-# 그런 지연이 난다.
+# 로그인 폼이 뜬 채로 **연속** 이만큼 관찰돼야 로그인 실패로 확정한다.
+#
+# 주의: 조기 실패를 막는 주된 장치는 위 `_MIN_OBSERVE_MS`(8초)다. 폼이 계속 떠 있으면
+# 8초에 도달할 때 이 카운터는 이미 넘겨져 있어서, 이 상수는 실패 시점을 늦추지 않는다.
+# 이게 실제로 일하는 경우는 **폼이 떴다 사라졌다 하는(flapping)** 상황 하나다 —
+# 리다이렉트 중간에 로그인 폼이 잠깐 그려지는 경우가 그렇다. 두 겹의 안전장치가
+# 아니라는 뜻이다(독립 2차 리뷰 지적).
 _LOGIN_FORM_CONFIRM_POLLS = 4
 # loginCheck.php를 이만큼 반복해서 보면 왕복 루프로 판단한다. 정상 핸드셰이크도 들어갈 때·
 # 나올 때 2회 경유할 수 있어서 여유를 둔다.
@@ -222,7 +246,7 @@ def _open_certificate_page(target: Page) -> str | None:
 
     return (
         "my.pusan.ac.kr 이수 프로그램 페이지가 시간 내에 열리지 않았습니다 "
-        f"(마지막 위치: {_safe_location(target.url)})."
+        f"(마지막 위치: {safe_location(target.url)})."
     )
 
 

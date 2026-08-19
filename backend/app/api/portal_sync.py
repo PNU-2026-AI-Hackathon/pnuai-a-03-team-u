@@ -29,7 +29,10 @@ from app.ingestion.crawlers.graduation import fetch_graduation_requirement
 from app.ingestion.crawlers.graduation_expected_info import extract_graduation_expected_info
 from app.ingestion.parsers.onestop_graduation_expected_info import normalize_graduation_expected_info
 from app.ingestion.crawlers.grades import fetch_all_grades
-from app.ingestion.crawlers.my_pusan_extracurricular import fetch_extracurricular_certificate
+from app.ingestion.crawlers.my_pusan_extracurricular import (
+    fetch_extracurricular_certificate,
+    safe_location,
+)
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
 from app.ingestion.crawlers.student_info import fetch_student_record
 from app.ingestion.normalizers.my_pusan_normalizer import (
@@ -223,7 +226,9 @@ def sync_portal_data(
             "my.pusan.ac.kr SSO 공유 실패 — 이수/자격/어학 동기화 스킵 "
             "(user_id=%s, final_url=%s, reason=%s)",
             current_user.id,
-            extracurricular.get("final_url"),
+            # rSSO 왕복 URL에는 SSO 토큰·학번이 붙을 수 있다. 응답 본문만 막고 로그를
+            # 안 막으면 반쪽이다 (CLAUDE.md 개인정보 원칙 2).
+            safe_location(extracurricular.get("final_url") or ""),
             extracurricular.get("failure_reason"),
         )
 

@@ -5309,6 +5309,9 @@ body.theme-dark .semester-course-status.status-completed {
 }
 
 .sync-warning {
+  /* 동기화 실패 사유가 줄바꿈으로 붙는다(myPusanSyncFailedMessage). 이게 없으면
+     내 정보 화면에서만 개행이 공백으로 붕괴한다 — 온보딩과 표시가 달라진다. */
+  white-space: pre-line;
   grid-column: 1 / -1;
   margin: 0;
   color: #a45b05;
@@ -7860,6 +7863,7 @@ body.theme-dark .topnav .theme-mode-button {
 }
 
 .onboarding-warning {
+  white-space: pre-line;
   margin: 0;
   color: #a45b05;
   font-size: 12px;
