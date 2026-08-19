@@ -87,6 +87,9 @@ class PortalSyncResponse(BaseModel):
     # my.pusan.ac.kr 이수 프로그램·자격증·어학성적 동기화 결과 요약.
     # sso_ok=false면 크롤 자체가 실패한 것(로그인 페이지로 튕김).
     my_pusan_sso_ok: bool = False
+    # sso_ok=false일 때 왜 실패했는지. 프론트가 "왜 비어 있는지"를 사용자에게 보여줄 수
+    # 있어야 한다 — 예전엔 조용히 스킵돼서 학교 장애인지 우리 버그인지 알 방법이 없었다.
+    my_pusan_error: str | None = None
     activities_created: int = 0
     activities_updated: int = 0
     certifications_created: int = 0
@@ -150,7 +153,13 @@ def sync_portal_data(
                     "my.pusan.ac.kr 이수 프로그램 크롤 실패 (user_id=%s): %s",
                     current_user.id, exc,
                 )
-                extracurricular = {"authenticated": False, "programs": [], "raw_tables": []}
+                extracurricular = {
+                    "authenticated": False,
+                    "failure_reason": "my.pusan.ac.kr 연결 중 오류가 발생했습니다.",
+                    "activities": [],
+                    "certifications": [],
+                    "language_scores": [],
+                }
     except PnuLoginError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
@@ -211,8 +220,11 @@ def sync_portal_data(
             )
     else:
         logging.getLogger(__name__).info(
-            "my.pusan.ac.kr SSO 공유 실패 — 이수/자격/어학 동기화 스킵 (user_id=%s, final_url=%s)",
-            current_user.id, extracurricular.get("final_url"),
+            "my.pusan.ac.kr SSO 공유 실패 — 이수/자격/어학 동기화 스킵 "
+            "(user_id=%s, final_url=%s, reason=%s)",
+            current_user.id,
+            extracurricular.get("final_url"),
+            extracurricular.get("failure_reason"),
         )
 
     # 새로 크롤링된 이수내역을 사용자의 모든 로드맵에 반영한다. 이 시점(크롤링
@@ -233,6 +245,7 @@ def sync_portal_data(
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
         my_pusan_sso_ok=my_pusan_sso_ok,
+        my_pusan_error=None if my_pusan_sso_ok else extracurricular.get("failure_reason"),
         activities_created=activities_created,
         activities_updated=activities_updated,
         certifications_created=certifications_created,

@@ -93,11 +93,113 @@ _EXTRACT_JS = """
 """
 
 
+# rSSO 핸드셰이크가 실패하면 login.pusan.ac.kr/my/loginPage ↔ my.pusan.ac.kr의
+# loginCheck.php 사이를 **무한히 왕복한다.** 그래서 `networkidle`은 영원히 안 온다.
+#
+# 2026-08-16~18에 실제로 겪었다: 학교 rSSO 에이전트가 자기 뒷단 SSO 검증 서버에
+# 소켓을 못 열어(`4,-105 socket_connect() failed`) 토큰 검증이 계속 실패했다.
+# 그때 이 함수는 30초 타임아웃을 다 쓰고, 그 다음 evaluate가 "Execution context was
+# destroyed"로 터졌으며, 호출부는 그걸 광범위 except로 삼켜서 **사용자에게는 이수
+# 프로그램·자격증·어학이 그냥 비어 보였다** — 왜 비었는지 알 방법이 없었다.
+#
+# 그래서 (a) 루프를 감지하는 즉시 포기하고 (b) 왜 실패했는지 사유를 돌려준다.
+_LOGIN_HOST = "login.pusan.ac.kr"
+_SSO_CHECK_PATH = "/modules/pusan/rsso/loginCheck.php"
+_PAGE_SETTLE_TIMEOUT_MS = 15_000
+_PAGE_POLL_INTERVAL_MS = 500
+# 실패로 단정하기 전에 최소한 이만큼은 지켜본다. **정상 핸드셰이크도 login.pusan.ac.kr을
+# 거쳐 간다** — 첫 폴링에서 그 host를 봤다고 실패로 처리하면 멀쩡한 로그인을 실패로
+# 오판한다(이 함수를 고치면서 실제로 그렇게 만들었다가 잡았다).
+_MIN_OBSERVE_MS = 3_000
+# loginCheck.php를 이만큼 반복해서 보면 왕복 루프로 판단한다. 한 번 지나가는 건 정상.
+_SSO_LOOP_HITS = 3
+# 폼이 뜬 뒤 목록 XHR을 기다리는 상한.
+_XHR_SETTLE_TIMEOUT_MS = 10_000
+
+
+# 페이지가 "다 그려졌다"고 볼 조건: 폼 + 섹션 ul이 최소 하나.
+_READY_JS = """
+() => {
+  const root = document.querySelector('#ModulePortfolioCertificate');
+  if (!root) return false;
+  return root.querySelectorAll('ul[data-role="table"][data-name]').length > 0;
+}
+"""
+
+
+def _open_certificate_page(target: Page) -> str | None:
+    """certificate 페이지를 연다. 성공하면 None, 실패하면 사유 문자열.
+
+    `networkidle`로 기다리지 않는 이유: rSSO가 실패하면 login.pusan.ac.kr ↔
+    loginCheck.php를 **무한히 왕복해서** networkidle이 영영 안 온다(2026-08-16~18 실제
+    장애). 그때 이 함수는 30초를 다 쓰고 그 다음 evaluate가 "Execution context was
+    destroyed"로 터졌고, 호출부가 광범위 except로 삼켜서 **사용자에게는 이수 프로그램·
+    자격증·어학이 이유 없이 비어 보였다.**
+
+    대신 `domcontentloaded`로 열고 폼이 그려질 때까지 폴링하면서, 실패 신호를
+    **누적해서** 판단한다 — 한 시점의 URL만 보면 정상 리다이렉트 중간을 실패로 오판한다.
+    """
+    try:
+        target.goto(CERTIFICATE_URL, wait_until="domcontentloaded", timeout=30000)
+    except PlaywrightTimeoutError:
+        pass  # 실제 도달 지점을 아래에서 보고 판단한다
+
+    elapsed = 0
+    sso_check_hits = 0
+    last_url = ""
+    while elapsed <= _PAGE_SETTLE_TIMEOUT_MS:
+        url = target.url
+        if _SSO_CHECK_PATH in url and url != last_url:
+            sso_check_hits += 1
+        last_url = url
+
+        try:
+            if target.evaluate(_READY_JS):
+                # 폼이 보이면 인증은 된 것이고, 여기서부터는 리다이렉트 루프 위험이
+                # 없다. 그러니 이 시점에만 networkidle을 기다린다 — 목록을 채우는
+                # XHR이 폼보다 늦게 오기 때문이다.
+                #
+                # 실측(2026-08-19): 1.0s에 섹션 ul 8개가 전부 그려지지만 행은 0이고,
+                # 1.5s에 데이터가 도착한다. 폼만 보고 반환하면 이수 프로그램 2건·
+                # 어학 1건이 있는 계정에서 **전부 0건**이 나온다(고치면서 만든 회귀).
+                # 로딩 전 상태에도 `li.empty` 플레이스홀더가 들어 있어서 DOM 모양만으론
+                # "아직 안 옴"과 "진짜 없음"을 구분할 수 없다 — 그래서 네트워크로 판단한다.
+                try:
+                    target.wait_for_load_state("networkidle", timeout=_XHR_SETTLE_TIMEOUT_MS)
+                except PlaywrightTimeoutError:
+                    pass  # 느려도 아래 추출은 시도한다. 빈 결과가 나오면 그건 그대로 보고된다.
+                return None
+        except Exception:  # noqa: BLE001 - 리다이렉트 중이면 evaluate가 터진다. 다음 폴링에서 재시도.
+            pass
+
+        if sso_check_hits >= _SSO_LOOP_HITS:
+            return (
+                "학교 통합인증(rSSO) 핸드셰이크가 끝나지 않습니다. my.pusan.ac.kr이 "
+                "로그인 페이지와 무한 왕복 중입니다 — 학교 SSO 서버 장애일 수 있습니다."
+            )
+        # 로그인 폼이 실제로 떠 있고 관찰 유예도 지났으면 그때 로그인 실패로 본다.
+        if elapsed >= _MIN_OBSERVE_MS and _LOGIN_HOST in url:
+            try:
+                if target.evaluate("!!document.querySelector('#login_id')"):
+                    return "my.pusan.ac.kr 로그인이 되지 않아 로그인 페이지로 돌아왔습니다."
+            except Exception:  # noqa: BLE001
+                pass
+
+        target.wait_for_timeout(_PAGE_POLL_INTERVAL_MS)
+        elapsed += _PAGE_POLL_INTERVAL_MS
+
+    return (
+        "my.pusan.ac.kr 이수 프로그램 페이지가 시간 내에 열리지 않았습니다 "
+        f"(마지막 위치: {target.url})."
+    )
+
+
 def fetch_extracurricular_certificate(page: Page) -> dict:
     """certificate 페이지에서 활동/자격증/어학 목록을 유형별로 뽑는다.
 
     반환:
       - final_url, authenticated: SSO 공유 여부 판정용
+      - failure_reason: 실패 사유(사용자에게 보여줄 문구). 성공이면 None
       - activities: list[dict] (UserActivity 필드로 매핑된 값)
       - certifications: list[dict] (UserCertification 매핑값)
       - language_scores: list[dict] (UserLanguageScore 매핑값)
@@ -106,14 +208,21 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
     context = page.context
     target = context.new_page()
     try:
-        try:
-            target.goto(CERTIFICATE_URL, wait_until="networkidle", timeout=30000)
-        except PlaywrightTimeoutError:
-            pass
+        failure = _open_certificate_page(target)
         final_url = target.url
-        authenticated = "login.pusan.ac.kr" not in final_url
+        authenticated = failure is None
+        if failure is not None:
+            return {
+                "final_url": final_url,
+                "authenticated": False,
+                "failure_reason": failure,
+                "activities": [],
+                "certifications": [],
+                "language_scores": [],
+                "unknown_sections": [],
+            }
 
-        sections: list[dict] = target.evaluate(_EXTRACT_JS) if authenticated else []
+        sections: list[dict] = target.evaluate(_EXTRACT_JS)
 
         activities: list[dict] = []
         certifications: list[dict] = []
@@ -140,6 +249,7 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
         return {
             "final_url": final_url,
             "authenticated": authenticated,
+            "failure_reason": None,
             "activities": activities,
             "certifications": certifications,
             "language_scores": language_scores,
