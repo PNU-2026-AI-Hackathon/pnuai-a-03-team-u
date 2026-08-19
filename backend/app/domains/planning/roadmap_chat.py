@@ -266,7 +266,10 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
 - **finish_response 첫 문장에 커리큘럼상 학년·학기를 자연어로 명시해라.** "다음 학기"
   라고만 두루뭉술 말하지 말고 `next_plannable_term`을 근거로 "**N학년 M학기**" 형태
   (예: "다음 학기는 3학년 2학기입니다. 이 학기 추천은..."). **주의**: 변수명
-  (`next_plannable_term` 등)이나 "커리큘럼 좌표:" 같은 기술 라벨을 답변에 노출하지 마라.
+  (`next_plannable_term`, `offered_this_term`, `in_catalog`, `is_enrolled` 등 도구가
+  돌려준 필드명 전부)이나 "커리큘럼 좌표:" 같은 기술 라벨을 답변에 노출하지 마라.
+  뜻을 우리말로 풀어 써라 — `offered_this_term=false`가 아니라 "이번 학기에는 개설되지
+  않았어요".
 - **사용자가 요청한 범위를 벗어나 제안을 남발하지 마라.** 사용자가 "이 과목을
   몇 학기로 옮겨줘"처럼 기존 항목 하나를 콕 집어 요청했으면 그 항목에 대한
   propose_change 하나만 호출하고 끝내라 — 물어보지도 않은 다른 과목을 추가로
@@ -1322,20 +1325,37 @@ class _ToolContext:
                 "ai_common_credits": rules.get("ai_common_credits"),
                 "is_enrolled": gr.major_id in enrolled_major_ids,
             })
+        # 다음 배치 가능 학기 기준으로 실제 개설 여부까지 붙인다. 카탈로그에 있는 것과
+        # 이번 학기에 담을 수 있는 것은 다르다 — 2026-2학기 실측에서 카탈로그 8/10인데
+        # 실제 개설은 3개뿐이었다. 구분 없이 안내하면 담을 수 없는 과목을 권하게 된다.
+        cy, cs = _current_academic_term()
+        ny, ns = _next_term(cy, cs)
+        common = list_ai_common_courses(self.db, year=str(ny), semester=f"{ns}학기")
+        # **개설 상태별로 배열을 나눠서 준다.** 한 배열에 플래그로 담아 주면 LLM이
+        # 섞는다 — 실측(2026-08-19)에서 "이번 학기 담을 수 있는 과목" 목록 안에
+        # 미개설 과목을 넣고, 정작 개설된 과목은 "학기마다 다르다"로 분류했다.
         return {
             "tracks": tracks,
             # 트랙 학점의 절반 가까이가 이 공통교과목에서 나온다. 목록 없이 "AI융합 공통
             # 6~9학점"만 알려주면 학생은 무엇을 담아야 할지 모른다.
-            "ai_common_courses": list_ai_common_courses(self.db),
+            "ai_common_term": {"year": str(ny), "semester": f"{ns}학기"},
+            "ai_common_can_take_now": [c for c in common if c.get("offered_this_term")],
+            "ai_common_not_offered_this_term": [
+                c for c in common if c["in_catalog"] and not c.get("offered_this_term")
+            ],
+            "ai_common_not_in_catalog": [c for c in common if not c["in_catalog"]],
             "ai_common_scheduling": AI_COMMON_SCHEDULING_NOTE,
             "note": (
                 "졸업요건이 아니라 선택 인증 프로그램이다. 미이수해도 졸업에 영향 없다는 점을 "
                 "반드시 함께 말해라. 미등록 상태면 '프로필의 AI융합트랙 등록에서 시작할 수 있다'고 "
                 "안내하고, 이미 등록했으면 get_program_evaluations로 진도를 확인해라. "
-                "ai_common_courses는 AI융합교육원 개설 공통교과목(전부 일반선택)이고 "
-                "offered=false는 우리 수강편람에서 확인되지 않은 것이니 '개설 여부는 "
-                "AI융합교육원 공지를 확인하라'고 덧붙여라. listed_as가 있으면 수강편람에 그 "
-                "이름으로 올라와 있다는 뜻이다."
+                "AI융합 공통교과목(전부 일반선택)은 개설 상태별로 세 배열로 나눠서 준다. "
+                "**배열을 섞지 마라.** ai_common_can_take_now = ai_common_term 학기에 실제로 "
+                "담을 수 있는 것(이것만 이번 학기 추천에 넣어라). "
+                "ai_common_not_offered_this_term = 과정에는 있으나 이번 학기 미개설(나중 학기에 "
+                "노려야 한다고만 말해라). ai_common_not_in_catalog = 우리 수강편람에서 확인되지 "
+                "않음(AI융합교육원 공지를 확인하라고 덧붙여라). "
+                "listed_as가 있으면 수강편람에 그 이름으로 올라와 있다는 뜻이다."
             ),
         }
 

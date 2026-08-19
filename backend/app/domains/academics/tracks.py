@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.academics.models import GraduationRequirement
-from app.domains.courses.models import Course
+from app.domains.courses.models import Course, CourseOffering
 
 # 트랙 인증 유형 표기. special_rules에 이 값이 있어야 AI융합트랙으로 본다.
 TRACK_CERTIFICATION_TYPE = "AI융합트랙"
@@ -84,12 +84,22 @@ def _normalize_course_name(name: str | None) -> str:
     return (name or "").replace(" ", "").strip()
 
 
-def list_ai_common_courses(db: Session) -> list[dict]:
-    """AI융합 공통교과목 목록에 `courses`의 개설 정보(학점·이수구분)를 붙여서 돌려준다.
+def list_ai_common_courses(
+    db: Session, *, year: str | None = None, semester: str | None = None
+) -> list[dict]:
+    """AI융합 공통교과목 목록에 카탈로그·개설 정보를 붙여서 돌려준다.
 
-    `courses`에 없는 과목은 `offered=False`로 남긴다 — 목록에서 빼지 않는다.
-    우리 수강편람 적재가 불완전한 것과 학교가 폐강한 것을 구분할 수 없는데, 빼버리면
-    학생이 "그 과목은 없다"고 오해한다.
+    **`in_catalog`와 `offered_this_term`은 다르다.**
+
+    - `in_catalog`: `courses`(수강편람 카탈로그)에 과목이 존재하는가.
+    - `offered_this_term`: 그 학기 `course_offerings`에 실제 분반이 열렸는가.
+      `year`/`semester`를 준 경우에만 채운다.
+
+    이 둘을 구분하지 않으면 담을 수 없는 과목을 담으라고 안내하게 된다 — 실측
+    (2026-08-19)에서 카탈로그에는 8/10이 있는데 2026-2학기 실제 개설은 3개뿐이었다.
+
+    `courses`에 없는 과목도 목록에서 빼지 않는다. 우리 적재가 불완전한 것과 학교가
+    폐강한 것을 구분할 수 없는데, 빼버리면 학생이 "그 과목은 없다"고 오해한다.
     """
     rows = db.execute(
         select(Course.id, Course.course_name, Course.category, Course.credits)
@@ -102,6 +112,24 @@ def list_ai_common_courses(db: Session) -> list[dict]:
         if row.category != AI_COMMON_CATEGORY:
             continue
         by_name.setdefault(_normalize_course_name(row.course_name), row)
+
+    # 그 학기에 실제로 열린 분반. 트랙 공통교과목은 전부 일반선택이므로 여기서도
+    # 이수구분으로 거른다 — "데이터 마이닝"은 같은 학기에 일반선택 분반(AI융합 공통)과
+    # 전공선택 분반(학과 개설)이 동시에 열린다(2026-2학기 실측).
+    offered_ids: set[int] = set()
+    if year and semester:
+        offered_ids = {
+            row[0]
+            for row in db.execute(
+                select(CourseOffering.course_id)
+                .join(Course, Course.id == CourseOffering.course_id)
+                .where(
+                    CourseOffering.year == year,
+                    CourseOffering.semester == semester,
+                    Course.category == AI_COMMON_CATEGORY,
+                )
+            ).all()
+        }
 
     out: list[dict] = []
     for spec in AI_COMMON_COURSES:
@@ -116,7 +144,7 @@ def list_ai_common_courses(db: Session) -> list[dict]:
             "course_name": spec["name"],
             "module": spec["module"],
             "summary": spec["summary"],
-            "offered": matched is not None,
+            "in_catalog": matched is not None,
         }
         if spec.get("online_only"):
             entry["online_only"] = True
@@ -127,6 +155,8 @@ def list_ai_common_courses(db: Session) -> list[dict]:
             if matched_as != spec["name"]:
                 # 구명칭으로 적재돼 있다. 학생에게 안내할 때 헷갈리지 않게 알려준다.
                 entry["listed_as"] = matched_as
+        if year and semester:
+            entry["offered_this_term"] = matched is not None and matched.id in offered_ids
         out.append(entry)
     return out
 
