@@ -35,6 +35,9 @@ from app.ingestion.crawlers.my_pusan_extracurricular import (
 )
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
 from app.ingestion.crawlers.student_info import fetch_student_record
+from app.ingestion.normalizers.graduation_status_normalizer import (
+    upsert_official_graduation_status,
+)
 from app.ingestion.normalizers.my_pusan_normalizer import (
     upsert_certifications,
     upsert_extracurricular_activities,
@@ -89,6 +92,10 @@ class PortalSyncResponse(BaseModel):
     graduation_table_count: int
     # my.pusan.ac.kr 이수 프로그램·자격증·어학성적 동기화 결과 요약.
     # sso_ok=false면 크롤 자체가 실패한 것(로그인 페이지로 튕김).
+    # One-Stop 졸업예정정보의 **학교 공식 판정** 반영 결과. 이수구분별 기준/취득학점과
+    # 표준외국어능력시험·TOPCIT·졸업과제 같은 자격 요건이 여기 들어간다.
+    official_categories_synced: int = 0
+    official_requirements_synced: int = 0
     my_pusan_sso_ok: bool = False
     # sso_ok=false일 때 왜 실패했는지. 프론트가 "왜 비어 있는지"를 사용자에게 보여줄 수
     # 있어야 한다 — 예전엔 조용히 스킵돼서 학교 장애인지 우리 버그인지 알 방법이 없었다.
@@ -193,6 +200,16 @@ def sync_portal_data(
             "균형교양 세부영역 category 반영 (user_id=%s): %s개 record 업데이트",
             current_user.id, liberal_area_updates,
         )
+    # 학교 공식 졸업 판정 스냅샷. 예전엔 이 페이지에서 표 0(학적신청)과 균형교양
+    # 세부영역만 쓰고 **나머지를 통째로 버렸다** — 크롤링은 되는데 저장이 안 돼서
+    # "졸업요건·자격증을 못 가져온다"로 보였다.
+    official_stats = upsert_official_graduation_status(db, current_user.id, expected_normalized)
+    if official_stats["categories_deleted"] or official_stats["requirements_deleted"]:
+        logging.getLogger(__name__).info(
+            "학교 공식 졸업 판정 스냅샷에서 옛 행 제거 (user_id=%s): %s",
+            current_user.id, official_stats,
+        )
+
     advisor_name = student_record.get("지도교수", "").strip()
     if advisor_name:  # 아직 배정 전이면 빈 문자열 — 기존 값을 지우지 않고 그대로 둔다
         current_user.advisor_name = advisor_name
@@ -249,6 +266,12 @@ def sync_portal_data(
         courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
+        official_categories_synced=(
+            official_stats["categories_created"] + official_stats["categories_updated"]
+        ),
+        official_requirements_synced=(
+            official_stats["requirements_created"] + official_stats["requirements_updated"]
+        ),
         my_pusan_sso_ok=my_pusan_sso_ok,
         my_pusan_error=None if my_pusan_sso_ok else extracurricular.get("failure_reason"),
         activities_created=activities_created,

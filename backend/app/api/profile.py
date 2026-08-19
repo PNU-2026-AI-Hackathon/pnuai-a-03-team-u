@@ -352,6 +352,12 @@ _ACCOUNT_DELETE_STEPS: list[tuple[str, str]] = [
     ("course_plans", "DELETE FROM course_plans WHERE user_id = :uid"),
     ("user_academic_programs", "DELETE FROM user_academic_programs WHERE user_id = :uid"),
     ("user_activities", "DELETE FROM user_activities WHERE user_id = :uid"),
+    # One-Stop 졸업예정정보의 학교 공식 판정 스냅샷. 학점·미충족 사유가 들어 있는
+    # 개인 학사정보라 탈퇴 시 함께 지운다.
+    ("student_graduation_categories",
+     "DELETE FROM student_graduation_categories WHERE user_id = :uid"),
+    ("student_graduation_requirements",
+     "DELETE FROM student_graduation_requirements WHERE user_id = :uid"),
     ("user_certifications", "DELETE FROM user_certifications WHERE user_id = :uid"),
     ("user_language_scores", "DELETE FROM user_language_scores WHERE user_id = :uid"),
     ("password_reset_tokens", "DELETE FROM password_reset_tokens WHERE user_id = :uid"),
