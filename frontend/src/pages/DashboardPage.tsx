@@ -4,24 +4,16 @@ import { Link } from "react-router-dom";
 import { getActivities, getCertifications, getLanguageScores } from "../api/profile";
 import type { ActivityRecord, CertificationRecord, LanguageScoreRecord } from "../api/profile";
 import { updateAdvisorConsulted } from "../api/auth";
-import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
-import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
+import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
+import type { GraduationProgram } from "../api/studentInfo";
 import { useAuth } from "../auth/AuthContext";
 import {
   getDistinctProgramNames,
   normalizeAcademicYear,
   readGraduationOverride,
   readProfileOverrides,
-  readStoredCourses,
   readStoredStudentRecord,
 } from "../data/studentProfileStorage";
-
-const fallbackSemesterCredits = [
-  ["2025-1", "18"],
-  ["2025-2", "21"],
-  ["겨울계절", "4"],
-  ["2026-1", "18"],
-];
 
 const fallbackCredentials = ["GTQ 1급", "컴퓨터그래픽스운용기능사", "TOEIC Speaking IM3"];
 const fallbackActivities = [
@@ -30,7 +22,6 @@ const fallbackActivities = [
 ];
 const CREDENTIAL_PREVIEW_LIMIT = 4;
 const ACTIVITY_PREVIEW_LIMIT = 3;
-const SEMESTER_PREVIEW_LIMIT = 4;
 
 function getCurrentAcademicTerm(date = new Date()) {
   const year = date.getFullYear();
@@ -50,45 +41,12 @@ function formatCredit(value: number) {
 // 통일한다. "입학전성적"은 편입 인정 학점 lump-sum이라 학기 slot에 안 들어가고
 // 별개로 취급한다 — 편입생 대시보드에서는 이 값이 다른 학기들보다 훨씬 커서
 // 평균 왜곡을 만들기 때문에 학기별 표에서 제외한다.
-function normalizeSemesterSlot(raw: string): { order: number; label: string } | null {
-  const s = raw.trim();
-  if (s === "입학전성적" || s === "편입인정") return null;
-  if (s === "1" || s === "1학기") return { order: 1, label: "1학기" };
-  if (s === "2" || s === "2학기") return { order: 3, label: "2학기" };
-  if (s === "1,2" || s === "전학기") return { order: 5, label: "학기 무관" };
-  if (s.includes("여름계절")) return { order: 2, label: "여름계절" };
-  if (s.includes("겨울계절")) return { order: 4, label: "겨울계절" };
-  if (s.includes("여름도약")) return { order: 2, label: "여름도약" };
-  if (s.includes("겨울도약")) return { order: 4, label: "겨울도약" };
-  return { order: 6, label: s };
-}
 
-function getSemesterCredits(courses: CourseRecord[]) {
-  const groups = new Map<string, { label: string; credits: number; sortValue: number }>();
-
-  courses.forEach((course) => {
-    if (!course.year || !course.semester || course.credits === null) return;
-    const slot = normalizeSemesterSlot(course.semester);
-    if (slot === null) return; // "입학전성적" 등 학기 단위 아닌 값은 제외
-    const key = `${course.year}-${slot.label}`;
-    const current = groups.get(key);
-    groups.set(key, {
-      label: `${course.year} ${slot.label}`,
-      credits: (current?.credits ?? 0) + course.credits,
-      sortValue: Number(course.year) * 10 + slot.order,
-    });
-  });
-
-  return [...groups.values()]
-    .sort((left, right) => left.sortValue - right.sortValue)
-    .map(({ label, credits }) => [label, formatCredit(credits)]);
-}
 
 export function DashboardPage() {
   const { user, refreshUser } = useAuth();
   const [profileOverrides] = useState(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [studentRecord] = useState(readStoredStudentRecord);
-  const [courses, setCourses] = useState<CourseRecord[] | null>(() => isMockStudentDataEnabled ? readStoredCourses() : null);
   const [graduation, setGraduation] = useState<GraduationProgram | null>(() => isMockStudentDataEnabled ? readGraduationOverride() : null);
   const [activities, setActivities] = useState<ActivityRecord[] | null>(null);
   const [certifications, setCertifications] = useState<CertificationRecord[] | null>(null);
@@ -109,10 +67,6 @@ export function DashboardPage() {
   useEffect(() => {
     setAdvisorConsulted(Boolean(user?.advisor_consulted));
   }, [user?.advisor_consulted]);
-
-  useEffect(() => {
-    getCourseRecords().then(setCourses).catch(() => setCourses([]));
-  }, []);
 
   useEffect(() => {
     if (graduation) return;
@@ -159,16 +113,6 @@ export function DashboardPage() {
     ["진로", careerGoal],
     ["복수전공", dualMajor],
   ];
-  const storedSemesterCredits = useMemo(() => getSemesterCredits(courses ?? []), [courses]);
-  const semesterCredits = storedSemesterCredits.length > 0
-    ? storedSemesterCredits
-    : isMockStudentDataEnabled
-    ? fallbackSemesterCredits
-    : [];
-  const visibleSemesterCredits = semesterCredits.slice(-SEMESTER_PREVIEW_LIMIT);
-  const averageCredits = semesterCredits.length > 0
-    ? semesterCredits.reduce((sum, [, credit]) => sum + Number(credit), 0) / semesterCredits.length
-    : 0;
   const credentials = certifications && languageScores
     ? [
         ...certifications.map((record) => record.name),
@@ -271,8 +215,8 @@ export function DashboardPage() {
         <article className="card certificate-card dashboard-summary-card">
           <div className="card-title">
             <div>
-              <p className="eyebrow">자격증</p>
-              <h3>현재 딴 자격증</h3>
+              <p className="eyebrow">자격증 · 어학</p>
+              <h3>자격증 및 어학 성적</h3>
             </div>
             <strong>{credentials.length}개</strong>
           </div>
@@ -310,50 +254,6 @@ export function DashboardPage() {
           ) : null}
         </article>
 
-        <article className="card credit-chart-card dashboard-summary-card">
-          <div className="card-title">
-            <div>
-              <p className="eyebrow">학기별 학점</p>
-              <h3>최근 이수 현황</h3>
-            </div>
-            <span>평균 {averageCredits.toFixed(1)}학점</span>
-          </div>
-          <div className="credit-chart">
-            {visibleSemesterCredits.map(([label, credit]) => (
-              <div key={label}>
-                <small>{label}</small>
-                <strong>{credit}<span>학점</span></strong>
-                <span
-                  className="credit-chart-bar"
-                  aria-hidden="true"
-                  style={{ "--fill": `${Math.min(100, (Number(credit) / 21) * 100)}%` } as React.CSSProperties}
-                />
-              </div>
-            ))}
-          </div>
-          {semesterCredits.length > SEMESTER_PREVIEW_LIMIT ? (
-            <Link className="dashboard-more-link" to="/info#grades">더보기 <ChevronRight size={14} aria-hidden="true" /></Link>
-          ) : null}
-        </article>
-
-        <article className="card term-card">
-          <div className="card-title">
-            <div>
-              <p className="eyebrow">현재 상태</p>
-              <h3>학사 캘린더</h3>
-            </div>
-            <span className="status blue">1학기</span>
-          </div>
-          <div className="term-options" aria-label="학기 상태">
-            <span className="selected">1학기</span>
-            <span>2학기</span>
-            <span>여름계절</span>
-            <span>겨울계절</span>
-            <span>여름방학</span>
-            <span>겨울방학</span>
-            <span>휴학</span>
-          </div>
-        </article>
       </section>
     </>
   );
