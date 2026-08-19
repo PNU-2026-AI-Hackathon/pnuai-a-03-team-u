@@ -639,13 +639,20 @@ def _rank_built_combos(
 
     `min(credits, target)`으로 묶는 게 요점이다:
       - 목표 미달 조합끼리는 학점이 많은 쪽이 위 (최대한 채운다)
-      - 목표를 채운 조합끼리는 전부 동점 → 요일 수·공백이 적은 쪽이 위 (더 채우려고
-        무리하게 늘리지 않는다)
+      - 목표를 채운 조합끼리는 전부 동점 → **목표 초과가 적은 쪽**, 그다음 요일 수·공백이
+        적은 쪽이 위 (더 채우려고 무리하게 늘리지 않는다)
+
+    초과분(`over`)을 2순위에 두는 이유: target은 시스템 안에서 "이 학점 **이상**"이라는
+    최소치로 쓰이는데(프롬프트의 `target_credit_floor`), 사용자가 "18학점으로 짜줘"라고
+    명시했을 때까지 상한(21)을 꽉 채워 내놓으면 요청을 무시한 답이 된다. 실제로 18을
+    요청했는데 21학점 조합만 3개 나왔다(2026-08-19 실측). 최소치 의미는 그대로 두고,
+    이미 목표를 만족한 것들 중에서는 목표에 가까운 쪽을 고른다.
     """
     def key(combo: list[_SectionInfo]) -> tuple:
         credits = sum(s.credits or 0.0 for s in combo)
         days, gap = _schedule_shape(combo)
-        return (-min(credits, target_credits), len(days), gap, -credits)
+        over = max(0.0, credits - target_credits)
+        return (-min(credits, target_credits), over, len(days), gap, -credits)
 
     return sorted(combos, key=key)
 
