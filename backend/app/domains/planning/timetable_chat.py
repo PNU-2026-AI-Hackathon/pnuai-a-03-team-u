@@ -44,7 +44,6 @@ from app.domains.planning.roadmap_chat import (
     _compute_retake_candidates, _safe_call,
 )
 from app.domains.planning.timetable import (
-    _combo_is_feasible,
     _completed_course_norms,
     _normalize_course_name,
     _schedule_shape,
@@ -104,6 +103,9 @@ _TIMETABLE_CORE_PROMPT = """너는 부산대 학생의 이번 학기 시간표�
   `offering_count`가 0이면 아예 언급하지 마라 — "이미 담으신 0과목"은 이상한 문장이다.
 - 사용자가 "지금 담은 거 빼고 처음부터 다시" 라고 명시할 때만
   `build_timetable(ignore_current_timetable=true)`를 쓴다.
+- 대화 도중 "지금 뭐 담겨 있지?" / 시간표를 바꾼 뒤 다시 확인해야 할 때는
+  `get_current_timetable`을 쓴다 — `get_student_context`를 통째로 다시 받을 필요 없다.
+  `occupied_slots`로 이미 찬 요일·시간대도 함께 온다.
 
 **학점 목표**: `get_student_context.target_credit_floor` (상한의 80%) 학점 **이상** 채우는
 조합을 만들어라. 사용자가 "가볍게 듣고 싶다"고 명시한 경우에만 이 하한을 무시한다.
@@ -273,7 +275,7 @@ _TOOLS = [
                 "이번 학기(호출 컨텍스트의 year/semester) 실제 개설 과목을 검색한다. "
                 "query 비워두고 필터만 걸어도 '이 학과 전공선택 뭐 열렸나' 훑기가 가능하다. "
                 "각 결과는 course_id, course_name, category, credits, offered_sections(분반 목록)을 담는다. "
-                "offered_sections의 offering_id를 validate_timetable에 넘겨 조합을 검증한다. "
+                "offered_sections의 offering_id를 모아 build_timetable에 넘기면 조합을 만들어준다. "
                 "**`results`에는 이번 학기 분반이 실제로 있는 과목만 들어온다.** 교육과정에는 "
                 "있지만 이번 학기 미개설인 과목은 `matched_but_not_offered_this_term`으로 따로 "
                 "온다 — 시간표에 넣을 수 없고, 사용자가 그 과목을 콕 집어 요청했다면 "
@@ -349,6 +351,20 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_current_timetable",
+            "description": (
+                "사용자가 시간표 화면에서 **직접 담아둔 강좌**의 현재 상태를 조회한다. "
+                "`get_student_context`에도 같은 값이 들어 있지만, 시간표를 바꾼 뒤 다시 "
+                "확인하거나 대화 중간에 '지금 뭐 담겨 있지?'를 물었을 때는 이걸 쓴다 — "
+                "전체 컨텍스트를 다시 받을 필요가 없다. "
+                "담긴 강좌·학점·남은 학점과, 그것들이 차지한 요일/시간대를 돌려준다."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "build_timetable",
             "description": (
                 "**시간표를 짜는 기본 도구.** 후보 분반 목록을 넘기면 규칙 엔진이 시간 충돌 없는 "
@@ -371,7 +387,11 @@ _TOOLS = [
                     "must_include_offering_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "반드시 포함해야 하는 분반 (예: 사용자가 콕 집어 요청한 과목).",
+                        "description": (
+                            "반드시 포함해야 하는 **분반**(offering) — 과목이 아니라 분반 단위다. "
+                            "여기 넣은 분반은 그대로 들어가고, 같은 과목의 다른 분반은 후보에서 "
+                            "빠진다. 쓸 수 없는 분반이면 조합을 만들지 않고 사유를 돌려준다."
+                        ),
                     },
                     "target_credits": {
                         "type": "number",
@@ -431,7 +451,8 @@ _TOOLS = [
             "name": "finish_response",
             "description": (
                 "사용자에게 보여줄 최종 답변을 제출한다. schedules 배열에 validate_timetable로 "
-                "이미 검증된 조합들만 넣어라 (검증 안 된 조합 넣으면 안 됨)."
+                "**build_timetable이 돌려준 offering_ids를 그대로** 넣어라 — 직접 고르거나 고쳐 넣으면 "
+                "시간 충돌·학점 상한이 확인되지 않은 조합이 사용자에게 나간다."
             ),
             "parameters": {
                 "type": "object",
@@ -789,16 +810,38 @@ class _TimeTableToolContext:
             "current_timetable": self.current_timetable(),
         }
 
+    def get_current_timetable(self) -> dict:
+        """`get_current_timetable` 도구 본체. `current_timetable()`과 같은 값을 준다.
+
+        `get_student_context` 안에도 같은 내용이 들어 있지만, 시간표를 바꾼 뒤 다시
+        확인하려면 전체 컨텍스트(이수기록·요건·재수강 후보까지)를 통째로 다시 받아야
+        했다. 대화 중간의 "지금 뭐 담겨 있지?"에는 이 도구 하나면 된다.
+        """
+        return self.current_timetable()
+
     def current_timetable(self) -> dict:
         """사용자가 시간표 UI에서 담아둔 현재 상태 요약."""
         locked = self.locked_sections()
         cap = _term_credit_cap(self.db, self.user)
         locked_credits = sum(s.credits or 0.0 for s in locked)
+        # 이미 찬 요일·시간대. "월요일 오전은 이미 찼다" 같은 판단을 LLM이 바로 할 수 있게.
+        occupied: dict[str, list[str]] = {}
+        for section in locked:
+            for time_slot in section.times:
+                if not time_slot.day_of_week or time_slot.start_time is None:
+                    continue
+                occupied.setdefault(time_slot.day_of_week, []).append(
+                    f"{time_slot.start_time.strftime('%H:%M')}-"
+                    f"{time_slot.end_time.strftime('%H:%M')}"
+                    if time_slot.end_time else time_slot.start_time.strftime("%H:%M")
+                )
         return {
             "plan_id": self.plan_id,
             "offering_count": len(locked),
             "locked_credits": locked_credits,
+            "credit_cap": cap,
             "remaining_credits_to_cap": max(0.0, cap - locked_credits),
+            "occupied_slots": {day: sorted(slots) for day, slots in sorted(occupied.items())},
             "offerings": [
                 {
                     "offering_id": s.offering_id,
@@ -1211,6 +1254,26 @@ class _TimeTableToolContext:
                 continue
             usable.append(s)
 
+        # 필수 지정 분반이 필터(이수 완료·고정분 충돌·시간 제약)에 걸려 사라졌으면
+        # 조용히 무시하면 안 된다 — 사용자가 콕 집어 요청한 것이라 왜 못 넣는지 알려야 한다.
+        usable_ids = {s.offering_id for s in usable}
+        missing_required = sorted(must_include - usable_ids)
+        if missing_required:
+            reasons = {d["offering_id"]: d["reason"] for d in dropped}
+            return {
+                "ok": False,
+                "reason": "must_include_unavailable",
+                "unavailable": [
+                    {"offering_id": oid, "reason": reasons.get(oid, "후보에 없음")}
+                    for oid in missing_required
+                ],
+                "hint": (
+                    "반드시 포함하라고 지정한 분반을 쓸 수 없다. 위 사유를 사용자에게 그대로 "
+                    "알리고, 같은 과목의 다른 분반을 넣을지 아니면 그 과목을 뺄지 물어라. "
+                    "지정을 조용히 무시하고 다른 조합을 내지 마라."
+                ),
+            }
+
         if not usable:
             return {
                 "ok": False,
@@ -1237,7 +1300,14 @@ class _TimeTableToolContext:
         for group in grouped.values():
             group.sort(key=lambda s: 0 if s.has_time_info else 1)
 
+        # **필수 지정은 분반 단위다.** 예전엔 course_id로 승격시켜서, "김교수님 140분반
+        # 꼭 넣어줘"에 141분반을 담은 조합이 나왔다(도구 설명은 분반 단위라고 안내한다).
+        # 그 과목 그룹에서 지정된 분반만 남긴다.
         required_course_ids = {s.course_id for s in usable if s.offering_id in must_include}
+        for course_id in required_course_ids:
+            pinned = [s for s in grouped[course_id] if s.offering_id in must_include]
+            if pinned:
+                grouped[course_id] = pinned
         order.sort(key=lambda cid: 0 if cid in required_course_ids else 1)
         kept, cut = order[:_MAX_COURSE_GROUPS], order[_MAX_COURSE_GROUPS:]
         # 절삭분을 조용히 버리면 "왜 그 과목이 안 들어갔는지"를 아무도 모른다.
@@ -1253,12 +1323,35 @@ class _TimeTableToolContext:
         groups = [(cid in required_course_ids, grouped[cid]) for cid in kept]
 
         # 고정분을 뺀 나머지 예산 안에서만 새 과목을 찾는다.
+        remaining_budget = cap - locked_credits
         combos, search_truncated = _search_feasible_combos(
             groups,
-            credit_cap=cap - locked_credits,
+            credit_cap=remaining_budget,
             target_credits=max(0.0, floor - locked_credits),
         )
         if not combos:
+            # **왜 못 만들었는지를 구분한다.** 예전엔 전부 "시간이 겹쳐서"라고 답했는데,
+            # 남은 학점 예산이 후보 중 제일 작은 과목보다도 적으면 시간과 무관하게
+            # 아무것도 못 담는다. 그 경우 LLM이 헛되이 후보를 넓혀 재호출하고,
+            # 사용자에게도 틀린 이유가 나간다(독립 리뷰 지적).
+            cheapest = min((s.credits or 0.0 for s in usable), default=0.0)
+            if remaining_budget < cheapest:
+                return {
+                    "ok": False,
+                    "reason": "credit_budget_exhausted",
+                    "credit_cap": cap,
+                    "locked_credits": locked_credits,
+                    "remaining_budget": remaining_budget,
+                    "cheapest_candidate_credits": cheapest,
+                    "dropped": dropped,
+                    "hint": (
+                        f"시간 문제가 아니다. 학점 상한({cap:g})에서 이미 담은 "
+                        f"{locked_credits:g}학점을 빼면 {remaining_budget:g}학점만 남는데, "
+                        f"후보 중 가장 작은 과목이 {cheapest:g}학점이라 무엇도 못 담는다. "
+                        "후보를 넓혀도 소용없다 — 사용자에게 학점 상한이 찼다는 사실과 "
+                        "무엇을 빼야 하는지 물어라."
+                    ),
+                }
             return {
                 "ok": False,
                 "reason": "no_feasible_combination",
@@ -1598,6 +1691,7 @@ class _TimeTableToolContext:
     def dispatch(self, name: str, tool_input: dict) -> dict:
         handler = {
             "get_student_context": self.get_student_context,
+            "get_current_timetable": self.get_current_timetable,
             "list_offered_courses": self.list_offered_courses,
             "search_by_career": self.search_by_career,
             "check_prereqs": self.check_prereqs,

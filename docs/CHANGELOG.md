@@ -14,6 +14,30 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-19 (d0won) — 시간표 챗 후속: 담은 과목 확인 도구 + #173 리뷰 잔여 지적
+
+#173 독립 리뷰가 "후속으로 빼도 무방하다"고 한 것들과, 사용자가 요청한 전용 도구를 함께.
+
+- **[feat] `get_current_timetable` 도구.** 담아둔 강좌 상태를 `get_student_context` 없이
+  바로 조회한다. 예전엔 그 값이 전체 컨텍스트(이수기록·요건·재수강 후보까지) 안에만 있어서,
+  시간표를 바꾼 뒤 다시 확인하려면 통째로 다시 받아야 했다. **이미 찬 요일·시간대
+  (`occupied_slots`)** 도 함께 줘서 "월요일 오전은 찼다"를 바로 판단할 수 있다.
+- **[fix] `must_include`가 문서상 분반 단위, 구현상 과목 단위였다.** "140분반 꼭 넣어줘"에
+  141분반을 담은 조합이 나왔고 `engine_approved_sets`도 그걸 승인했다. 지정 분반만 남긴다.
+  또 지정 분반이 필터(이수 완료·고정분 충돌)에 걸리면 **조용히 사라지고 `ok:true`가
+  나왔다** — 이제 `must_include_unavailable`로 사유와 함께 거절한다.
+- **[fix] 학점 예산 부족을 "시간이 겹쳐서"라고 답했다.** `credit_cap_already_reached`
+  가드가 `locked >= cap`에서만 걸려서, 경계 바로 아래는 전부 시간 충돌 사유로 나갔다.
+  LLM이 헛되이 후보를 넓혀 재호출하고 사용자에게도 틀린 이유가 나간다.
+  `credit_budget_exhausted`로 분리했다.
+- **[fix] 낡은 도구 설명.** 코어 프롬프트는 `build_timetable`로 바꿨는데
+  `list_offered_courses`·`finish_response` 스키마는 여전히 `validate_timetable`을
+  가리키고 있었다. **"약한 모델은 스키마를 따른다"가 이 설계의 전제**라 그냥 두면
+  옛 경로로 되돌아간다. 테스트로도 고정했다.
+- **[chore]** 죽은 `_combo_is_feasible` import 제거.
+- 테스트 6건 추가, 전부 수정 전 코드에서 실패 확인. 395 passed.
+  실 DB 확인: 담아둔 2과목 위에 얹어 20학점 3안.
+
 ## 2026-08-19 (d0won) — 지도교수 상담 조회의 간헐 실패를 조용히 넘기지 않게
 
 `fetch_current_term_consultation_status`가 `None`을 돌려줘서, 상담을 **완료한** 학생인데도
