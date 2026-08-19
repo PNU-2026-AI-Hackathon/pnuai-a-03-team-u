@@ -155,6 +155,10 @@ class TimetableChatRequest(BaseModel):
     # 신규: session_id를 넘기면 그 세션에 이어붙이고, 없으면 최근 세션 이어쓰기
     # (또는 첫 요청이면 자동 생성).
     session_id: int | None = None
+    # 사용자가 시간표 화면에서 직접 강좌를 담아둔 시간표(course_plans). 넘기면 추천이
+    # 그 위에 얹힌다 — 이미 담은 과목·시간이 겹치는 분반을 추천하지 않는다.
+    # 안 넘기면 서버가 그 학기의 가장 최근 시간표를 쓴다.
+    plan_id: int | None = None
 
 
 class OfferingTime(BaseModel):
@@ -185,6 +189,11 @@ class ScheduleSuggestion(BaseModel):
     # 만들 수 없다. 화면에 필요한 최소 정보를 여기서 채워 보낸다.
     offerings: list[SuggestedOffering] = []
     total_credits: float = 0.0
+    # 이 조합 중 사용자가 이미 시간표에 담아둔 분반 / 이번 추천으로 새로 들어가는 분반.
+    # offering_ids는 둘을 합친 최종 시간표라, 승인 UI가 "새로 추가되는 건 이것"이라고
+    # 보여주려면 구분이 필요하다. 담기 API는 멱등이라 전체를 그대로 적용해도 안전하다.
+    locked_offering_ids: list[int] = []
+    added_offering_ids: list[int] = []
 
 
 class TimetableChatResponse(BaseModel):
@@ -255,6 +264,7 @@ def recommend_timetable_agent(
             semester=payload.semester,
             message=payload.message,
             session_id=payload.session_id,
+            plan_id=payload.plan_id,
         )
     except ValueError as e:
         # session_id 소유자·학기 불일치 등
@@ -262,6 +272,7 @@ def recommend_timetable_agent(
 
     all_ids = [oid for s in result["schedules"] for oid in s.get("offering_ids", [])]
     detail_by_id = _load_offerings(db, list(dict.fromkeys(all_ids)))
+    locked_ids = set(result.get("locked_offering_ids") or [])
 
     schedules: list[ScheduleSuggestion] = []
     for suggestion in result["schedules"]:
@@ -273,6 +284,8 @@ def recommend_timetable_agent(
                 rationale=suggestion.get("rationale"),
                 offerings=offerings,
                 total_credits=sum(o.credits or 0 for o in offerings),
+                locked_offering_ids=[oid for oid in offering_ids if oid in locked_ids],
+                added_offering_ids=[oid for oid in offering_ids if oid not in locked_ids],
             )
         )
 

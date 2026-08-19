@@ -32,6 +32,8 @@ from app.domains.academics.models import StudentCourseRecord
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
+    CoursePlan,
+    CoursePlanItem,
     CourseRoadmap,
     CourseRoadmapItem,
     TimetableChatMessage,
@@ -44,6 +46,8 @@ from app.domains.planning.roadmap_chat import (
 from app.domains.planning.timetable import (
     _combo_is_feasible,
     _completed_course_norms,
+    _normalize_course_name,
+    _schedule_shape,
     _sections_conflict,
     _serialize_section,
     _term_credit_cap,
@@ -73,17 +77,39 @@ _TIMETABLE_CORE_PROMPT = """너는 부산대 학생의 이번 학기 시간표�
    두 번은 최소로 호출한다. career 관련 소수 과목만 뽑고 부족한 요건 못 채우는 걸 방지.
 3. 진로 관련 심화 후보가 필요하면 `list_offered_courses(query=...)` 로 토픽 검색 병행.
    career 검색은 카테고리 훑기의 보조지 대체가 아니다.
-4. 후보 과목 조합을 골라 `validate_timetable`에 넘긴다 — 규칙 코드가 시간 충돌·학점
-   상한을 검증해 유효한 조합만 되돌려준다. **매 대화 턴에서 finish_response 전에
-   validate_timetable을 최소 1회 반드시 호출**해라. validate 없이 finish_response로
-   가면 사용자에게 검증 안 된 조합이 노출된다.
-5. 유효 조합을 얻으면 `finish_response`에 후보 시간표(offering_ids 배열들)와 사용자에게
-   보여줄 설명 메시지를 담아 넘긴다. validate_timetable에서 나온 유효 조합만 schedules
-   에 담을 것 — 검증 안 된 offering_ids는 절대 schedules에 넣지 마라.
+4. 모은 후보 분반을 **`build_timetable`에 한꺼번에 넘긴다** — 규칙 엔진이 시간 충돌 없는
+   조합을 직접 만들어 돌려준다. **조합을 네가 손으로 고르려 하지 마라.** 분반 시간을
+   눈으로 맞춰보는 건 네가 잘 못하는 일이고, 엔진이 정확히 그걸 하려고 있다.
+   후보는 넉넉히(10~25개 분반) 넘겨라 — 적게 넘기면 조합이 안 나온다.
+   **매 대화 턴에서 finish_response 전에 build_timetable을 최소 1회 반드시 호출**해라.
+   (`validate_timetable`은 사용자가 특정 조합을 콕 집어 "이거 되냐"고 물을 때만 쓴다.)
+5. `build_timetable`이 돌려준 `schedules`의 `offering_ids`를 **그대로** `finish_response`에
+   담고, 사용자에게 보여줄 설명 메시지를 함께 넘긴다. offering_id를 직접 고쳐 넣거나
+   엔진이 안 준 조합을 지어내지 마라 — 검증이 깨진다.
+   조합이 안 나오면(`ok: false`) 후보를 더 넓혀 다시 호출하고, 그래도 안 되면
+   무엇을 시도했고 왜 안 되는지 finish_response에서 설명해라.
+   **message에 과목 목록을 나열하지 마라.** 어떤 과목이 몇 학점에 무슨 요일인지는 서버가
+   정확한 값으로 답변 끝에 자동으로 붙인다. 네가 목록을 다시 쓰면 기억으로 쓰다가 과목명·
+   학점을 틀리고, 화면의 시간표와 어긋난 설명이 나간다(실측된 실패다).
+   너는 **왜 이 조합인지, 무엇이 부족한지, 다음에 뭘 하면 좋은지**만 2~4문장으로 써라.
+   특정 과목을 콕 집어 언급해야 할 때만 `course_lines`의 이름을 그대로 옮겨 적어라.
+
+**사용자가 이미 담아둔 시간표를 존중해라 (중요)**:
+`get_student_context.current_timetable`은 사용자가 시간표 화면에서 **직접 선택해 담은**
+강좌들이다. 백지가 아니라 여기서 이어서 짜는 것이다.
+- 이미 담긴 과목을 다시 추천하지 마라. 그것과 시간이 겹치는 분반도 추천하지 마라.
+  (`build_timetable`이 자동으로 고정·제외하니 후보 풀에 다시 넣을 필요 없다.)
+- 남은 학점은 `current_timetable.remaining_credits_to_cap`을 기준으로 본다.
+- 이미 담긴 강좌가 있을 때만 그 사실을 언급해라 ("이미 담으신 3과목에 이어서…").
+  `offering_count`가 0이면 아예 언급하지 마라 — "이미 담으신 0과목"은 이상한 문장이다.
+- 사용자가 "지금 담은 거 빼고 처음부터 다시" 라고 명시할 때만
+  `build_timetable(ignore_current_timetable=true)`를 쓴다.
 
 **학점 목표**: `get_student_context.target_credit_floor` (상한의 80%) 학점 **이상** 채우는
 조합을 만들어라. 사용자가 "가볍게 듣고 싶다"고 명시한 경우에만 이 하한을 무시한다.
-소수 유효 조합(예: 6~8학점)만 만들고 조기 종료하지 마라 — 추가 후보를 더 찾아 조합 확장.
+학점을 최대한 채우는 건 `build_timetable`이 알아서 한다 — 같은 후보로 반복 호출해도
+결과는 안 바뀐다. 학점이 모자라면 **후보 과목을 늘려서** 한 번 더 부르고, 그래도 안 늘면
+그 사실을 사용자에게 설명하고 끝내라 (무한 재시도 금지).
 
 **진로 반영 검색 (중요)**:
 `get_student_context.career_goal` 원문을 그대로 사전 매칭하려 하지 마라 — 대부분 실패.
@@ -323,6 +349,53 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "build_timetable",
+            "description": (
+                "**시간표를 짜는 기본 도구.** 후보 분반 목록을 넘기면 규칙 엔진이 시간 충돌 없는 "
+                "조합을 직접 만들어 최대 3개 돌려준다. 같은 과목 중복·학점 상한·이수 완료 과목·"
+                "사용자 시간 제약은 엔진이 알아서 거른다. "
+                "**조합을 직접 손으로 고르지 말고 이 도구를 써라** — 후보를 넉넉히(10~25개 분반) "
+                "넘길수록 좋은 조합이 나온다. 반환된 offering_ids를 그대로 finish_response에 담으면 된다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "offering_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": (
+                            "후보 분반 풀. list_offered_courses/search_by_career에서 모은 "
+                            "offering_id를 우선순위 높은 순으로 넣어라 (앞쪽이 우선 채택된다)."
+                        ),
+                    },
+                    "must_include_offering_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "반드시 포함해야 하는 분반 (예: 사용자가 콕 집어 요청한 과목).",
+                    },
+                    "target_credits": {
+                        "type": "number",
+                        "description": (
+                            "목표 학점. 미지정이면 학점 상한의 80%. 사용자가 '가볍게'라고 하면 "
+                            "낮춰서 넘겨라. 사용자가 이미 담아둔 강좌 학점까지 포함한 최종 목표다."
+                        ),
+                    },
+                    "ignore_current_timetable": {
+                        "type": "boolean",
+                        "description": (
+                            "기본 false — 사용자가 시간표 화면에서 이미 담아둔 강좌를 고정한 채 "
+                            "그 위에 얹는다. 사용자가 '처음부터 다시 짜줘', '지금 거 무시하고' 처럼 "
+                            "명시적으로 백지에서 새로 짜달라고 할 때만 true."
+                        ),
+                    },
+                },
+                "required": ["offering_ids"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "validate_timetable",
             "description": (
                 "후보 분반 조합(offering_id 배열)이 시간 충돌 없이 성립하고 학점 상한 안에 들어오는지 "
@@ -488,19 +561,162 @@ def _times_violate_constraint(times, constraint: dict | None) -> str | None:
     return None
 
 
+# --- 조합 탐색 (규칙 엔진) -------------------------------------------------
+#
+# 예전에는 조합 구성 자체를 LLM이 했다: `list_offered_courses`로 분반 목록을 받아
+# 눈으로 시간을 맞춰보고 `validate_timetable`에 넣어보는 시행착오. 실계정·실DB
+# (2026-2학기 3,599분반)로 재현해보니 gpt-4o-mini는 이걸 못 한다 — 한 턴에
+# validate를 12번 호출해 **전부 실패**하고 결국 빈 시간표로 끝났다.
+#
+# 조합 탐색은 애초에 LLM이 할 일이 아니라 규칙 코드가 할 일이다(CLAUDE.md 절대원칙 #1과
+# 같은 방향: 판정·구성은 규칙 엔진, LLM은 설명). 후보 풀만 LLM이 고르고, 시간 충돌 없는
+# 조합을 실제로 짜는 건 여기서 한다.
+
+_MAX_SEARCH_NODES = 30_000     # 탐색 폭주 방지 (후보가 많아도 응답 시간이 튀지 않게)
+# 모아둔 조합이 이 수를 넘으면 학점 높은 순으로 잘라 메모리를 묶는다. **탐색은 멈추지
+# 않는다.** 예전엔 "N개 모으면 return"이었는데, DFS가 include-first라 그 N개를 1순위 과목의
+# 첫 분반 서브트리에서 다 써버리면 **그 과목의 다른 분반도, 그 과목을 빼는 가지도 영영
+# 탐색되지 않았다.** 독립 리뷰 실측: 같은 후보 풀에서 18학점이 가능한데 9학점만 내놓고
+# "최대 9학점"이라고 단언했다 — 이 변경이 없애려던 실패 유형 그대로다.
+_COMBO_PRUNE_AT = 400
+_COMBO_PRUNE_KEEP = 150
+_MAX_COURSE_GROUPS = 14        # 탐색에 넣을 과목 수 상한 (우선순위 앞쪽부터)
+_MAX_SCHEDULES_RETURNED = 3
+
+
+def _format_section_line(section: _SectionInfo) -> str:
+    """"응용통계학 (전공필수, 3학점) — 화 09:00-10:15, 목 09:00-10:15" 형태의 한 줄.
+
+    LLM이 응답 본문에 그대로 옮겨 적으라고 주는 값이다.
+    """
+    meta = ", ".join(
+        part for part in (
+            section.category,
+            f"{section.credits:g}학점" if section.credits is not None else None,
+        ) if part
+    )
+    slots = ", ".join(
+        f"{t.day_of_week or '?'} {t.start_time.strftime('%H:%M')}-{t.end_time.strftime('%H:%M')}"
+        for t in section.times
+        if t.start_time is not None and t.end_time is not None
+    )
+    line = section.course_name or f"분반 {section.offering_id}"
+    if meta:
+        line = f"{line} ({meta})"
+    return f"{line} — {slots}" if slots else f"{line} — 시간 정보 없음"
+
+
+def _rank_built_combos(
+    combos: list[list[_SectionInfo]], target_credits: float
+) -> list[list[_SectionInfo]]:
+    """조합 랭킹. **학점을 먼저 채우고, 목표를 넘긴 뒤에는 촘촘한 시간표를 선호한다.**
+
+    `timetable._rank_schedules`를 그대로 쓰면 안 된다 — 그건 "같은 과목 집합의 서로 다른
+    분반 조합" 비교용이라 **요일 수가 1순위**다. 여기서는 과목 수가 다른 조합끼리 비교하는데,
+    그 기준을 쓰면 과목 1개짜리(1일)가 4과목 조합(3일)보다 위로 올라온다. 실제로 그렇게
+    나왔다(2026-08-17 실측: 12학점 조합이 가능한데 3학점짜리 단과목이 1·2위를 차지).
+
+    `min(credits, target)`으로 묶는 게 요점이다:
+      - 목표 미달 조합끼리는 학점이 많은 쪽이 위 (최대한 채운다)
+      - 목표를 채운 조합끼리는 전부 동점 → 요일 수·공백이 적은 쪽이 위 (더 채우려고
+        무리하게 늘리지 않는다)
+    """
+    def key(combo: list[_SectionInfo]) -> tuple:
+        credits = sum(s.credits or 0.0 for s in combo)
+        days, gap = _schedule_shape(combo)
+        return (-min(credits, target_credits), len(days), gap, -credits)
+
+    return sorted(combos, key=key)
+
+
+def _search_feasible_combos(
+    groups: list[tuple[bool, list[_SectionInfo]]],
+    credit_cap: float,
+    target_credits: float,
+) -> tuple[list[list[_SectionInfo]], bool]:
+    """과목별 분반 후보에서 시간 충돌 없는 조합들을 찾는다.
+
+    groups: (필수 포함 여부, 그 과목의 분반 후보들) 목록. 우선순위 높은 과목이 앞.
+            한 과목에서는 분반을 **최대 하나만** 고른다 — 같은 과목 중복 수강 방지.
+
+    탐색은 "넣어보기"를 먼저, "건너뛰기"를 나중에 해서 학점을 많이 채우는 조합이 먼저
+    쌓이게 한다. 노드 예산(_MAX_SEARCH_NODES)으로 상한을 둔다.
+
+    반환: (랭킹 전 조합 목록, 탐색이 예산에 걸려 잘렸는지).
+    목표 학점(target_credits)을 넘긴 조합이 하나라도 있으면 그것들만, 하나도 없으면 찾은
+    것 중 학점이 큰 순으로 돌려준다 — 목표에 못 미쳐도 "아무것도 못 만들었다"보다 낫다.
+
+    두 번째 값이 True면 **"이게 최대다"라고 단언하면 안 된다** — 안 본 가지가 남아 있다.
+    """
+    collected: list[tuple[list[_SectionInfo], float]] = []
+    nodes = 0
+    truncated = False
+
+    def dfs(index: int, chosen: list[_SectionInfo], credits: float) -> None:
+        nonlocal nodes, truncated
+        if nodes >= _MAX_SEARCH_NODES:
+            truncated = True
+            return
+        nodes += 1
+        if index == len(groups):
+            if chosen:
+                collected.append((list(chosen), credits))
+                if len(collected) > _COMBO_PRUNE_AT:
+                    # 메모리만 묶는다. 여기서 return하면 트리가 굶는다.
+                    collected.sort(key=lambda pair: -pair[1])
+                    del collected[_COMBO_PRUNE_KEEP:]
+            return
+
+        required, sections = groups[index]
+        for section in sections:
+            section_credits = section.credits or 0.0
+            if credits + section_credits > credit_cap:
+                continue
+            if any(_sections_conflict(section, other) for other in chosen):
+                continue
+            chosen.append(section)
+            dfs(index + 1, chosen, credits + section_credits)
+            chosen.pop()
+        # 이 과목을 빼고 진행 — 필수 지정된 과목은 뺄 수 없다.
+        if not required:
+            dfs(index + 1, chosen, credits)
+
+    dfs(0, [], 0.0)
+    if not collected:
+        return [], truncated
+
+    reached = [combo for combo, credits in collected if credits >= target_credits]
+    if reached:
+        return reached, truncated
+    collected.sort(key=lambda pair: -pair[1])
+    return [combo for combo, _ in collected], truncated
+
+
 class _TimeTableToolContext:
     """도구 실행 상태. LLM 대화 한 턴 동안 살아 있음."""
 
     def __init__(self, db: Session, user: User, year: str, semester: str,
-                 time_constraint: dict | None = None):
+                 time_constraint: dict | None = None, plan_id: int | None = None):
         self.db = db
         self.user = user
         self.year = year
         self.semester = semester
+        # 사용자가 시간표 UI에서 직접 담아둔 강좌들이 있는 수강계획(course_plans). 챗은
+        # 이걸 **이미 확정된 부분**으로 보고 그 위에 얹는다 — 시간이 겹치는 분반을
+        # 추천하거나 이미 담은 과목을 또 추천하면 안 되기 때문이다.
+        self.plan_id = plan_id
+        self._locked_sections_cache: list[_SectionInfo] | None = None
         # 사용자 메시지에서 파싱한 요일·시간대 제약. None이면 제약 없음(기존 동작).
         self.time_constraint = time_constraint
         # validate_timetable이 ok로 통과시킨 조합들 (finish 단계 가드가 참조).
         self.validated_ok_combos: list[list[int]] = []
+        # build_timetable이 규칙 엔진으로 만들어낸 조합들. finish 단계에서 LLM이 빈
+        # schedules로 끝내려 할 때 "엔진은 만들 수 있었다"는 근거로 되돌리는 데 쓴다.
+        self.built_combos: list[list[int]] = []
+        self._completed_norms_cache: set[str] | None = None
+        # build_timetable 재시도 억제용 — 후보를 바꿔도 최대 학점이 안 늘면 그만 시도하게 한다.
+        self._build_calls = 0
+        self._best_built_credits = 0.0
 
     # ------------ 도구 구현 ------------
 
@@ -567,6 +783,41 @@ class _TimeTableToolContext:
             # 선수과목 미이수라 이번 학기 시간표에 담기 부적절한 학과 과목. best-effort
             # description 파싱 기반. 이 목록의 course_id는 조합에 넣지 마라.
             "prereq_blocked": _compute_prereq_blocked(self.db, self.user, roadmap_id=None),
+            # 사용자가 시간표 화면에서 직접 담아둔 강좌. **이미 확정된 부분**으로 보고
+            # 그 위에 추가할 과목만 추천해라. build_timetable은 이걸 자동으로 고정해서
+            # 조합을 짜므로 후보 풀에 다시 넣을 필요 없다.
+            "current_timetable": self.current_timetable(),
+        }
+
+    def current_timetable(self) -> dict:
+        """사용자가 시간표 UI에서 담아둔 현재 상태 요약."""
+        locked = self.locked_sections()
+        cap = _term_credit_cap(self.db, self.user)
+        locked_credits = sum(s.credits or 0.0 for s in locked)
+        return {
+            "plan_id": self.plan_id,
+            "offering_count": len(locked),
+            "locked_credits": locked_credits,
+            "remaining_credits_to_cap": max(0.0, cap - locked_credits),
+            "offerings": [
+                {
+                    "offering_id": s.offering_id,
+                    "course_id": s.course_id,
+                    "course_name": s.course_name,
+                    "category": s.category,
+                    "credits": s.credits,
+                    "section": s.section,
+                    "times": [
+                        {
+                            "day_of_week": t.day_of_week,
+                            "start_time": t.start_time.strftime("%H:%M") if t.start_time else None,
+                            "end_time": t.end_time.strftime("%H:%M") if t.end_time else None,
+                        }
+                        for t in s.times
+                    ],
+                }
+                for s in locked
+            ],
         }
 
     def _search_scope(self, program_type: str | None) -> tuple[int | None, int | None]:
@@ -708,40 +959,21 @@ class _TimeTableToolContext:
             "note": "선수과목 필드가 스키마에 없음 — 이수기록 이름만 조회해 LLM이 판단.",
         }
 
-    def validate_timetable(self, offering_ids: list[int]) -> dict:
-        if not offering_ids:
-            return {"ok": False, "reason": "empty_offering_ids"}
+    def _sections_from_offering_ids(self, offering_ids: list[int]) -> list[_SectionInfo] | None:
+        """offering_id 목록을 조합 탐색·검증이 공통으로 쓰는 _SectionInfo로 만든다.
+
+        하나라도 존재하지 않으면 None (호출자가 사유를 정한다).
+        """
         offerings = self.db.scalars(
             select(CourseOffering).where(CourseOffering.id.in_(offering_ids))
         ).all()
         if len(offerings) != len(set(offering_ids)):
-            return {"ok": False, "reason": "some_offerings_not_found"}
+            return None
         times_by_offering: dict[int, list[CourseTime]] = {o.id: [] for o in offerings}
         for t in self.db.scalars(
             select(CourseTime).where(CourseTime.offering_id.in_(offering_ids))
         ).all():
             times_by_offering.setdefault(t.offering_id, []).append(t)
-        # 후보 목록에서 이미 걸렀더라도, LLM이 예전 턴의 offering_id를 기억해 다시 넣을 수
-        # 있다. 검증 단계에서 한 번 더 막고 어떤 분반이 왜 안 되는지 알려준다.
-        violations = [
-            {"offering_id": o.id,
-             "reason": _times_violate_constraint(times_by_offering.get(o.id, []), self.time_constraint)}
-            for o in offerings
-            if _times_violate_constraint(times_by_offering.get(o.id, []), self.time_constraint)
-        ]
-        if violations:
-            return {
-                "ok": False,
-                "reason": "time_constraint_violation",
-                "constraint": _describe_constraint(self.time_constraint or {}),
-                "violations": violations,
-                "hint": (
-                    "사용자가 요청한 시간 제약을 어기는 분반이다. 이 offering_id들을 빼고 "
-                    "다시 검증해라. 제약을 지키면 목표 학점에 못 미치면 억지로 채우지 말고 "
-                    "finish_response에서 '제약을 지키면 최대 N학점까지 가능합니다'라고 설명해라."
-                ),
-            }
-
         courses = {
             c.id: c
             for c in self.db.scalars(
@@ -765,6 +997,114 @@ class _TimeTableToolContext:
                     times=tuple(times_by_offering.get(o.id, [])),
                 )
             )
+        return sections
+
+    def _completed_norms(self) -> set[str]:
+        if self._completed_norms_cache is None:
+            self._completed_norms_cache = _completed_course_norms(self.db, self.user.id)
+        return self._completed_norms_cache
+
+    def locked_sections(self) -> list[_SectionInfo]:
+        """사용자가 시간표 UI에서 이미 담아둔 분반들.
+
+        추천은 항상 이 위에 얹는다. 이걸 안 보면 (a) 이미 담은 과목을 또 추천하고
+        (b) 담아둔 강의와 시간이 겹치는 분반을 추천해서, 사용자가 승인하는 순간
+        깨진 시간표가 된다.
+        """
+        if self._locked_sections_cache is None:
+            if self.plan_id is None:
+                self._locked_sections_cache = []
+            else:
+                offering_ids = list(
+                    self.db.scalars(
+                        select(CoursePlanItem.offering_id)
+                        .where(
+                            CoursePlanItem.plan_id == self.plan_id,
+                            CoursePlanItem.offering_id.is_not(None),
+                        )
+                        .order_by(CoursePlanItem.id)
+                    )
+                )
+                self._locked_sections_cache = (
+                    self._sections_from_offering_ids(offering_ids) or []
+                ) if offering_ids else []
+        return self._locked_sections_cache
+
+    def validate_timetable(self, offering_ids: list[int]) -> dict:
+        if not offering_ids:
+            return {"ok": False, "reason": "empty_offering_ids"}
+        sections = self._sections_from_offering_ids(offering_ids)
+        if sections is None:
+            return {"ok": False, "reason": "some_offerings_not_found"}
+        times_by_offering = {s.offering_id: list(s.times) for s in sections}
+        # 후보 목록에서 이미 걸렀더라도, LLM이 예전 턴의 offering_id를 기억해 다시 넣을 수
+        # 있다. 검증 단계에서 한 번 더 막고 어떤 분반이 왜 안 되는지 알려준다.
+        violations = [
+            {"offering_id": s.offering_id,
+             "reason": _times_violate_constraint(times_by_offering[s.offering_id], self.time_constraint)}
+            for s in sections
+            if _times_violate_constraint(times_by_offering[s.offering_id], self.time_constraint)
+        ]
+        if violations:
+            return {
+                "ok": False,
+                "reason": "time_constraint_violation",
+                "constraint": _describe_constraint(self.time_constraint or {}),
+                "violations": violations,
+                "hint": (
+                    "사용자가 요청한 시간 제약을 어기는 분반이다. 이 offering_id들을 빼고 "
+                    "다시 검증해라. 제약을 지키면 목표 학점에 못 미치면 억지로 채우지 말고 "
+                    "finish_response에서 '제약을 지키면 최대 N학점까지 가능합니다'라고 설명해라."
+                ),
+            }
+
+        # **같은 과목의 다른 분반을 동시에 담는 조합을 막는다.**
+        # 예전엔 이 검사가 없어서 확률및통계 140분반(6612)+141분반(6613) 조합이
+        # `ok: true, total_credits 6.0`으로 통과했다(2026-08-16 실계정 재현). 한 과목을
+        # 두 번 수강하는 시간표인데 학점까지 이중 계산돼서, 목표 학점을 채운 것처럼
+        # 보이는 가짜 조합이 그대로 사용자에게 나갔다. 시간이 안 겹치는 분반끼리는
+        # 시간 충돌 검사로도 안 걸린다 — 과목 단위로 따로 봐야 한다.
+        duplicates: list[dict] = []
+        by_course: dict[int, list[_SectionInfo]] = {}
+        for s in sections:
+            by_course.setdefault(s.course_id, []).append(s)
+        for course_id, group in by_course.items():
+            if len(group) > 1:
+                duplicates.append({
+                    "course_id": course_id,
+                    "course_name": group[0].course_name,
+                    "offering_ids": [s.offering_id for s in group],
+                    "sections": [s.section for s in group],
+                })
+        if duplicates:
+            return {
+                "ok": False,
+                "reason": "duplicate_course",
+                "duplicates": duplicates,
+                "hint": (
+                    "같은 과목의 서로 다른 분반을 한 시간표에 함께 넣었다. 한 과목은 분반 "
+                    "하나만 수강한다. 각 과목마다 분반을 하나씩만 남기고 다시 검증해라."
+                ),
+            }
+
+        # 이미 이수한 과목도 여기서 막는다. 프롬프트에만 적어둔 규칙이라 실제로 새고 있었다.
+        completed = self._completed_norms()
+        already = [
+            {"offering_id": s.offering_id, "course_name": s.course_name}
+            for s in sections
+            if s.course_name and _normalize_course_name(s.course_name) in completed
+        ]
+        if already:
+            return {
+                "ok": False,
+                "reason": "already_completed",
+                "already_completed": already,
+                "hint": (
+                    "학생이 이미 이수한 과목이다. 재수강 목적이 아니면 시간표에서 빼고 "
+                    "다시 검증해라."
+                ),
+            }
+
         conflicts: list[dict] = []
         for i, a in enumerate(sections):
             for b in sections[i + 1 :]:
@@ -785,6 +1125,246 @@ class _TimeTableToolContext:
             "conflicts": conflicts,
             "sections": [_serialize_section(s) for s in sections],
         }
+
+    def build_timetable(
+        self,
+        offering_ids: list[int],
+        must_include_offering_ids: list[int] | None = None,
+        target_credits: float | None = None,
+        ignore_current_timetable: bool = False,
+    ) -> dict:
+        """후보 분반 풀에서 시간 충돌 없는 시간표 조합을 **규칙 엔진이 직접 짜서** 돌려준다.
+
+        LLM은 "어떤 과목을 후보로 볼지"만 정하고, 실제 조합 구성은 여기서 한다.
+        걸러내는 것들(호출자가 몰라도 되게 여기서 처리):
+          - 사용자가 시간표 UI에서 이미 담아둔 강좌 → 고정하고 그 위에 얹는다
+          - 같은 과목의 여러 분반 → 과목당 하나만 선택
+          - 사용자 요일·시간대 제약 위반 분반
+          - 이미 이수한 과목
+          - 학점 상한 초과
+        """
+        if not offering_ids:
+            return {"ok": False, "reason": "empty_offering_ids"}
+        must_include = set(must_include_offering_ids or [])
+        pool_ids = list(dict.fromkeys([*offering_ids, *must_include]))
+        sections = self._sections_from_offering_ids(pool_ids)
+        if sections is None:
+            return {"ok": False, "reason": "some_offerings_not_found"}
+        # **호출자가 넘긴 순서로 되돌린다.** `_sections_from_offering_ids`는 `IN (...)`
+        # 조회라 DB 행 순서(대개 offering_id 오름차순)로 돌아온다. 그대로 쓰면 도구
+        # 설명("앞쪽이 우선 채택된다")과 실제 동작이 어긋나고, 아래 _MAX_COURSE_GROUPS
+        # 절삭에서 LLM이 1순위로 넣은 과목이 잘려나간다(독립 리뷰 실측).
+        pool_rank = {offering_id: index for index, offering_id in enumerate(pool_ids)}
+        sections.sort(key=lambda s: pool_rank.get(s.offering_id, len(pool_ids)))
+
+        # 사용자가 이미 담아둔 강좌를 고정 기반으로 깔고 시작한다. 그 학점만큼 상한이
+        # 줄고, 그것과 시간이 겹치는 후보는 애초에 조합에 못 들어간다.
+        locked = [] if ignore_current_timetable else self.locked_sections()
+        locked_ids = {s.offering_id for s in locked}
+        locked_course_ids = {s.course_id for s in locked}
+        locked_credits = sum(s.credits or 0.0 for s in locked)
+
+        cap = float(_term_credit_cap(self.db, self.user))
+        floor = float(target_credits) if target_credits is not None else max(1.0, cap * 0.8)
+        completed = self._completed_norms()
+
+        # 이미 담은 것만으로 상한이 찬 경우. 아래 탐색에 그냥 넘기면 조합을 못 만들고
+        # "시간이 겹쳐서 성립하는 조합이 없다"는 엉뚱한 사유가 나간다.
+        if locked and locked_credits >= cap:
+            return {
+                "ok": False,
+                "reason": "credit_cap_already_reached",
+                "credit_cap": cap,
+                "locked_credits": locked_credits,
+                "hint": (
+                    f"사용자가 이미 담은 강좌만으로 학점 상한({cap:g})을 채웠다. 더 담을 수 "
+                    "없다는 사실을 finish_response에서 알리고, 바꾸고 싶은 과목이 있는지 물어라."
+                ),
+            }
+
+        dropped: list[dict] = []
+        usable: list[_SectionInfo] = []
+        for s in sections:
+            if s.offering_id in locked_ids or s.course_id in locked_course_ids:
+                dropped.append({"offering_id": s.offering_id, "course_name": s.course_name,
+                                "reason": "이미 시간표에 담겨 있음"})
+                continue
+            reason = _times_violate_constraint(list(s.times), self.time_constraint)
+            if reason:
+                dropped.append({"offering_id": s.offering_id, "course_name": s.course_name,
+                                "reason": reason})
+                continue
+            if s.course_name and _normalize_course_name(s.course_name) in completed:
+                dropped.append({"offering_id": s.offering_id, "course_name": s.course_name,
+                                "reason": "이미 이수한 과목"})
+                continue
+            conflict = next(
+                (locked_section for locked_section in locked
+                 if _sections_conflict(s, locked_section)),
+                None,
+            )
+            if conflict is not None:
+                dropped.append({
+                    "offering_id": s.offering_id, "course_name": s.course_name,
+                    "reason": f"이미 담은 '{conflict.course_name}'과 시간이 겹침",
+                })
+                continue
+            usable.append(s)
+
+        if not usable:
+            return {
+                "ok": False,
+                "reason": "no_usable_offerings",
+                "dropped": dropped,
+                "hint": (
+                    "후보 분반이 제약·이수이력으로 전부 걸러졌다. list_offered_courses로 "
+                    "다른 과목을 더 찾아 후보를 넓혀서 다시 호출하거나, 정말 담을 게 없으면 "
+                    "finish_response에서 그 이유를 설명해라."
+                ),
+            }
+
+        # 과목 단위로 묶는다. 그룹 순서 = LLM이 넘긴 offering_ids 순서(= 우선순위)이고,
+        # must_include에 든 과목은 맨 앞 + 필수 표시. 그룹 안 분반은 시간 정보가 있는 것을
+        # 앞세운다 — 시간 없는 분반은 어떤 조합과도 충돌하지 않아 먼저 뽑히는데, 그러면
+        # 주간 시간표에 블록이 하나도 안 그려진다(timetable._sections_for_item과 같은 이유).
+        order: list[int] = []
+        grouped: dict[int, list[_SectionInfo]] = {}
+        for s in usable:
+            if s.course_id not in grouped:
+                grouped[s.course_id] = []
+                order.append(s.course_id)
+            grouped[s.course_id].append(s)
+        for group in grouped.values():
+            group.sort(key=lambda s: 0 if s.has_time_info else 1)
+
+        required_course_ids = {s.course_id for s in usable if s.offering_id in must_include}
+        order.sort(key=lambda cid: 0 if cid in required_course_ids else 1)
+        kept, cut = order[:_MAX_COURSE_GROUPS], order[_MAX_COURSE_GROUPS:]
+        # 절삭분을 조용히 버리면 "왜 그 과목이 안 들어갔는지"를 아무도 모른다.
+        for cid in cut:
+            for s in grouped[cid]:
+                dropped.append({
+                    "offering_id": s.offering_id, "course_name": s.course_name,
+                    "reason": (
+                        f"후보 과목이 많아 탐색에서 제외 (한 번에 최대 {_MAX_COURSE_GROUPS}과목). "
+                        "꼭 넣어야 하면 must_include_offering_ids로 지정하거나 후보를 줄여 다시 호출해라."
+                    ),
+                })
+        groups = [(cid in required_course_ids, grouped[cid]) for cid in kept]
+
+        # 고정분을 뺀 나머지 예산 안에서만 새 과목을 찾는다.
+        combos, search_truncated = _search_feasible_combos(
+            groups,
+            credit_cap=cap - locked_credits,
+            target_credits=max(0.0, floor - locked_credits),
+        )
+        if not combos:
+            return {
+                "ok": False,
+                "reason": "no_feasible_combination",
+                "credit_cap": cap,
+                "locked_credits": locked_credits,
+                "target_credits": floor,
+                "dropped": dropped,
+                "hint": (
+                    "후보 분반들이 서로 시간이 겹쳐서 성립하는 조합이 없다"
+                    + (" (필수 지정 과목을 반드시 포함하라는 조건 때문일 수 있다)."
+                       if required_course_ids else ".")
+                    + " list_offered_courses로 다른 시간대 과목을 더 찾아 후보를 넓혀서 "
+                      "다시 호출해라."
+                ),
+            }
+
+        # 랭킹은 고정분까지 합친 최종 시간표 모양으로 매긴다 — 사용자가 보는 건 합친 결과다.
+        ranked = _rank_built_combos([[*locked, *combo] for combo in combos], target_credits=floor)
+        # 같은 분반 집합이 여러 번 나오면 하나만 남긴다.
+        seen: set[tuple[int, ...]] = set()
+        schedules: list[dict] = []
+        for combo in ranked:
+            key = tuple(sorted(s.offering_id for s in combo))
+            if key in seen:
+                continue
+            seen.add(key)
+            total = sum(s.credits or 0.0 for s in combo)
+            days, gap = _schedule_shape(combo)
+            schedules.append({
+                # 고정분 + 추가분 전체. 시간표 담기 API가 멱등이라 그대로 적용해도 안전하다.
+                "offering_ids": list(key),
+                # 사용자에게 그대로 옮겨 적을 수 있는 과목 목록. 이게 없으면 LLM이 과목명을
+                # 지어낸다 — 실측(2026-08-17)에서 '범주형 및 생존자료 분석'을
+                # '데이터사이언스수학'으로 바꿔 써서, 화면의 시간표와 설명이 어긋났다.
+                "course_lines": [_format_section_line(s) for s in combo],
+                "locked_offering_ids": sorted(locked_ids & set(key)),
+                "added_offering_ids": sorted(set(key) - locked_ids),
+                "total_credits": total,
+                "distinct_days": len(days),
+                "total_gap_minutes": gap,
+                "reaches_target_credits": total >= floor,
+                "sections": [_serialize_section(s) for s in combo],
+            })
+            if len(schedules) >= _MAX_SCHEDULES_RETURNED:
+                break
+
+        for schedule in schedules:
+            self.built_combos.append(list(schedule["offering_ids"]))
+
+        payload: dict = {
+            "ok": True,
+            "credit_cap": cap,
+            "target_credits": floor,
+            "schedules": schedules,
+            "note": (
+                "이 조합들은 규칙 엔진이 시간 충돌·학점 상한·과목 중복·시간 제약을 모두 "
+                "확인해 만든 것이다. 그대로 finish_response의 schedules에 담아라 — "
+                "offering_id를 직접 고쳐 넣지 마라(검증이 깨진다). "
+                "**응답 본문의 과목명·학점·시간은 `course_lines`에 있는 값을 그대로 옮겨 적어라.** "
+                "기억으로 쓰지 말고, 거기 없는 과목을 지어내지 마라 — 화면에 그려지는 시간표는 "
+                "이 offering_ids라서 설명이 어긋나면 사용자가 잘못된 정보를 믿게 된다."
+            ),
+        }
+        if locked:
+            payload["locked_credits"] = locked_credits
+            payload["locked_note"] = (
+                f"사용자가 시간표에 이미 담아둔 {len(locked)}개 강좌를 고정한 채로 짠 조합이다. "
+                "offering_ids에는 그 고정분도 포함돼 있고, 새로 추가되는 건 "
+                "added_offering_ids다. 설명할 때 '기존 O개에 △△을 더했다'는 식으로 "
+                "무엇이 새로 들어갔는지 밝혀라."
+            )
+        if dropped:
+            payload["dropped"] = dropped
+        if search_truncated:
+            payload["search_truncated"] = True
+        best_credits = max((s["total_credits"] for s in schedules), default=0.0)
+        if not any(s["reaches_target_credits"] for s in schedules):
+            # 후보를 넓혀도 학점이 안 늘면 그만 시도하라고 알려준다. 엔진이 이미 학점을
+            # 최대화하므로 같은 후보로 다시 부르는 건 순수 낭비인데, 그냥 "더 넓혀라"라고만
+            # 하면 mini가 상한(8 iterations)까지 계속 재시도한다(2026-08-17 관측).
+            if search_truncated:
+                # 예산에 걸려 안 본 가지가 남아 있다. 여기서 "최대 N학점"이라고 단언하면
+                # 실제로는 가능한 조합을 두고 사용자에게 거짓말을 하게 된다.
+                payload["below_target_note"] = (
+                    f"목표 학점({floor})에 도달하는 조합을 찾지 못했다(현재 최대 "
+                    f"{best_credits:g}학점). 다만 **후보가 많아 탐색을 끝까지 하지 못했으므로 "
+                    "'이게 최대'라고 단언하지 마라.** 후보를 좀 줄여서(우선순위 높은 과목 위주로) "
+                    "다시 호출하면 더 나은 조합이 나올 수 있다."
+                )
+            elif self._build_calls and best_credits <= self._best_built_credits:
+                payload["below_target_note"] = (
+                    f"목표 학점({floor})에 못 미치는데 후보를 바꿔도 최대 학점이 "
+                    f"{self._best_built_credits:g}에서 늘지 않았다. **더 시도하지 말고** "
+                    "지금 조합으로 finish_response 하면서 '이 조건으로는 최대 "
+                    f"{best_credits:g}학점까지 가능합니다'라고 이유와 함께 설명해라."
+                )
+            else:
+                payload["below_target_note"] = (
+                    f"목표 학점({floor})에 도달하는 조합이 없다(현재 최대 {best_credits:g}학점). "
+                    "아직 안 훑은 이수구분이 있으면 list_offered_courses로 후보를 넓혀 "
+                    "**한 번만 더** 시도하고, 그래도 안 늘면 finish_response에서 "
+                    "'이 조건으로는 최대 N학점까지 가능합니다'라고 설명해라."
+                )
+        self._build_calls += 1
+        self._best_built_credits = max(self._best_built_credits, best_credits)
+        return payload
 
     def get_roadmap_hint(self) -> dict:
         roadmap = self.db.scalars(
@@ -926,6 +1506,15 @@ class _TimeTableToolContext:
         if offering_ids:
             self.validated_ok_combos.append(list(offering_ids))
 
+    def engine_approved_sets(self) -> set[frozenset[int]]:
+        """규칙 엔진이 승인한 분반 조합들. `build_timetable`이 만든 것 + `validate_timetable`이
+        ok를 준 것.
+
+        finish_response가 제출한 조합이 이 안에 없으면 LLM이 지어낸 조합이라는 뜻이다
+        (실제로 관측되는 실패 — 엔진 결과에서 offering_id를 몇 개 바꿔 넣는다).
+        """
+        return {frozenset(combo) for combo in (*self.built_combos, *self.validated_ok_combos)}
+
     def has_any_offering(self) -> bool:
         """이번 학기에 개설 자체가 하나라도 있는지 (제약 필터 적용 후 기준).
 
@@ -1012,6 +1601,7 @@ class _TimeTableToolContext:
             "list_offered_courses": self.list_offered_courses,
             "search_by_career": self.search_by_career,
             "check_prereqs": self.check_prereqs,
+            "build_timetable": self.build_timetable,
             "validate_timetable": self.validate_timetable,
             "get_roadmap_hint": self.get_roadmap_hint,
         }.get(name)
@@ -1124,6 +1714,68 @@ def _load_recent_history(db: Session, session_id: int) -> list[TimetableChatMess
     return list(reversed(latest))
 
 
+def _render_schedule_summary(ctx: "_TimeTableToolContext", schedules: list[dict]) -> str:
+    """제안된 시간표의 과목 목록을 **DB 값 그대로** 렌더링한다.
+
+    LLM에게 목록을 맡기면 과목명과 학점을 지어낸다 — 2026-08-17 실측에서 '범주형 및
+    생존자료 분석'을 '데이터사이언스수학'으로 바꿔 쓰고, 9학점 조합을 15학점이라고
+    설명했다. 화면에 그려지는 시간표는 offering_ids라서 그 순간 설명과 시간표가 어긋난다.
+    그래서 목록은 LLM이 쓰지 않고(프롬프트에서 금지) 여기서 붙인다.
+    """
+    locked_ids = {s.offering_id for s in ctx.locked_sections()}
+    blocks: list[str] = []
+    for index, schedule in enumerate(schedules, start=1):
+        offering_ids = [oid for oid in (schedule.get("offering_ids") or []) if isinstance(oid, int)]
+        if not offering_ids:
+            continue
+        sections = ctx._sections_from_offering_ids(offering_ids)
+        if not sections:
+            continue
+        sections.sort(key=lambda s: (s.category or "", s.course_name or ""))
+        total = sum(s.credits or 0.0 for s in sections)
+        header = f"📋 후보 {index} — 총 {total:g}학점" if len(schedules) > 1 else f"📋 총 {total:g}학점"
+        lines = [header]
+        for section in sections:
+            mark = " (이미 담김)" if section.offering_id in locked_ids else ""
+            lines.append(f"- {_format_section_line(section)}{mark}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _resolve_plan_id(
+    db: Session, user: User, year: str, semester: str, plan_id: int | None
+) -> int | None:
+    """추천의 기반이 될 시간표(course_plans) 하나를 고른다.
+
+    프론트가 열어둔 시간표를 `plan_id`로 넘겨주면 그걸 쓰고, 안 넘어오면 그 학기의
+    시간표 중 가장 최근에 수정한 것을 쓴다 — 사용자가 방금 과목을 담고 챗을 여는
+    흐름에서 대개 그게 화면에 떠 있는 시간표다. 남의 시간표거나 학기가 다르면 무시한다
+    (조용히 None으로 두고 백지에서 추천한다 — 여기서 예외를 던지면 챗 자체가 죽는다).
+    """
+    if plan_id is not None:
+        plan = db.get(CoursePlan, plan_id)
+        # 학기 검사를 빠뜨리면 지난 학기 시간표가 고정분으로 깔려 **학점 상한을 먹고
+        # 시간대를 막는다.** 지금 UI는 학기로 필터해 목록을 주지만 엔드포인트는 공개다.
+        if (
+            plan is not None
+            and plan.user_id == user.id
+            and plan.year == year
+            and plan.semester == semester
+        ):
+            return plan.id
+        return None
+    return db.scalar(
+        select(CoursePlan.id)
+        .where(
+            CoursePlan.user_id == user.id,
+            CoursePlan.year == year,
+            CoursePlan.semester == semester,
+        )
+        .order_by(CoursePlan.updated_at.desc().nullslast(), CoursePlan.id.desc())
+        .limit(1)
+    )
+
+
 def run_timetable_chat(
     db: Session,
     user: User,
@@ -1131,12 +1783,17 @@ def run_timetable_chat(
     semester: str,
     message: str,
     session_id: int | None = None,
+    plan_id: int | None = None,
 ) -> dict:
     """시간표 AI 상담 실행. session_id 없으면 (user, year, semester)의 최근 세션을
     이어 쓰거나 새로 만든다.
 
+    `plan_id`는 사용자가 시간표 화면에서 직접 담아둔 강좌들이 있는 수강계획이다. 추천은
+    그 위에 얹는다 (`_resolve_plan_id` 참고).
+
     반환: {"reply": str, "schedules": [{"offering_ids": [...], "rationale": "..."}, ...],
-           "iterations": int, "tool_calls": [...], "session_id": int}
+           "iterations": int, "tool_calls": [...], "session_id": int,
+           "locked_offering_ids": [...]}
     """
     if session_id is not None:
         session = db.get(TimetableChatSession, session_id)
@@ -1181,8 +1838,10 @@ def run_timetable_chat(
             # 시간 제약은 이번 턴 메시지에서 파싱한다. 파싱되면 도구 계층이 후보 필터링과
             # 검증 거절을 모두 담당하므로 LLM이 규칙을 어겨도 잘못된 조합이 안 나간다.
             time_constraint = _parse_time_constraint(message)
+            resolved_plan_id = _resolve_plan_id(db, user, year, semester, plan_id)
             ctx = _TimeTableToolContext(db=db, user=user, year=year, semester=semester,
-                                        time_constraint=time_constraint)
+                                        time_constraint=time_constraint,
+                                        plan_id=resolved_plan_id)
             llm = _build_llm().bind_tools(_TOOLS, tool_choice="any")
             system_prompt, applied_rules = _build_timetable_system_prompt(db, user, semester)
 
@@ -1212,7 +1871,6 @@ def run_timetable_chat(
         constraint_retry_used = False
         unvalidated_retry_used = False
         empty_schedules_retry_used = False
-        validate_called = False
 
         # 가드가 finish_response를 되돌린 횟수. 이 반복은 탐색이 아니라 강제 교정이라
         # 탐색 예산(MAX_TOOL_ITERATIONS)에서 빼주지 않는다 — 안 그러면 가드 때문에 남은
@@ -1245,28 +1903,39 @@ def run_timetable_chat(
                     #  (b) 조합을 제출하면서 검증은 한 번도 안 함 — 충돌·학점 상한 미확인
                     # 프롬프트에 후퇴 문구를 넣으면 LLM이 그 경로를 선호한다는 게 이미
                     # 관측돼 있어(2026-08-12) 도구 계층에서 되돌린다. 한 번만.
-                    if not validate_called and not unvalidated_retry_used and (
-                        proposed or ctx.has_any_offering()
-                    ):
+                    # 예전 가드는 "validate_timetable을 한 번이라도 불렀나"만 봤다. 그래서
+                    # 엔진 결과에서 offering_id를 몇 개 바꿔 끼운 조합은 그대로 통과했다.
+                    # 지금은 **제출한 조합 자체가 엔진 승인 목록에 있는지**를 본다.
+                    approved = ctx.engine_approved_sets()
+                    unapproved = [
+                        s for s in proposed
+                        if frozenset(s.get("offering_ids") or []) not in approved
+                    ]
+                    never_built = not proposed and not approved and ctx.has_any_offering()
+                    if not unvalidated_retry_used and (unapproved or never_built):
                         unvalidated_retry_used = True
                         guard_retries += 1
                         hint = (
-                            "제출한 조합을 validate_timetable로 검증하지 않았다. 시간 충돌과 "
-                            "학점 상한이 확인되지 않은 조합은 사용자에게 낼 수 없다."
-                            if proposed else
-                            "이번 학기 개설 과목이 있는데 validate_timetable을 한 번도 호출하지 "
+                            "제출한 조합이 build_timetable/validate_timetable이 승인한 조합이 "
+                            "아니다. 엔진이 만들지 않은 조합은 시간 충돌·학점 상한이 확인되지 "
+                            "않은 것이라 사용자에게 낼 수 없다."
+                            if unapproved else
+                            "이번 학기 개설 과목이 있는데 build_timetable을 한 번도 호출하지 "
                             "않고 빈 시간표로 끝내려 했다."
                         )
                         messages.append(ToolMessage(
                             content=json.dumps({
                                 "ok": False,
-                                "reason": "finish_without_validation",
+                                "reason": "schedule_not_engine_approved",
+                                "engine_approved_schedules": [
+                                    sorted(combo) for combo in approved
+                                ],
                                 "hint": (
-                                    f"{hint} list_offered_courses 결과에서 시간이 겹치지 않는 "
-                                    "조합을 골라 validate_timetable로 검증한 뒤, ok=true가 나온 "
-                                    "조합만 schedules에 담아 다시 finish_response를 호출해라. "
-                                    "정말 성립하는 조합이 없다면 무엇을 시도했고 왜 안 되는지 "
-                                    "message에 설명해라."
+                                    f"{hint} list_offered_courses로 후보 분반을 10~25개 모아 "
+                                    "build_timetable에 넘기고, 돌아온 schedules의 offering_ids를 "
+                                    "**그대로** schedules에 담아 다시 finish_response를 호출해라 "
+                                    "(offering_id를 직접 고치지 마라). 정말 성립하는 조합이 "
+                                    "없다면 무엇을 시도했고 왜 안 되는지 message에 설명해라."
                                 ),
                             }, ensure_ascii=False),
                             tool_call_id=call_id or "",
@@ -1275,14 +1944,14 @@ def run_timetable_chat(
 
                     # 검증까지 해놓고 결과를 message 텍스트에만 적고 schedules는 비워서 내는
                     # 경우. UI가 렌더링하는 건 schedules라 사용자에겐 시간표가 안 보인다.
-                    if not proposed and ctx.validated_ok_combos and not empty_schedules_retry_used:
+                    if not proposed and approved and not empty_schedules_retry_used:
                         empty_schedules_retry_used = True
                         guard_retries += 1
                         messages.append(ToolMessage(
                             content=json.dumps({
                                 "ok": False,
                                 "reason": "validated_combo_not_submitted",
-                                "validated_ok_combos": ctx.validated_ok_combos,
+                                "validated_ok_combos": [sorted(combo) for combo in approved],
                                 "hint": (
                                     "validate_timetable로 ok를 받은 조합이 있는데 schedules를 "
                                     "비워서 finish_response를 호출했다. 사용자 화면에는 message "
@@ -1328,8 +1997,6 @@ def run_timetable_chat(
                     finished = True
                     break
                 non_finish_tool_calls += 1
-                if name == "validate_timetable":
-                    validate_called = True
                 with trace.span(f"tool:{name}", as_type="tool", input=args) as tool_span:
                     result = ctx.dispatch(name, args or {})
                     if tool_span is not None:
@@ -1345,6 +2012,20 @@ def run_timetable_chat(
             if finished:
                 break
 
+        # 반복 상한에 걸려 finish_response를 못 부르고 끝났는데, 규칙 엔진은 이미 성립하는
+        # 조합을 만들어둔 경우가 있다. 그걸 버리고 "못 만들었어요"를 내보내면 사용자는
+        # 있는 시간표를 못 받는다 — 엔진 결과를 그대로 쓴다(설명은 우리가 붙인다).
+        if not schedules and ctx.built_combos:
+            schedules = [{
+                "offering_ids": ctx.built_combos[0],
+                "rationale": "규칙 엔진이 시간 충돌 없이 구성한 조합",
+            }]
+            if not reply_text or not reply_text.strip():
+                reply_text = (
+                    "설명을 정리하다 중간에 멈췄지만, 시간 충돌 없이 성립하는 조합은 "
+                    "찾았어요. 아래 후보를 확인해보시고 조정할 부분을 말씀해 주세요."
+                )
+
         # 빈 응답 폴백. mini가 finish_response를 안 부르거나 message="" 로 부르면
         # 유저 화면에 아무것도 안 뜬다 — 최소한 무슨 상황인지 알려주는 문구로 대체.
         if not reply_text or not reply_text.strip():
@@ -1353,6 +2034,12 @@ def run_timetable_chat(
                 "요청을 조금 더 구체적으로 다시 말씀해 주세요 "
                 "(예: '전공 필수 위주로', '월수금만', '오전 몰빵')."
             )
+
+        # 과목 목록은 LLM이 아니라 여기서 붙인다 (`_render_schedule_summary` 참고).
+        if schedules:
+            summary = _render_schedule_summary(ctx, schedules)
+            if summary:
+                reply_text = f"{reply_text.rstrip()}\n\n{summary}"
 
         # assistant 메시지 저장 (트레이스 안에서 페이즈로 노출).
         with trace.span("persist_assistant_message"):
@@ -1384,4 +2071,8 @@ def run_timetable_chat(
         "iterations": iteration,
         "tool_calls": tool_call_log,
         "session_id": session.id,
+        # 사용자가 이미 담아둔 분반. 추천 조합에는 이것도 포함돼 있어서, 프론트가
+        # "새로 추가되는 것"과 "원래 있던 것"을 구분해 보여줄 수 있어야 한다.
+        "locked_offering_ids": [s.offering_id for s in ctx.locked_sections()],
+        "plan_id": ctx.plan_id,
     }

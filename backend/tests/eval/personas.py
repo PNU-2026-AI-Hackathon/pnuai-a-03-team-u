@@ -22,8 +22,9 @@ from app.domains.academics.models import (
 )
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
-    CourseRoadmap, CourseRoadmapChatMessage, CourseRoadmapChatSession,
-    CourseRoadmapItem, PendingRoadmapChange, TimetableChatMessage, TimetableChatSession,
+    CoursePlan, CoursePlanItem, CourseRoadmap, CourseRoadmapChatMessage,
+    CourseRoadmapChatSession, CourseRoadmapItem, PendingRoadmapChange,
+    TimetableChatMessage, TimetableChatSession,
 )
 from app.domains.users.models import User
 
@@ -44,6 +45,8 @@ _TABLES = [
     TimetableChatSession.__table__, TimetableChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__, ProgramCourse.__table__,
+    # 시간표 챗이 "사용자가 UI에서 직접 담아둔 강좌"(course_plans)를 읽는다.
+    CoursePlan.__table__, CoursePlanItem.__table__,
 ]
 
 
