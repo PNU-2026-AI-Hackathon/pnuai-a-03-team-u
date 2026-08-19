@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.domains.academics.tracks import find_ai_tracks_for_department, is_ai_track
 from app.domains.academics.models import (
     Department, GraduationRequirement, Major, UserAcademicProgram,
 )
@@ -71,24 +72,15 @@ class EnrollRequest(BaseModel):
 # --- Helpers -----------------------------------------------------------------
 
 
+# 판별 규칙은 `domains/academics/tracks.py`에 모아 두었다 — 로드맵 챗도 같은 규칙을
+# 써야 화면과 AI가 같은 말을 한다. 여기서는 얇게 감싸기만 한다.
 def _find_tracks_for_dept(db: Session, department_id: int) -> list[GraduationRequirement]:
-    """이 학과 학생이 이수 가능한 SW융합트랙 GR 목록.
-
-    interdisciplinary + 21학점 + special_rules.certification_type='AI융합트랙' 인
-    행만 반환. 트랙의 department_id가 학생 학과와 일치해야 한다.
-    """
-    return list(db.scalars(
-        select(GraduationRequirement).where(
-            GraduationRequirement.department_id == department_id,
-            GraduationRequirement.program_type == "interdisciplinary",
-            GraduationRequirement.required_total_credits == 21,
-        )
-    ).all())
+    """이 학과 학생이 이수 가능한 SW융합트랙 GR 목록."""
+    return find_ai_tracks_for_department(db, department_id)
 
 
 def _is_track(gr: GraduationRequirement) -> bool:
-    rules = gr.special_rules or {}
-    return rules.get("certification_type") == "AI융합트랙"
+    return is_ai_track(gr)
 
 
 # --- Endpoints ---------------------------------------------------------------

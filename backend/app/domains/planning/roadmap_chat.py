@@ -35,7 +35,12 @@ from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from app.domains.academics.program_evaluator import evaluate_program
-from app.domains.academics.models import GraduationRequirement, ProgramCourse, StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.models import (
+    GraduationRequirement, Major as _Major, ProgramCourse, StudentCourseRecord, UserAcademicProgram,
+)
+from app.domains.academics.tracks import (
+    AI_COMMON_SCHEDULING_NOTE, find_ai_tracks_for_department, list_ai_common_courses,
+)
 from app.domains.courses.models import Course
 from app.domains.planning.models import (
     CourseRoadmap,
@@ -578,6 +583,22 @@ _TOOLS = [
                 "각 프로그램의 special_rules(그룹별 all/min_courses/min_credits) 기준으로 이수 여부와 부족분을 "
                 "돌려준다. 학생이 부전공 이수 중이면 필수과목 몇 개 남았는지, 총학점 얼마 남았는지 "
                 "여기서 확인해라. get_graduation_progress가 학점 총계만 준다면 이 도구는 세부 그룹 규칙까지 준다."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_available_tracks",
+            "description": (
+                "이 학생의 학과에서 이수 가능한 AI융합트랙(SW융합트랙) 목록과 등록 여부를 조회한다. "
+                "졸업요건이 **아니라** 이수 시 졸업증명서에 과정명이 표기되는 인증 프로그램이다 "
+                "(학과 전공 12~15학점 + AI융합 공통 6~9학점 = 총 21학점). "
+                "학생이 로드맵·진로·'들을 만한 프로그램'을 물으면 이걸 확인해라. "
+                "AI융합 공통교과목 목록(모듈1/모듈2, 개설 확인 여부, 온라인 개설 여부)도 함께 "
+                "돌려주므로 '무엇을 담으면 되는지'까지 구체적으로 답할 수 있다. "
+                "tracks가 빈 배열이면 대상 학과가 아니니 트랙을 아예 언급하지 마라."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -1250,6 +1271,72 @@ class _ToolContext:
                 }
                 for p in progresses
             ]
+        }
+
+    def get_available_tracks(self) -> dict:
+        """이 학생의 학과에서 이수 가능한 AI융합트랙(SW융합트랙) 목록.
+
+        졸업요건이 **아니다** — 이수하면 졸업증명서에 과정명이 표기되는 인증
+        프로그램이다. 학과 전공과목 12~15학점 + AI융합 공통교과목 6~9학점 = 총
+        21학점.
+
+        프로필 블록(텍스트)에도 같은 정보가 실리지만, 도구로도 조회할 수 있어야
+        한다 — 실측(2026-08-19)에서 심리학과 학생이 "내가 들을 수 있는 특별한
+        프로그램 있어?"라고 물었을 때, 프롬프트에 트랙이 적혀 있는데도 LLM이
+        "확인된 항목이 없습니다"라고 답했다. 도구로 사실을 확인하는 구조라
+        조회 수단이 없는 정보는 "없는 것"으로 기울었다.
+
+        대상 학과가 아니면 `tracks: []`. 그때는 트랙 얘기를 꺼내면 안 된다.
+        """
+        department_id = self.user.department_id
+        if department_id is None:
+            return {"tracks": [], "note": "학과 정보가 없어 트랙을 판단할 수 없다."}
+
+        grs = find_ai_tracks_for_department(self.db, department_id)
+        if not grs:
+            return {
+                "tracks": [],
+                "note": "이 학과는 AI융합트랙 대상 학과가 아니다. 트랙을 언급하지 마라.",
+            }
+
+        enrolled_major_ids = {
+            p.major_id
+            for p in self.db.scalars(
+                select(UserAcademicProgram).where(
+                    UserAcademicProgram.user_id == self.user.id,
+                    UserAcademicProgram.program_type == "interdisciplinary",
+                    UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
+                )
+            ).all()
+        }
+
+        tracks = []
+        for gr in grs:
+            major = self.db.get(_Major, gr.major_id) if gr.major_id else None
+            rules = gr.special_rules or {}
+            tracks.append({
+                "track_name": major.name if major else "?",
+                "major_id": gr.major_id,
+                "total_credits": gr.required_total_credits,
+                "dept_credits": rules.get("dept_credits"),
+                "ai_common_credits": rules.get("ai_common_credits"),
+                "is_enrolled": gr.major_id in enrolled_major_ids,
+            })
+        return {
+            "tracks": tracks,
+            # 트랙 학점의 절반 가까이가 이 공통교과목에서 나온다. 목록 없이 "AI융합 공통
+            # 6~9학점"만 알려주면 학생은 무엇을 담아야 할지 모른다.
+            "ai_common_courses": list_ai_common_courses(self.db),
+            "ai_common_scheduling": AI_COMMON_SCHEDULING_NOTE,
+            "note": (
+                "졸업요건이 아니라 선택 인증 프로그램이다. 미이수해도 졸업에 영향 없다는 점을 "
+                "반드시 함께 말해라. 미등록 상태면 '프로필의 AI융합트랙 등록에서 시작할 수 있다'고 "
+                "안내하고, 이미 등록했으면 get_program_evaluations로 진도를 확인해라. "
+                "ai_common_courses는 AI융합교육원 개설 공통교과목(전부 일반선택)이고 "
+                "offered=false는 우리 수강편람에서 확인되지 않은 것이니 '개설 여부는 "
+                "AI융합교육원 공지를 확인하라'고 덧붙여라. listed_as가 있으면 수강편람에 그 "
+                "이름으로 올라와 있다는 뜻이다."
+            ),
         }
 
     def get_program_evaluations(self) -> dict:
@@ -2006,19 +2093,8 @@ def _build_student_context_block(db: Session, user: User) -> str:
     # AI융합트랙 안내 — 학생 학과가 14개 대상 학과 중 하나면 이수 가능. 이미 등록한
     # 트랙이 있으면 진도 요약, 없고 대상 학과면 "이수 가능하다" 안내.
     ai_track_block = ""
-    from app.domains.academics.models import GraduationRequirement as _GR
     if user.department_id is not None:
-        candidate_grs = db.scalars(
-            select(_GR).where(
-                _GR.department_id == user.department_id,
-                _GR.program_type == "interdisciplinary",
-                _GR.required_total_credits == 21,
-            )
-        ).all()
-        track_grs = [
-            g for g in candidate_grs
-            if (g.special_rules or {}).get("certification_type") == "AI융합트랙"
-        ]
+        track_grs = find_ai_tracks_for_department(db, user.department_id)
         if track_grs:
             enrolled_major_ids = {
                 p.major_id for p in programs
@@ -2036,10 +2112,16 @@ def _build_student_context_block(db: Session, user: User) -> str:
 - **AI융합트랙 (졸업요건 아님, 인증 프로그램)**:
 {chr(10).join(lines)}
   → 학과 전공과목 12~15학점 + AI융합 공통교과목 6~9학점 = 총 21학점 이수 시
-    졸업증명서에 이수 과정명 표기. 학생이 이수 의사 표명하면 관련 안내를 하고,
-    미등록 상태에서 학생이 관심을 보이면 "프로필의 AI융합트랙 등록에서 시작할 수 있다"고
-    안내해라. 이미 등록됐고 학생이 관련 질문을 하면 evaluate_program 성격의 정보를
-    조회해 진도를 알려줘라. 트랙 미이수는 졸업에 영향 없다는 점을 명확히 해라."""
+    졸업증명서에 이수 과정명 표기.
+    **이 학생은 대상 학과다. 로드맵을 처음 짜주거나 진로 방향을 이야기할 때 한 번은
+    먼저 알려줘라** — 학생이 물어볼 때까지 기다리지 마라. 트랙이 있는 줄 모르는 학생이
+    대부분이다. 다만 매 턴 반복하지는 말고, 졸업요건 안내를 밀어내지도 마라(졸업요건이
+    우선이다).
+    "들을 만한 프로그램 있냐"류 질문에는 **반드시 `get_available_tracks`를 호출해서**
+    답해라 — 위 목록만 보고 "없다"고 답한 사고가 있었다.
+    미등록 상태면 "프로필의 AI융합트랙 등록에서 시작할 수 있다"고 안내하고, 이미
+    등록됐으면 `get_program_evaluations`로 진도를 알려줘라.
+    **트랙 미이수는 졸업에 영향 없다는 점을 항상 함께 명시해라.**"""
 
     return f"""[이 학생 프로필 — 매 추천 판단 시 이 정보를 함께 고려해라]
 
