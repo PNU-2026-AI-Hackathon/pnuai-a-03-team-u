@@ -27,6 +27,8 @@ export type PortalSyncResponse = {
    * 학적·성적 동기화까지 실패시키지 않으려는 백엔드의 의도된 동작이다.
    * 이 값을 무시하면 "동기화 완료"라고 안내하면서 비교과는 하나도 안 들어온다. */
   my_pusan_sso_ok: boolean;
+  /** sso_ok=false일 때 왜 실패했는지(서버가 채운다). 구버전 백엔드에선 없다. */
+  my_pusan_error?: string | null;
   activities_created: number;
   activities_updated: number;
   certifications_created: number;

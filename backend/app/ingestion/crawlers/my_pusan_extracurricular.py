@@ -103,6 +103,23 @@ _EXTRACT_JS = """
 # 프로그램·자격증·어학이 그냥 비어 보였다** — 왜 비었는지 알 방법이 없었다.
 #
 # 그래서 (a) 루프를 감지하는 즉시 포기하고 (b) 왜 실패했는지 사유를 돌려준다.
+def _safe_location(url: str) -> str:
+    """진단용 URL에서 쿼리스트링을 떼어낸다.
+
+    rSSO 왕복 URL에는 SSO 토큰이나 학번이 파라미터로 붙을 수 있는데, 이 문자열은
+    `failure_reason` → `PortalSyncResponse.my_pusan_error`로 **응답 본문에 실리고**
+    서버 로그에도 남는다(CLAUDE.md 개인정보 원칙 2 — 독립 리뷰 지적).
+    scheme+host+path만 남겨도 "어디서 멈췄나"는 그대로 알 수 있다.
+    """
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "(알 수 없음)"
+    return f"{parts.scheme}://{parts.netloc}{parts.path}" if parts.scheme else url.split("?")[0]
+
+
 _LOGIN_HOST = "login.pusan.ac.kr"
 _SSO_CHECK_PATH = "/modules/pusan/rsso/loginCheck.php"
 _PAGE_SETTLE_TIMEOUT_MS = 15_000
@@ -110,11 +127,20 @@ _PAGE_POLL_INTERVAL_MS = 500
 # 실패로 단정하기 전에 최소한 이만큼은 지켜본다. **정상 핸드셰이크도 login.pusan.ac.kr을
 # 거쳐 간다** — 첫 폴링에서 그 host를 봤다고 실패로 처리하면 멀쩡한 로그인을 실패로
 # 오판한다(이 함수를 고치면서 실제로 그렇게 만들었다가 잡았다).
-_MIN_OBSERVE_MS = 3_000
-# loginCheck.php를 이만큼 반복해서 보면 왕복 루프로 판단한다. 한 번 지나가는 건 정상.
-_SSO_LOOP_HITS = 3
+_MIN_OBSERVE_MS = 8_000
+# 로그인 폼이 뜬 채로 **연속** 이만큼 관찰돼야 로그인 실패로 확정한다. 한 시점만 보고
+# 단정하면 느린(그러나 복구되는) 핸드셰이크를 하드 실패로 뒤집는다 — 독립 리뷰가
+# 4초짜리 핸드셰이크로 재현했다. 하필 이 코드가 겨냥한 상황(학교 SSO 부하)에서 정확히
+# 그런 지연이 난다.
+_LOGIN_FORM_CONFIRM_POLLS = 4
+# loginCheck.php를 이만큼 반복해서 보면 왕복 루프로 판단한다. 정상 핸드셰이크도 들어갈 때·
+# 나올 때 2회 경유할 수 있어서 여유를 둔다.
+_SSO_LOOP_HITS = 4
 # 폼이 뜬 뒤 목록 XHR을 기다리는 상한.
 _XHR_SETTLE_TIMEOUT_MS = 10_000
+# goto 자체의 상한. 어차피 뒤에 폴링이 붙으므로 여기서 30초를 다 쓸 이유가 없다 —
+# 그러면 루프가 아닌 실패에서 총 대기가 오히려 예전(30초)보다 길어진다(독립 리뷰 지적).
+_GOTO_TIMEOUT_MS = 10_000
 
 
 # 페이지가 "다 그려졌다"고 볼 조건: 폼 + 섹션 ul이 최소 하나.
@@ -140,12 +166,13 @@ def _open_certificate_page(target: Page) -> str | None:
     **누적해서** 판단한다 — 한 시점의 URL만 보면 정상 리다이렉트 중간을 실패로 오판한다.
     """
     try:
-        target.goto(CERTIFICATE_URL, wait_until="domcontentloaded", timeout=30000)
+        target.goto(CERTIFICATE_URL, wait_until="domcontentloaded", timeout=_GOTO_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         pass  # 실제 도달 지점을 아래에서 보고 판단한다
 
     elapsed = 0
     sso_check_hits = 0
+    login_form_polls = 0
     last_url = ""
     while elapsed <= _PAGE_SETTLE_TIMEOUT_MS:
         url = target.url
@@ -177,20 +204,25 @@ def _open_certificate_page(target: Page) -> str | None:
                 "학교 통합인증(rSSO) 핸드셰이크가 끝나지 않습니다. my.pusan.ac.kr이 "
                 "로그인 페이지와 무한 왕복 중입니다 — 학교 SSO 서버 장애일 수 있습니다."
             )
-        # 로그인 폼이 실제로 떠 있고 관찰 유예도 지났으면 그때 로그인 실패로 본다.
-        if elapsed >= _MIN_OBSERVE_MS and _LOGIN_HOST in url:
+        # 로그인 폼이 **연속으로** 떠 있고 관찰 유예도 지나야 로그인 실패로 확정한다.
+        # 한 시점만 보면 경유 중인 정상 핸드셰이크를 실패로 뒤집는다.
+        on_login_form = False
+        if _LOGIN_HOST in url:
             try:
-                if target.evaluate("!!document.querySelector('#login_id')"):
-                    return "my.pusan.ac.kr 로그인이 되지 않아 로그인 페이지로 돌아왔습니다."
+                on_login_form = bool(target.evaluate("!!document.querySelector('#login_id')"))
             except Exception:  # noqa: BLE001
-                pass
+                on_login_form = False
+        login_form_polls = login_form_polls + 1 if on_login_form else 0
+        if elapsed >= _MIN_OBSERVE_MS and login_form_polls >= _LOGIN_FORM_CONFIRM_POLLS:
+            return "my.pusan.ac.kr 로그인이 되지 않아 로그인 페이지로 돌아왔습니다."
 
-        target.wait_for_timeout(_PAGE_POLL_INTERVAL_MS)
         elapsed += _PAGE_POLL_INTERVAL_MS
+        if elapsed <= _PAGE_SETTLE_TIMEOUT_MS:
+            target.wait_for_timeout(_PAGE_POLL_INTERVAL_MS)
 
     return (
         "my.pusan.ac.kr 이수 프로그램 페이지가 시간 내에 열리지 않았습니다 "
-        f"(마지막 위치: {target.url})."
+        f"(마지막 위치: {_safe_location(target.url)})."
     )
 
 

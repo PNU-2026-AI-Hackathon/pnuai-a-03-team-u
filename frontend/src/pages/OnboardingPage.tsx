@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Check, ClipboardCheck } from "lucide-react";
 import { BrandMark } from "../components/layout/BrandMark";
 import { SignupStepper } from "../components/auth/SignupStepper";
-import { MY_PUSAN_SYNC_FAILED_MESSAGE, summarizePortalSync, syncFromPortal } from "../api/portal";
+import { summarizePortalSync, syncFromPortal } from "../api/portal";
 import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { clearSignupFlow, hasActiveSignupFlow } from "../auth/signupFlow";
@@ -188,8 +188,8 @@ export function OnboardingPage() {
                     ))}
                   </ul>
                   {summary.myPusanFailed ? (
-                    <p className="onboarding-warning" role="status">
-                      {MY_PUSAN_SYNC_FAILED_MESSAGE}
+                    <p className="onboarding-warning" role="status" style={{ whiteSpace: "pre-line" }}>
+                      {summary.myPusanFailedMessage}
                     </p>
                   ) : null}
                   <button className="auth-submit" type="button" onClick={goToCompletion}>

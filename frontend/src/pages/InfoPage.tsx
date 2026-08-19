@@ -40,7 +40,7 @@ import {
 import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
 import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
-import { MY_PUSAN_SYNC_FAILED_MESSAGE, isMyPusanSyncFailed } from "../api/portal";
+import { isMyPusanSyncFailed, myPusanSyncFailedMessage } from "../api/portal";
 import { useAuth } from "../auth/AuthContext";
 import {
   COURSE_RECORDS_KEY,
@@ -406,10 +406,10 @@ export function InfoPage() {
       // 백엔드가 이걸 200으로 돌려주므로, 안 보면 사용자는 전부 성공한 줄 안다.
       if (isMyPusanSyncFailed(result)) {
         try {
-          window.sessionStorage.setItem(SYNC_WARNING_KEY, MY_PUSAN_SYNC_FAILED_MESSAGE);
+          window.sessionStorage.setItem(SYNC_WARNING_KEY, myPusanSyncFailedMessage(result));
         } catch {
           // 저장이 막힌 브라우저면 리로드 전에라도 보여준다.
-          setSyncWarning(MY_PUSAN_SYNC_FAILED_MESSAGE);
+          setSyncWarning(myPusanSyncFailedMessage(result));
         }
       }
       if (!isMockStudentDataEnabled) await refreshUser();

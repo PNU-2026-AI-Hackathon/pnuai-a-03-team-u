@@ -19,13 +19,19 @@ from app.ingestion.crawlers.my_pusan_extracurricular import _open_certificate_pa
 class _FakePage:
     """URL/DOM 상태를 스텝별로 흉내내는 최소 Page."""
 
-    def __init__(self, steps, *, ready_at=None, login_form=False, goto_timeout=False):
+    def __init__(self, steps, *, ready_at=None, login_form=False, goto_timeout=False,
+                 evaluate_raises_until=0, networkidle_timeout=False):
         # steps: 폴링마다 돌려줄 URL 목록 (모자라면 마지막 값을 반복)
         self._steps = steps
         self._i = -1
         self._ready_at = ready_at        # 이 인덱스부터 certificate 폼이 준비됨
         self._login_form = login_form    # 로그인 페이지에 #login_id가 떠 있는가
         self._goto_timeout = goto_timeout
+        # 리다이렉트 중이면 실제 Playwright는 "Execution context was destroyed"를 던진다.
+        # 이 사태의 발단이 정확히 그거였는데 가짜 Page가 절대 안 던져서 그 경로가
+        # 테스트되지 않았다(독립 리뷰 지적).
+        self._evaluate_raises_until = evaluate_raises_until
+        self._networkidle_timeout = networkidle_timeout
         self.waited_networkidle = False
 
     @property
@@ -38,6 +44,8 @@ class _FakePage:
             raise PlaywrightTimeoutError("timeout")
 
     def evaluate(self, script):
+        if self._i < self._evaluate_raises_until:
+            raise RuntimeError("Execution context was destroyed, most likely because of a navigation")
         if "ModulePortfolioCertificate" in script and "data-role" in script:
             return self._ready_at is not None and self._i >= self._ready_at
         if "login_id" in script:
@@ -49,6 +57,8 @@ class _FakePage:
 
     def wait_for_load_state(self, state, timeout=None):
         self.waited_networkidle = True
+        if self._networkidle_timeout:
+            raise PlaywrightTimeoutError("networkidle timeout")
 
 
 _CERT = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
@@ -91,6 +101,56 @@ class OpenCertificatePageTest(unittest.TestCase):
         reason = _open_certificate_page(page)
         self.assertIsNotNone(reason)
         self.assertIn("시간 내에 열리지 않았습니다", reason)
+
+    def test_slow_handshake_through_login_page_still_succeeds(self):
+        """느리지만 복구되는 핸드셰이크를 하드 실패로 뒤집으면 안 된다.
+
+        독립 리뷰가 4초짜리 핸드셰이크로 재현했다. 하필 이 코드가 겨냥한 상황
+        (학교 SSO 부하)에서 정확히 그런 지연이 난다. 로그인 폼이 **연속**으로 관찰될
+        때만 실패로 확정해야 한다.
+        """
+        # 0.5초 폴링 기준 12스텝(=6초) 동안 로그인 호스트에 머물다 착지.
+        steps = [_LOGIN] * 12 + [_CERT] * 10
+        page = _FakePage(steps, ready_at=13, login_form=True)
+        self.assertIsNone(_open_certificate_page(page))
+
+    def test_login_form_must_be_present_to_declare_login_failure(self):
+        """로그인 호스트에 있어도 폼이 없으면(리다이렉트 경유 중) 실패로 보지 않는다.
+
+        관찰 유예(8초)를 훌쩍 넘겨 20스텝(=10초)을 머물러도, 폼이 없으면
+        "로그인이 되지 않아…"로 단정하면 안 된다.
+        """
+        page = _FakePage([_LOGIN] * 20 + [_CERT] * 10, ready_at=21, login_form=False)
+        self.assertIsNone(_open_certificate_page(page))
+
+    def test_single_sso_check_passthrough_is_not_a_loop(self):
+        """정상 핸드셰이크도 loginCheck.php를 몇 번 경유할 수 있다 — 루프로 보면 안 된다."""
+        page = _FakePage([_SSO, _CERT, _SSO, _CERT, _CERT], ready_at=4)
+        self.assertIsNone(_open_certificate_page(page))
+
+    def test_evaluate_exception_during_redirect_is_survived(self):
+        """리다이렉트 중 evaluate가 터져도 다음 폴링에서 회복해야 한다.
+
+        이 사태의 발단이 "Execution context was destroyed"였다.
+        """
+        page = _FakePage([_CERT] * 10, ready_at=2, evaluate_raises_until=4)
+        self.assertIsNone(_open_certificate_page(page))
+
+    def test_networkidle_timeout_does_not_fail_the_page(self):
+        """목록 XHR이 느려도 추출은 시도한다 — 빈 결과면 그건 그대로 보고된다."""
+        page = _FakePage([_CERT] * 10, ready_at=1, networkidle_timeout=True)
+        self.assertIsNone(_open_certificate_page(page))
+        self.assertTrue(page.waited_networkidle)
+
+    def test_failure_reason_does_not_leak_query_string(self):
+        """실패 사유는 응답 본문·로그로 나간다. rSSO URL에는 토큰·학번이 붙을 수 있다."""
+        leaky = "https://my.pusan.ac.kr/x?ssoToken=SECRET123&sid=202012345"
+        page = _FakePage([leaky] * 60)
+        reason = _open_certificate_page(page)
+        self.assertIsNotNone(reason)
+        self.assertNotIn("SECRET123", reason)
+        self.assertNotIn("202012345", reason)
+        self.assertIn("my.pusan.ac.kr/x", reason)   # 어디서 멈췄는지는 남는다
 
     def test_goto_timeout_still_judges_by_final_location(self):
         """goto가 타임아웃 나도 실제 도달 지점으로 판단해야 한다."""
