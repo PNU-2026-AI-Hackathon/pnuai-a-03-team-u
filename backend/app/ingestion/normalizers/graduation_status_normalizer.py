@@ -121,11 +121,22 @@ def upsert_official_graduation_status(
             stats["categories_updated"] += 1
 
     seen_requirements: set[tuple[str, str, str]] = set()
+    # "조회내역이 없습니다." 행은 요건이 아니지만, **학교가 "요건 없음"이라고 답한 유일한
+    # 신호**다. 그냥 버리면 `seen_requirements`가 비고 아래 빈 결과 가드가 걸려 삭제를
+    # 안 해서, 학교가 요건을 지워도 옛 행이 영원히 "미충족"으로 남는다(독립 리뷰 지적).
+    requirement_table_answered = False
     for row in normalized.get("requirement_items", []):
         if row.get("source_table_name") != _REQUIREMENT_TABLE:
             continue
+        requirement_table_answered = True
         if row.get("completed_status") == "no_records":
             continue
+        # 참고: 위 `source_table_name` 검사와 이 `no_records` 검사는 **중복 방어**다.
+        # 실데이터에서는 아래 `program_type` 가드가 어차피 둘 다 걸러낸다(다른 표는
+        # `졸업기준_학적신청구분` 키 자체가 없고, no_records 행은 raw_record가
+        # `{no_records, message}`뿐이다). 뮤테이션 테스트에서 이 두 줄을 지워도 아무
+        # 테스트가 안 깨지는 이유가 그것이다 — 검출력이 없는 게 아니라 방어가 겹친 것.
+        # 의도를 드러내는 값이 있어 남긴다.
         raw = row.get("raw_record", {})
         program_type = _clean(raw.get("졸업기준_학적신청구분"), 30)
         requirement_name = _clean(row.get("required_category"), 100)
@@ -142,8 +153,16 @@ def upsert_official_graduation_status(
         seen_requirements.add(key)
 
         values = {
-            "pass_type": _clean(raw.get("졸업기준_합격구분"), 50),
-            "acquired_date": _clean(raw.get("졸업기준_취득일자"), 30),
+            # ⚠️ 접두어가 `졸업기준_`이 아니라 `학생이수정보_`다. 처음엔 학적신청구분과
+            # 같은 접두어일 거라 짐작하고 `졸업기준_합격구분`/`졸업기준_취득일자`를 읽었는데,
+            # 원문엔 그런 키가 없어서 **요건을 이미 통과한 학생의 합격구분·취득일자가
+            # 조용히 버려졌다** — 이 변경이 고치겠다던 "가져와놓고 버린다"를 컬럼 2개에서
+            # 그대로 반복한 것이다(독립 리뷰 지적). 실제 키:
+            #   ['No', '졸업기준_상세졸업요건명', '졸업기준_졸업요건명', '졸업기준_학적신청구분',
+            #    '학생이수정보_비고_예외사항_상세내역_점수', '학생이수정보_이수여부',
+            #    '학생이수정보_취득일자', '학생이수정보_합격구분']
+            "pass_type": _clean(raw.get("학생이수정보_합격구분"), 50),
+            "acquired_date": _clean(raw.get("학생이수정보_취득일자"), 30),
             "satisfied": _to_bool(row.get("completed_status")),
             "note": _clean(row.get("note"), 500),
             "synced_at": stamp,
@@ -169,8 +188,11 @@ def upsert_official_graduation_status(
             stats["requirements_updated"] += 1
 
     # 이번 스냅샷에 없는 옛 행 제거 (위 docstring 참고).
-    # **크롤 결과가 비어 있으면 지우지 않는다** — 페이지 구조 변경이나 일시적 실패로
-    # 빈 결과가 왔을 때 멀쩡한 스냅샷을 통째로 날리는 게 제일 나쁘다.
+    #
+    # **파싱 실패와 "학교가 비었다고 답함"을 구분한다.** 그냥 "결과가 비면 안 지운다"로
+    # 두면 학교가 요건을 지워도 옛 행이 영원히 남는다. 요건 쪽은 원문에 "조회내역이
+    # 없습니다." 행이 오므로(`requirement_table_answered`) 그걸 근거로 삭제한다.
+    # 카테고리 표에는 그런 신호가 없어서 보수적으로 "비면 안 지움"을 유지한다.
     if seen_categories:
         for row_obj in db.scalars(
             select(StudentGraduationCategory).where(StudentGraduationCategory.user_id == user_id)
@@ -178,7 +200,7 @@ def upsert_official_graduation_status(
             if (row_obj.program_type, row_obj.category) not in seen_categories:
                 db.delete(row_obj)
                 stats["categories_deleted"] += 1
-    if seen_requirements:
+    if seen_requirements or requirement_table_answered:
         for row_obj in db.scalars(
             select(StudentGraduationRequirement).where(
                 StudentGraduationRequirement.user_id == user_id

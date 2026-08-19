@@ -50,8 +50,20 @@ def _category(program="주전공", category="전공필수", required=33.0, earne
     }
 
 
-def _requirement(name="표준외국어능력시험", status="N", program="주전공", detail=""):
-    """실제 크롤 결과와 같은 모양. program_type은 raw_record에서만 온다."""
+def _requirement(name="표준외국어능력시험", status="N", program="주전공", detail="",
+                 pass_type="", acquired_date=""):
+    """실제 크롤 원문과 **같은 키**를 쓴다.
+
+    처음엔 합격구분·취득일자를 `졸업기준_*`로 적었는데 원문엔 그런 키가 없다
+    (`학생이수정보_*`가 맞다). 픽스처가 코드와 같은 오타를 쓰고 있어서 **테스트가
+    버그를 고정**하고 있었다 — 요건을 통과한 학생의 합격구분·취득일자가 조용히
+    버려지는데도 8건이 전부 통과했다.
+
+    실제 키 (표 6 `graduation_requirement_completion`):
+        ['No', '졸업기준_상세졸업요건명', '졸업기준_졸업요건명', '졸업기준_학적신청구분',
+         '학생이수정보_비고_예외사항_상세내역_점수', '학생이수정보_이수여부',
+         '학생이수정보_취득일자', '학생이수정보_합격구분']
+    """
     return {
         "requirement_area": "graduation_requirement_completion",
         "source_table_name": "graduation_requirement_completion",
@@ -61,9 +73,22 @@ def _requirement(name="표준외국어능력시험", status="N", program="주전
         "note": "",
         "raw_record": {
             "졸업기준_학적신청구분": program,
-            "졸업기준_합격구분": "",
-            "졸업기준_취득일자": "",
+            "졸업기준_졸업요건명": name,
+            "학생이수정보_합격구분": pass_type,
+            "학생이수정보_취득일자": acquired_date,
+            "학생이수정보_이수여부": status,
         },
+    }
+
+
+def _no_records_requirement():
+    """"조회내역이 없습니다." — 학교가 "요건 없음"이라고 답한 신호."""
+    return {
+        "requirement_area": "graduation_requirement_completion",
+        "source_table_name": "graduation_requirement_completion",
+        "completed_status": "no_records",
+        "note": "조회내역이 없습니다.",
+        "raw_record": {"no_records": "Y", "message": "조회내역이 없습니다."},
     }
 
 
@@ -175,6 +200,123 @@ class UpsertOfficialStatusTest(unittest.TestCase):
         rows = db.query(StudentGraduationRequirement).all()
         self.assertEqual(["표준외국어능력시험"], [r.requirement_name for r in rows])
 
+    def test_pass_type_and_acquired_date_are_stored(self):
+        """요건을 이미 통과한 학생의 합격구분·취득일자가 버려지면 안 된다.
+
+        원문 키는 `학생이수정보_*`인데 `졸업기준_*`으로 읽고 있었다. 이 변경이
+        고치겠다던 "가져와놓고 버린다"를 컬럼 2개에서 그대로 반복한 셈이었다.
+        """
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [],
+            "requirement_items": [_requirement(
+                name="TOPCIT", status="Y", pass_type="합격", acquired_date="2026-03-15",
+            )],
+        })
+        row = db.query(StudentGraduationRequirement).one()
+        self.assertEqual("합격", row.pass_type)
+        self.assertEqual("2026-03-15", row.acquired_date)
+        self.assertTrue(row.satisfied)
+
+    def test_school_reporting_no_requirements_clears_stale_rows(self):
+        """학교가 "조회내역이 없습니다"라고 답하면 옛 요건을 지워야 한다.
+
+        그 신호를 버리면 "학교가 요건을 지웠다"와 "파싱이 깨졌다"가 구분되지 않아
+        옛 행이 영원히 미충족으로 남는다.
+        """
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [_requirement()],
+        })
+        self.assertEqual(1, db.query(StudentGraduationRequirement).count())
+
+        stats = upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [_no_records_requirement()],
+        })
+        self.assertEqual(1, stats["requirements_deleted"])
+        self.assertEqual(0, db.query(StudentGraduationRequirement).count())
+
+    def test_parse_failure_still_does_not_clear_rows(self):
+        """표 자체가 안 온 경우(파싱 실패)는 여전히 지우지 않는다."""
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [_requirement()],
+        })
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [],
+        })
+        self.assertEqual(1, db.query(StudentGraduationRequirement).count())
+
+    def test_other_users_rows_are_untouched(self):
+        """**개인 학사정보다.** user_id 스코프가 빠지면 남의 데이터를 덮어쓰거나 지운다.
+
+        이 경로에 테스트가 하나도 없어서, 스코프 필터를 제거하는 뮤테이션이 전부
+        살아남았다(독립 리뷰 지적).
+        """
+        db = _make_db()
+        db.add(User(id=2, email="other@e.com", password_hash="x", name="남"))
+        db.flush()
+        other = {"category_statuses": [_category(category="교양선택")],
+                 "requirement_items": [_requirement(name="TOPCIT")]}
+        upsert_official_graduation_status(db, 2, other)
+
+        # user 1이 완전히 다른 내용으로 동기화해도 user 2 것은 그대로여야 한다.
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [_category()], "requirement_items": [_requirement()],
+        })
+
+        rows2 = db.query(StudentGraduationCategory).filter_by(user_id=2).all()
+        self.assertEqual(["교양선택"], [r.category for r in rows2])
+        reqs2 = db.query(StudentGraduationRequirement).filter_by(user_id=2).all()
+        self.assertEqual(["TOPCIT"], [r.requirement_name for r in reqs2])
+        self.assertEqual(1, db.query(StudentGraduationCategory).filter_by(user_id=1).count())
+
+    def test_existing_row_lookup_is_scoped_to_user(self):
+        """upsert의 기존 행 조회에 user_id가 빠지면 **남의 행을 덮어쓴다.**
+
+        stale-delete 쪽만 막으면 이 경로가 열려 있다 — 같은 (program_type, category)를
+        가진 다른 학생 행을 찾아 그 학점을 내 값으로 갈아끼운다.
+        """
+        db = _make_db()
+        db.add(User(id=2, email="other@e.com", password_hash="x", name="남"))
+        db.flush()
+        upsert_official_graduation_status(db, 2, {
+            "category_statuses": [_category(earned=99.0)], "requirement_items": [],
+        })
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [_category(earned=26.0)], "requirement_items": [],
+        })
+
+        # 각자 자기 값을 가져야 한다 (스코프가 없으면 user 2 행이 26.0으로 덮인다).
+        self.assertEqual(
+            99.0, float(db.query(StudentGraduationCategory).filter_by(user_id=2).one().earned_credits))
+        self.assertEqual(
+            26.0, float(db.query(StudentGraduationCategory).filter_by(user_id=1).one().earned_credits))
+        self.assertEqual(2, db.query(StudentGraduationCategory).count())
+
+    def test_no_records_row_is_not_stored_as_a_requirement(self):
+        """"조회내역이 없습니다."는 요건이 아니다 — 행으로 저장되면 안 된다.
+
+        (삭제 신호로 쓰는 것과는 별개다. `test_school_reporting_no_requirements_clears_stale_rows`
+        는 삭제를, 이건 저장 안 함을 본다.)
+        """
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [],
+            "requirement_items": [_no_records_requirement(), _requirement()],
+        })
+        rows = db.query(StudentGraduationRequirement).all()
+        self.assertEqual(["표준외국어능력시험"], [r.requirement_name for r in rows])
+
+    def test_duplicate_rows_keep_the_first(self):
+        """중복 행이 오면 첫 행만 반영한다(그리고 warning). 뒤 행이 이기면 안 된다."""
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [_category(earned=26.0), _category(earned=99.0)],
+            "requirement_items": [],
+        })
+        self.assertEqual(26.0, float(db.query(StudentGraduationCategory).one().earned_credits))
+
     def test_synced_at_is_recorded(self):
         db = _make_db()
         stamp = datetime.datetime(2026, 8, 19, 12, 0, tzinfo=datetime.UTC)
@@ -182,7 +324,9 @@ class UpsertOfficialStatusTest(unittest.TestCase):
             db, 1, {"category_statuses": [_category()], "requirement_items": []},
             synced_at=stamp,
         )
-        self.assertIsNotNone(db.query(StudentGraduationCategory).one().synced_at)
+        stored = db.query(StudentGraduationCategory).one().synced_at
+        # assertIsNotNone만 하면 synced_at 인자를 무시하는 변이가 살아남는다.
+        self.assertEqual(stamp.replace(tzinfo=None), stored.replace(tzinfo=None))
 
 
 if __name__ == "__main__":
