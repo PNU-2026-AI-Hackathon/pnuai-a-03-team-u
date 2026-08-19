@@ -450,9 +450,9 @@ _TOOLS = [
         "function": {
             "name": "finish_response",
             "description": (
-                "사용자에게 보여줄 최종 답변을 제출한다. schedules 배열에 validate_timetable로 "
-                "**build_timetable이 돌려준 offering_ids를 그대로** 넣어라 — 직접 고르거나 고쳐 넣으면 "
-                "시간 충돌·학점 상한이 확인되지 않은 조합이 사용자에게 나간다."
+                "사용자에게 보여줄 최종 답변을 제출한다. schedules 배열에는 "
+                "**build_timetable이 돌려준 offering_ids를 그대로** 넣어라 — 직접 고르거나 "
+                "고쳐 넣으면 시간 충돌·학점 상한이 확인되지 않은 조합이 사용자에게 나간다."
             ),
             "parameters": {
                 "type": "object",
@@ -1257,7 +1257,12 @@ class _TimeTableToolContext:
         # 필수 지정 분반이 필터(이수 완료·고정분 충돌·시간 제약)에 걸려 사라졌으면
         # 조용히 무시하면 안 된다 — 사용자가 콕 집어 요청한 것이라 왜 못 넣는지 알려야 한다.
         usable_ids = {s.offering_id for s in usable}
-        missing_required = sorted(must_include - usable_ids)
+        # **고정분은 이미 요구가 충족된 것이다.** `usable`에서는 "이미 시간표에 담겨 있음"
+        # 으로 먼저 빠지므로, 빼주지 않으면 사용자가 담아둔 분반을 지정했을 때
+        # "그 분반은 쓸 수 없습니다"라는 거짓 안내가 나간다. "140분반은 그대로 두고
+        # 나머지 채워줘"는 아주 자연스러운 요청이다(독립 리뷰가 재현).
+        # 같은 과목의 *다른* 분반을 지정한 경우는 locked_ids에 없으므로 계속 거절된다.
+        missing_required = sorted(must_include - usable_ids - locked_ids)
         if missing_required:
             reasons = {d["offering_id"]: d["reason"] for d in dropped}
             return {

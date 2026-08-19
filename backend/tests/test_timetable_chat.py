@@ -451,6 +451,125 @@ class TimetableChatFollowupsTest(unittest.TestCase):
         self.assertEqual("must_include_unavailable", result["reason"])
         self.assertEqual(201, result["unavailable"][0]["offering_id"])
 
+    def test_must_include_of_already_placed_section_is_satisfied(self):
+        """이미 담아둔 분반을 지정하면 **이미 충족된 것**이다.
+
+        `usable`에서 고정분은 "이미 시간표에 담겨 있음"으로 먼저 빠지므로, 그대로 두면
+        "140분반은 그대로 두고 나머지 채워줘"라는 자연스러운 요청에 **화면에 이미 들어있는
+        분반을 두고 "쓸 수 없습니다"라고 답한다**(고치면서 만든 회귀, 독립 리뷰가 재현).
+        """
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="이미담은과목",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        _add_course_with_offering(db, course_id=2, offering_id=102, name="추가후보",
+                                  credits=3.0, day="화", start="09:00", end="10:15")
+        db.add(CoursePlan(id=1, user_id=user.id, year="2026", semester="2학기"))
+        db.add(CoursePlanItem(plan_id=1, offering_id=101, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=1)
+
+        result = ctx.build_timetable(
+            offering_ids=[102], must_include_offering_ids=[101], target_credits=6,
+        )
+
+        self.assertTrue(result["ok"], msg=f"거부됨: {result.get('reason')}")
+        self.assertIn(101, result["schedules"][0]["offering_ids"])
+
+    def test_must_include_of_other_section_of_placed_course_is_still_rejected(self):
+        """단, 같은 과목의 **다른** 분반을 지정하면 여전히 거절해야 한다."""
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="확률및통계",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        _add_section(db, course_id=1, offering_id=102, section="141",
+                     day="화", start="09:00", end="10:15")
+        db.add(CoursePlan(id=1, user_id=user.id, year="2026", semester="2학기"))
+        db.add(CoursePlanItem(plan_id=1, offering_id=101, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=1)
+
+        result = ctx.build_timetable(
+            offering_ids=[102], must_include_offering_ids=[102], target_credits=3,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("must_include_unavailable", result["reason"])
+
+    def test_exact_budget_fit_is_allowed(self):
+        """남은 예산 == 후보 학점이면 담을 수 있다.
+
+        (참고: `remaining_budget < cheapest` 판정을 `<=`로 바꾸는 변이는 이 테스트로
+        안 잡힌다. 그 검사는 `if not combos:` 안에 있어서, 딱 맞는 조합이 실제로
+        만들어지면 도달하지 않기 때문이다. 그래도 "딱 맞으면 담긴다"는 동작 자체는
+        고정할 값어치가 있다.)
+        """
+        db = _make_db()
+        user = _make_student(db)   # 학점 상한 19
+        for i in range(6):
+            _add_course_with_offering(
+                db, course_id=1 + i, offering_id=400 + i, name=f"담은{i}", credits=3.0,
+                day="월화수목금토"[i], start="09:00", end="10:15",
+            )
+        # 남은 예산 1학점, 후보도 정확히 1학점
+        _add_course_with_offering(db, course_id=90, offering_id=490, name="딱맞는후보",
+                                  credits=1.0, day="일", start="09:00", end="10:15")
+        db.add(CoursePlan(id=9, user_id=user.id, year="2026", semester="2학기"))
+        for i in range(6):
+            db.add(CoursePlanItem(plan_id=9, offering_id=400 + i, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=9)
+
+        result = ctx.build_timetable(offering_ids=[490])
+
+        self.assertTrue(result["ok"], msg=f"경계에서 오거부: {result.get('reason')}")
+        self.assertIn(490, result["schedules"][0]["offering_ids"])
+
+    def test_time_conflict_is_not_reported_as_budget_exhaustion(self):
+        """예산은 남는데 시간이 겹쳐 못 만드는 경우 — 반대 방향 오답도 막는다."""
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=601, name="A",
+                                  credits=3.0, day="월", start="09:00", end="12:00")
+        _add_course_with_offering(db, course_id=2, offering_id=602, name="B",
+                                  credits=3.0, day="월", start="10:00", end="13:00")
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        # 둘 다 필수 지정 → 시간이 겹쳐 조합 불가. 예산(19학점)은 충분하다.
+        result = ctx.build_timetable(
+            offering_ids=[601, 602], must_include_offering_ids=[601, 602],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("no_feasible_combination", result["reason"])
+
+    def test_occupied_slots_skips_sections_without_time_info(self):
+        """시간 정보 없는 분반이 섞여도 깨지지 않아야 한다 — 실 DB엔 흔하다."""
+        db = _make_db()
+        user = _make_student(db)
+        _add_course_with_offering(db, course_id=1, offering_id=101, name="시간있음",
+                                  credits=3.0, day="월", start="09:00", end="10:15")
+        # CourseTime 행은 있는데 요일/시작시각이 비어 있는 분반. 실 DB에 흔하고,
+        # 가드가 없으면 여기서 터진다(크롤링이 아직 모든 분반의 시간을 못 채웠다).
+        db.add(Course(id=2, course_name="시간미상", category="전공선택", credits=3.0,
+                      department_id=100, year="3", semester="2"))
+        db.add(CourseOffering(id=102, course_id=2, year="2026", semester="2학기",
+                              section="001", professor="교수"))
+        db.add(CourseTime(offering_id=102, day_of_week=None, start_time=None, end_time=None))
+        db.add(CoursePlan(id=1, user_id=user.id, year="2026", semester="2학기"))
+        db.add(CoursePlanItem(plan_id=1, offering_id=101, source="manual"))
+        db.add(CoursePlanItem(plan_id=1, offering_id=102, source="manual"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기", plan_id=1)
+
+        result = ctx.dispatch("get_current_timetable", {})
+
+        self.assertEqual(2, result["offering_count"])
+        self.assertEqual({"월": ["09:00-10:15"]}, result["occupied_slots"])
+        # 학점 상한도 함께 준다 (남은 학점 판단에 필요)
+        self.assertEqual(19, result["credit_cap"])
+
     def test_credit_budget_exhaustion_is_not_reported_as_time_conflict(self):
         """학점이 모자란 건데 "시간이 겹쳐서"라고 답하면, LLM이 헛되이 후보를 넓혀
         재호출하고 사용자에게도 틀린 이유가 나간다."""
@@ -483,6 +602,8 @@ class TimetableChatFollowupsTest(unittest.TestCase):
         self.assertNotIn("validate_timetable", by_name["list_offered_courses"]["description"])
         self.assertIn("build_timetable", by_name["list_offered_courses"]["description"])
         self.assertIn("build_timetable", by_name["finish_response"]["description"])
+        # 앞 문장에 validate 참조가 남아 비문이 된 적이 있다 — 있으면 안 된다.
+        self.assertNotIn("validate_timetable", by_name["finish_response"]["description"])
 
 
 class ResolvePlanIdTest(unittest.TestCase):
