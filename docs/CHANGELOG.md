@@ -110,6 +110,39 @@
   배제한 가설: One-Stop 세션 미공유(깨끗한 컨텍스트 신규 로그인도 동일), 쿠키 미전달
   (`IMSESSID`·`route` 전달 확인), 헤드리스 차단(실제 Chrome UA도 동일), CSRF(my는 원래
   `csrfToken=''`로 렌더된다). 사용자 브라우저에서도 동일 증상 확인 → 학교 복구 대기.
+## 2026-08-19 (d0won) — alembic 리비전 그래프 사이클 해소 (마이그레이션 전면 불능이었음)
+
+`alembic current` / `heads` / `upgrade` 가 전부 `CycleDetected`로 죽고 있었다. 즉
+**2026-08-16부터 3일간 마이그레이션을 아무도 못 돌리는 상태**였다.
+
+- **원인: 중복 revision id.** PR #149에서 추가된
+  `c3d4e5f6a7b8_unique_graduation_requirement_scope.py`가 2026-07-09 PR #51의
+  `c3d4e5f6a7b8_add_department_name_and_plan_item_snapshots.py`와 **같은 id**를 썼다.
+  같은 id를 가진 파일이 둘이 되자 alembic이 한 노드에 서로 다른 부모(`b2c3d4e5f6a7`,
+  `125c05c5df60`)를 붙였고, 고리가 생겼다(`CycleDetected`가 23개 리비전을 지목).
+- **왜 3일간 안 보였나**: 마이그레이션을 실행할 때만 터진다. import도 되고, 테스트도
+  통과하고, 앱도 뜬다.
+- **고침**: 새 id(`883cd0847a1e`) 발급 + 갈래를 만들지 않도록 당시 head였던
+  `8f3c21b47ae0` 뒤로 재배치. head 1개로 정리됐다.
+- **DB 상태 확인**: Supabase는 `alembic_version=8f3c21b47ae0`인데 정작 이 마이그레이션이
+  만들려던 `uq_graduation_requirements_scope` 인덱스는 **이미 존재**한다 — alembic 기록
+  없이 수동 적용된 상태. 마이그레이션 본문이 `CREATE UNIQUE INDEX IF NOT EXISTS`라
+  다시 돌려도 no-op이다.
+- **로컬 리허설 2종 통과**(CLAUDE.md 원칙):
+  1. 빈 DB에서 `upgrade head` 완주 → 29테이블 + 인덱스 생성.
+     단 **`CREATE EXTENSION vector`를 먼저 해줘야 한다** — init 리비전이 `VECTOR(1536)`
+     컬럼을 쓰는데 그 확장을 만드는 마이그레이션이 레포에 없다(선행 결함, 이 PR 범위 밖).
+     진짜 빈 DB에서는 `type "vector" does not exist`로 죽는다.
+  2. **Supabase 상태 시뮬레이션**(인덱스는 있고 version만 `8f3c21b47ae0`) → 마이그레이션이
+     no-op으로 지나가고 head로 stamp됨
+- **CI 워크플로 추가**(`.github/workflows/migration-graph.yml`): 마이그레이션 변경 시
+  그래프 정합성을 검사한다. 기존 워크플로 3개 중 어느 것도 `backend/migrations/**`를
+  트리거 path로 갖고 있지 않아, 테스트만 넣으면 **같은 사고가 또 나도 CI는 통과**한다
+  (독립 리뷰에서 지적받아 추가).
+- **회귀 테스트 추가**(`backend/tests/test_migrations.py`): 중복 revision id 검사 +
+  그래프 빌드/단일 head 검사. 수정 전 상태에서 두 테스트 모두 실패하는 것까지 확인했다.
+  새 마이그레이션은 id를 손으로 짓지 말고 `alembic revision -m "..."`이 발급하게 할 것.
+- Supabase 반영(`alembic upgrade head` 또는 `stamp`)은 아직 안 했다 — 별도 승인 후 실행.
 
 ## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 9건 + 의존성 핀·보안 스캔(P1-3)
 

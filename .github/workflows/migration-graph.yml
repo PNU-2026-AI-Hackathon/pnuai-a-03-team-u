@@ -1,0 +1,58 @@
+name: migration-graph
+
+# alembic 리비전 그래프 정합성만 확인하는 경량 워크플로. DB도 LLM도 안 쓴다.
+#
+# 왜 따로 있나: 2026-08-16 PR #149가 **이미 쓰이던 revision id**를 재사용해서 그래프에
+# 사이클이 생겼고, `alembic current`/`heads`/`upgrade`가 전부 죽은 채로 3일이 지났다.
+# 마이그레이션은 실행할 때만 터지기 때문에 — import도 되고 테스트도 통과하고 앱도 뜬다 —
+# 아무도 몰랐다.
+#
+# golden-eval-dry에 얹지 않은 이유: 그건 챗 하니스가 도는지 보는 워크플로이고,
+# 트리거 path에 backend/migrations/**가 없어서 **마이그레이션만 건드리는 PR에는 아예
+# 안 뜬다.** 마이그레이션 변경을 실제로 감시하려면 트리거가 따로 있어야 한다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/migrations/**"
+      - "backend/alembic.ini"
+      - "backend/tests/test_migrations.py"
+      - ".github/workflows/migration-graph.yml"
+  pull_request:
+    paths:
+      - "backend/migrations/**"
+      - "backend/alembic.ini"
+      - "backend/tests/test_migrations.py"
+      - ".github/workflows/migration-graph.yml"
+
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+          pip install pytest==9.1.1
+
+      - name: Migration graph integrity (중복 id / 사이클 / 단일 head)
+        working-directory: backend
+        run: python -m pytest tests/test_migrations.py -q

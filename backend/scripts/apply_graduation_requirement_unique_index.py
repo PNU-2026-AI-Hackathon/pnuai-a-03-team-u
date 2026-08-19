@@ -1,11 +1,23 @@
 """graduation_requirements 스코프 유니크 인덱스를 운영 DB에 반영한다.
 
-## 왜 alembic이 아니라 이 스크립트인가
+## ⚠️ 이 스크립트는 사실상 용도 폐기됐다 (2026-08-19)
 
-운영 Supabase의 `alembic_version`이 `8f3c21b47ae0`인데 이 리비전이 로컬
-`migrations/versions/`에 없다 — `alembic upgrade`가 "Can't locate revision"으로 실패한다
-(알려진 상황). 그래서 **신규 DB용 마이그레이션**(`c3d4e5f6a7b8`)은 그대로 남기고,
-운영에는 이 스크립트로 같은 DDL만 직접 반영한다.
+alembic이 복구되면서 `alembic upgrade head`가 같은 일을 한다
+(`883cd0847a1e_unique_graduation_requirement_scope.py`). 새로 쓸 일이 없다 —
+남겨두는 건 운영에 이 인덱스가 **alembic 기록 없이** 들어간 경위를 설명하기 위해서다.
+
+아래 옛 설명 두 군데는 지금 기준으로 틀렸으니 그대로 믿지 말 것:
+
+- "`8f3c21b47ae0`이 로컬 migrations/versions/에 없다" — 2026-08-16에 추가돼 지금은 있다.
+- "신규 DB용 마이그레이션(`c3d4e5f6a7b8`)" — 그 id는 **2026-07-09 로드맵 스냅샷
+  마이그레이션**을 가리킨다. 유니크 인덱스 쪽은 중복 id 사고 때문에 `883cd0847a1e`로
+  다시 발급됐다(경위는 그 파일 docstring 참고).
+
+## (옛 설명) 왜 alembic이 아니라 이 스크립트였나
+
+당시 운영 Supabase의 `alembic_version`이 `8f3c21b47ae0`인데 그 리비전이 로컬
+`migrations/versions/`에 없어서 `alembic upgrade`가 "Can't locate revision"으로
+실패했다. 그래서 운영에는 이 스크립트로 같은 DDL만 직접 반영했다.
 
 ## 무엇을 만드나
 
