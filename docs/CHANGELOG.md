@@ -14,6 +14,33 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-19 (d0won) — alembic 리비전 그래프 사이클 해소 (마이그레이션 전면 불능이었음)
+
+`alembic current` / `heads` / `upgrade` 가 전부 `CycleDetected`로 죽고 있었다. 즉
+**2026-08-16부터 3일간 마이그레이션을 아무도 못 돌리는 상태**였다.
+
+- **원인: 중복 revision id.** PR #149에서 추가된
+  `c3d4e5f6a7b8_unique_graduation_requirement_scope.py`가 2026-07-09 PR #51의
+  `c3d4e5f6a7b8_add_department_name_and_plan_item_snapshots.py`와 **같은 id**를 썼다.
+  같은 id를 가진 파일이 둘이 되자 alembic이 한 노드에 서로 다른 부모(`b2c3d4e5f6a7`,
+  `125c05c5df60`)를 붙였고, 19개 리비전짜리 고리가 생겼다.
+- **왜 3일간 안 보였나**: 마이그레이션을 실행할 때만 터진다. import도 되고, 테스트도
+  통과하고, 앱도 뜬다.
+- **고침**: 새 id(`883cd0847a1e`) 발급 + 갈래를 만들지 않도록 당시 head였던
+  `8f3c21b47ae0` 뒤로 재배치. head 1개로 정리됐다.
+- **DB 상태 확인**: Supabase는 `alembic_version=8f3c21b47ae0`인데 정작 이 마이그레이션이
+  만들려던 `uq_graduation_requirements_scope` 인덱스는 **이미 존재**한다 — alembic 기록
+  없이 수동 적용된 상태. 마이그레이션 본문이 `CREATE UNIQUE INDEX IF NOT EXISTS`라
+  다시 돌려도 no-op이다.
+- **로컬 리허설 2종 통과**(CLAUDE.md 원칙):
+  1. 빈 DB에서 `upgrade head` 완주 → 29테이블 + 인덱스 생성
+  2. **Supabase 상태 시뮬레이션**(인덱스는 있고 version만 `8f3c21b47ae0`) → 마이그레이션이
+     no-op으로 지나가고 head로 stamp됨
+- **회귀 테스트 추가**(`backend/tests/test_migrations.py`): 중복 revision id 검사 +
+  그래프 빌드/단일 head 검사. 수정 전 상태에서 두 테스트 모두 실패하는 것까지 확인했다.
+  새 마이그레이션은 id를 손으로 짓지 말고 `alembic revision -m "..."`이 발급하게 할 것.
+- Supabase 반영(`alembic upgrade head` 또는 `stamp`)은 아직 안 했다 — 별도 승인 후 실행.
+
 ## 2026-08-15 (blackest21) — 브랜치 전수 리뷰 결함 9건 + 의존성 핀·보안 스캔(P1-3)
 
 미PR 상태로 쌓여 있던 `fix/chat-quality-and-security-docs`(main +21커밋, 61파일)를 전수
