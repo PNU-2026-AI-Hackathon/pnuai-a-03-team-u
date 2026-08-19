@@ -136,14 +136,17 @@ def upsert_official_graduation_status(
             # 틀렸던 전례가 있어 현실성도 충분하다.
             requirement_table_answered = True
             continue
-        # 위 `source_table_name` 검사는 지금 구조에서는 중복 방어다 — 다른 표 행은
-        # 아래 `program_type` 가드에도 걸린다(표 2·3엔 `졸업기준_학적신청구분` 키가 없다).
-        # 그래서 그 줄을 지우는 뮤테이션은 테스트로 안 잡힌다.
+        # ⚠️ 위 `source_table_name` 검사는 **중복 방어가 아니라 이 경로의 유일한 방어**다.
+        # 지우면 안 된다.
         #
-        # **단, 플래그를 잘못 두면 중복이 아니게 된다.** `requirement_table_answered`를
-        # 위 `no_records` 분기 밖으로 빼면, 표 2·3 행만 온 페이로드에서도 플래그가 서서
-        # 요건 전체가 삭제된다(2차 리뷰가 그 상태를 실측했다). 두 줄은 짝으로 봐야 한다 —
-        # `test_rows_from_other_tables_do_not_clear_requirements`가 그 조합을 고정한다.
+        # 다른 표에서 온 `no_records` 행은 아래 `program_type` 가드에 **도달하지 못한다** —
+        # 그 앞의 `no_records` 분기가 먼저 `continue`하기 때문이다. 그리고 표 4·5
+        # (`general_required_course_completion`, `major_course_completion`)는 **매 크롤마다
+        # `no_records`로 온다**(실크롤 샘플로 확인). 즉 이 검사를 빼면 표 6 컬럼명만 바뀌어도
+        # 표 4·5의 no_records가 플래그를 세워 **요건 스냅샷 전체가 삭제된다.**
+        #
+        # 2·3차 리뷰에서 이 줄의 성격을 두 번 잘못 적었다("중복 방어라 안 잡히는 게 맞다").
+        # `test_rows_from_other_tables_do_not_clear_requirements`가 이제 실제로 고정한다.
         raw = row.get("raw_record", {})
         program_type = _clean(raw.get("졸업기준_학적신청구분"), 30)
         requirement_name = _clean(row.get("required_category"), 100)

@@ -262,23 +262,32 @@ class UpsertOfficialStatusTest(unittest.TestCase):
         self.assertEqual(0, stats["requirements_deleted"])
         self.assertEqual(1, db.query(StudentGraduationRequirement).count())
 
-    def test_rows_from_other_tables_do_not_clear_requirements(self):
-        """표 2·3 행만 온 페이로드가 요건을 지우면 안 된다.
+    def test_other_tables_no_records_does_not_clear_requirements(self):
+        """**다른 표**의 `no_records`가 요건 삭제 신호로 오인되면 안 된다.
 
-        `source_table_name` 검사는 중복 방어가 아니라 **유일한 방어**다.
+        표 4·5(`general_required_course_completion`, `major_course_completion`)는
+        **매 크롤마다 `no_records`로 온다**(실크롤 샘플 확인). 그 행들은 `program_type`
+        가드에 도달하지도 못한다 — 그 앞 `no_records` 분기가 먼저 `continue`하기 때문이다.
+        따라서 `source_table_name` 검사가 이 경로의 **유일한 방어**다.
+
+        여기서는 최악 조합을 준다: 표 5의 no_records + 표 6은 왔지만 파싱 열화.
+        가드가 없으면 요건 스냅샷이 통째로 날아간다.
         """
         db = _make_db()
         upsert_official_graduation_status(db, 1, {
             "category_statuses": [], "requirement_items": [_requirement()],
         })
+
+        other_table_no_records = _no_records_requirement()
+        other_table_no_records["source_table_name"] = "major_course_completion"
+        degraded = _requirement()
+        degraded["raw_record"] = {"졸업기준_학적신청구분_변경됨": "주전공"}
+
         stats = upsert_official_graduation_status(db, 1, {
             "category_statuses": [],
-            "requirement_items": [{
-                "source_table_name": "required_course_completion",
-                "required_category": "교양필수", "required_course_name": "고전읽기와토론",
-                "completed_status": "N", "raw_record": {},
-            }],
+            "requirement_items": [other_table_no_records, degraded],
         })
+
         self.assertEqual(0, stats["requirements_deleted"])
         self.assertEqual(1, db.query(StudentGraduationRequirement).count())
 
