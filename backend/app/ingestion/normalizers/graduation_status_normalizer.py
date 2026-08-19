@@ -128,15 +128,22 @@ def upsert_official_graduation_status(
     for row in normalized.get("requirement_items", []):
         if row.get("source_table_name") != _REQUIREMENT_TABLE:
             continue
-        requirement_table_answered = True
         if row.get("completed_status") == "no_records":
+            # **여기서만** 플래그를 세운다. 표 6 행이 "있기만" 하면 세우도록 두면,
+            # 표는 정상적으로 왔는데 컬럼명이 바뀌어 파싱만 실패한 경우에도 플래그가
+            # 서서 **요건 스냅샷을 통째로 지운다** — 원래 가드가 막으려던 바로 그
+            # 케이스다(독립 2차 리뷰가 실측으로 재현). 하필 이 변경에서 컬럼명 접두어를
+            # 틀렸던 전례가 있어 현실성도 충분하다.
+            requirement_table_answered = True
             continue
-        # 참고: 위 `source_table_name` 검사와 이 `no_records` 검사는 **중복 방어**다.
-        # 실데이터에서는 아래 `program_type` 가드가 어차피 둘 다 걸러낸다(다른 표는
-        # `졸업기준_학적신청구분` 키 자체가 없고, no_records 행은 raw_record가
-        # `{no_records, message}`뿐이다). 뮤테이션 테스트에서 이 두 줄을 지워도 아무
-        # 테스트가 안 깨지는 이유가 그것이다 — 검출력이 없는 게 아니라 방어가 겹친 것.
-        # 의도를 드러내는 값이 있어 남긴다.
+        # 위 `source_table_name` 검사는 지금 구조에서는 중복 방어다 — 다른 표 행은
+        # 아래 `program_type` 가드에도 걸린다(표 2·3엔 `졸업기준_학적신청구분` 키가 없다).
+        # 그래서 그 줄을 지우는 뮤테이션은 테스트로 안 잡힌다.
+        #
+        # **단, 플래그를 잘못 두면 중복이 아니게 된다.** `requirement_table_answered`를
+        # 위 `no_records` 분기 밖으로 빼면, 표 2·3 행만 온 페이로드에서도 플래그가 서서
+        # 요건 전체가 삭제된다(2차 리뷰가 그 상태를 실측했다). 두 줄은 짝으로 봐야 한다 —
+        # `test_rows_from_other_tables_do_not_clear_requirements`가 그 조합을 고정한다.
         raw = row.get("raw_record", {})
         program_type = _clean(raw.get("졸업기준_학적신청구분"), 30)
         requirement_name = _clean(row.get("required_category"), 100)

@@ -229,8 +229,10 @@ class StudentGraduationRequirement(TimestampMixin, Base):
         주전공        TOPCIT                                                 N
         주전공        졸업과제                                               N
 
-    어학 **점수** 자체는 여기 없다 — 그건 my.pusan(`user_language_scores`)에 있다.
-    이 테이블은 "학교가 그 요건을 충족으로 봤는가"만 담는다.
+    어학 **점수**의 주된 출처는 my.pusan(`user_language_scores`)이다. 다만 `note`가
+    원문의 `학생이수정보_비고_예외사항_상세내역_점수` 컬럼에서 오므로 **점수가 실릴 수
+    있는 자리**다. 이 테이블의 역할은 "학교가 그 요건을 충족으로 봤는가"이고, 점수
+    조회는 `user_language_scores`를 쓰는 게 맞다.
     """
 
     __tablename__ = "student_graduation_requirements"

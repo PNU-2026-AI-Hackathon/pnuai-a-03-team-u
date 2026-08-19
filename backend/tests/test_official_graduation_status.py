@@ -236,6 +236,89 @@ class UpsertOfficialStatusTest(unittest.TestCase):
         self.assertEqual(1, stats["requirements_deleted"])
         self.assertEqual(0, db.query(StudentGraduationRequirement).count())
 
+    def test_parse_degradation_does_not_clear_rows(self):
+        """표 6은 왔는데 **파싱만 실패**하면 지우면 안 된다.
+
+        "학교가 요건 없음이라 답함"과 "컬럼명이 바뀌어 못 읽음"은 다르다. 플래그를
+        `no_records` 분기 밖에 두면 둘이 같아져서, 표가 정상적으로 왔는데 컬럼명만
+        바뀐 경우에 **요건 스냅샷을 통째로 날린다** — 원래 가드가 막으려던 그 케이스다.
+        (이 변경 자체가 컬럼명 접두어를 틀린 전례가 있어 현실성이 충분하다.)
+        """
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [_requirement()],
+        })
+
+        # 표 6 행은 3개 왔는데 학적신청구분 키 이름이 바뀌어 전부 파싱 실패
+        broken = []
+        for name in ("표준외국어능력시험", "TOPCIT", "졸업과제"):
+            row = _requirement(name=name)
+            row["raw_record"] = {"졸업기준_학적신청구분_변경됨": "주전공"}
+            broken.append(row)
+        stats = upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": broken,
+        })
+
+        self.assertEqual(0, stats["requirements_deleted"])
+        self.assertEqual(1, db.query(StudentGraduationRequirement).count())
+
+    def test_rows_from_other_tables_do_not_clear_requirements(self):
+        """표 2·3 행만 온 페이로드가 요건을 지우면 안 된다.
+
+        `source_table_name` 검사는 중복 방어가 아니라 **유일한 방어**다.
+        """
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [], "requirement_items": [_requirement()],
+        })
+        stats = upsert_official_graduation_status(db, 1, {
+            "category_statuses": [],
+            "requirement_items": [{
+                "source_table_name": "required_course_completion",
+                "required_category": "교양필수", "required_course_name": "고전읽기와토론",
+                "completed_status": "N", "raw_record": {},
+            }],
+        })
+        self.assertEqual(0, stats["requirements_deleted"])
+        self.assertEqual(1, db.query(StudentGraduationRequirement).count())
+
+    def test_requirement_lookup_is_scoped_to_user(self):
+        """요건 쪽 `existing` 조회에도 user_id가 필요하다.
+
+        기존 스코프 테스트는 두 학생에게 **서로 다른 요건명**을 줘서 충돌이 안 났다.
+        같은 (program_type, requirement_name, detail_name)을 줘야 실제로 덮어쓰기가 난다.
+        """
+        db = _make_db()
+        db.add(User(id=2, email="other@e.com", password_hash="x", name="남"))
+        db.flush()
+        upsert_official_graduation_status(db, 2, {
+            "category_statuses": [],
+            "requirement_items": [_requirement(status="Y", pass_type="합격",
+                                               acquired_date="2025-01-01")],
+        })
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [],
+            "requirement_items": [_requirement(status="N")],
+        })
+
+        r2 = db.query(StudentGraduationRequirement).filter_by(user_id=2).one()
+        self.assertTrue(r2.satisfied, msg="남의 요건이 덮어써졌다")
+        self.assertEqual("합격", r2.pass_type)
+        r1 = db.query(StudentGraduationRequirement).filter_by(user_id=1).one()
+        self.assertFalse(r1.satisfied)
+
+    def test_duplicate_requirement_rows_keep_the_first(self):
+        db = _make_db()
+        upsert_official_graduation_status(db, 1, {
+            "category_statuses": [],
+            "requirement_items": [
+                _requirement(status="Y", pass_type="합격"),
+                _requirement(status="N", pass_type="불합격"),
+            ],
+        })
+        row = db.query(StudentGraduationRequirement).one()
+        self.assertEqual("합격", row.pass_type)
+
     def test_parse_failure_still_does_not_clear_rows(self):
         """표 자체가 안 온 경우(파싱 실패)는 여전히 지우지 않는다."""
         db = _make_db()
