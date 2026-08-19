@@ -34,7 +34,7 @@ from app.ingestion.crawlers.my_pusan_extracurricular import (
     safe_location,
 )
 from app.ingestion.crawlers.pnu_session import PnuLoginError, pnu_session
-from app.ingestion.crawlers.student_info import fetch_student_record
+from app.ingestion.crawlers.student_info import fetch_academic_status_changes, fetch_student_record
 from app.ingestion.normalizers.graduation_status_normalizer import (
     upsert_official_graduation_status,
 )
@@ -145,6 +145,16 @@ def sync_portal_data(
     try:
         with pnu_session(payload.login_id, payload.password.get_secret_value()) as page:
             student_record = fetch_student_record(page)
+            # 학적변동 내역(편입학 여부). 같은 학적부 메뉴라 추가 로그인/이동 비용이
+            # 거의 없다. 실패해도 동기화 전체를 깨지 않는다 — 못 읽으면 기존
+            # admission_type을 그대로 둔다.
+            try:
+                status_changes = fetch_academic_status_changes(page)
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "학적변동 내역 조회 실패 (user_id=%s): %s", current_user.id, exc
+                )
+                status_changes = []
             grades_tables = fetch_all_grades(page)
             graduation_tables = fetch_graduation_requirement(page)
             expected_info = extract_graduation_expected_info(page)
@@ -189,7 +199,7 @@ def sync_portal_data(
     # 실제로 이 값을 재사용하는 코드가 없다 — 스케줄된 백그라운드 크롤이 없고
     # decrypt_secret은 호출되지 않는다. 매 sync 요청마다 사용자가 다시 입력하는
     # 흐름을 유지한다. 자동 크롤 도입 시점에 이 정책 재검토.
-    map_student_record(db, current_user.id, student_record)
+    map_student_record(db, current_user.id, student_record, status_changes)
     saved_records = map_grades(db, current_user.id, grades_tables)
     saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)
     liberal_area_updates = _refine_liberal_area_categories(

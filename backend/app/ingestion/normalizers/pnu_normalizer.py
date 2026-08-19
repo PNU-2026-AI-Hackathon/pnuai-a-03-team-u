@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.security import encrypt_secret
 from app.domains.academics.hierarchy import get_or_create_major, resolve_hierarchy
 from app.domains.academics.models import Department, StudentCourseRecord, UserAcademicProgram
+from app.domains.users.admission import infer_admission_type_from_status_changes
 from app.domains.users.models import PortalCredential, User
 
 _GRADE_TABLE_HEADER = "학년도"
@@ -67,9 +68,17 @@ def _split_college_department_major(raw: str | None) -> tuple[str | None, str | 
     return college, department, major
 
 
-def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> UserAcademicProgram:
+def map_student_record(
+    db: Session,
+    user_id: int,
+    record: dict[str, str],
+    status_changes: list[dict[str, str]] | None = None,
+) -> UserAcademicProgram:
     """학적부 기본정보(student_info.fetch_student_record 결과)를
     User 기본정보 갱신 + UserAcademicProgram(주전공) upsert로 매핑한다.
+
+    `status_changes`(학적변동 내역)를 주면 편입 여부를 자동 판정한다. 안 주거나
+    편입 행이 없으면 기존 `admission_type`을 건드리지 않는다.
     """
     college, department, major = _split_college_department_major(record.get("소속학과"))
     department_id, major_id = resolve_hierarchy(db, None, college, department, major)
@@ -83,9 +92,20 @@ def map_student_record(db: Session, user_id: int, record: dict[str, str]) -> Use
         if department_id:
             user.department_id = department_id
         user.major_id = major_id
-        academic_year = re.sub(r"\D", "", record.get("학년", ""))
-        if academic_year:
-            user.academic_year = int(academic_year)
+        # 학적부의 실제 라벨은 "학년/학기"다(값 예: "3"). 예전에는 `record["학년"]`을
+        # 찾아서 **항상 빈 문자열**이었고, academic_year가 영영 None으로 남았다.
+        # 그러면 로드맵이 학년을 모른 채 1학년으로 잡는다. 라벨이 또 바뀔 수 있으니
+        # 두 표기를 모두 받아주고, "3/1"처럼 학기까지 붙어 나와도 맨 앞 숫자만 쓴다
+        # (\D 제거로는 "31"이 되어버린다).
+        raw_grade = record.get("학년/학기") or record.get("학년") or ""
+        grade_match = re.match(r"\s*(\d+)", raw_grade)
+        if grade_match:
+            user.academic_year = int(grade_match.group(1))
+
+        # 편입 여부는 학적변동 내역이 있을 때만 판정한다(없으면 기존 값 유지).
+        inferred = infer_admission_type_from_status_changes(status_changes)
+        if inferred is not None:
+            user.admission_type = inferred
 
     program = (
         db.query(UserAcademicProgram)

@@ -43,3 +43,34 @@ def is_transfer(value: str | None) -> bool:
 def entry_grade(value: str | None) -> int:
     """이 학생의 커리큘럼이 시작되는 학년."""
     return TRANSFER_ENTRY_GRADE if is_transfer(value) else 1
+
+
+# 학적부 "학적변동" 표의 변동구분 중 편입으로 보는 값. 부산대는 "편입학" 하나로
+# 쓰지만 표기가 바뀔 수 있어 부분 일치로 본다("일반편입학" 등).
+_TRANSFER_CHANGE_KEYWORD = "편입"
+
+
+def infer_admission_type_from_status_changes(
+    rows: list[dict[str, str]] | None,
+) -> AdmissionType | None:
+    """학적부 학적변동 내역에서 편입 여부를 판정한다.
+
+    `None`을 돌려주면 "판정하지 않음"이다 — 호출부는 기존 값을 그대로 둬야 한다.
+    편입 기록이 없다고 해서 freshman으로 **덮어쓰지 않는다**: 표를 못 읽었거나
+    구조가 바뀐 경우와, 진짜 신입학인 경우를 구분할 수 없기 때문이다. 반대 방향
+    (freshman → transfer)은 1·2학년을 화면에서 감추는 파괴적인 동작이라
+    (`normalize_admission_type` 참고) 편입 행이 확실할 때만 한다.
+
+    취소된 변동(취소여부 Y)은 무시한다 — 편입 신청이 취소된 이력이 남아 있는
+    경우까지 편입생으로 보면 안 된다.
+    """
+    if not rows:
+        return None
+    for row in rows:
+        kind = (row.get("변동구분") or "").strip()
+        if _TRANSFER_CHANGE_KEYWORD not in kind:
+            continue
+        if (row.get("취소여부") or "").strip().upper() == "Y":
+            continue
+        return TRANSFER
+    return None

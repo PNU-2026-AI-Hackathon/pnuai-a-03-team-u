@@ -203,7 +203,7 @@ class MapStudentRecordTest(unittest.TestCase):
             "성명": "홍길동",
             "학번": "202412345",
             "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
-            "학년": "3학년",
+            "학년/학기": "3",
             "교육과정적용년도": "2024",
             "학적상태": "재학",
         })
@@ -216,14 +216,65 @@ class MapStudentRecordTest(unittest.TestCase):
         self.assertEqual("active", program.status)
         self.assertIsNotNone(program.major_id)
 
+    def test_학년_라벨은_학년슬래시학기다(self):
+        """실제 학적부 라벨은 "학년"이 아니라 "학년/학기"다(값 예: "3").
+
+        예전 코드는 `record["학년"]`을 찾아 **항상 빈 문자열**을 읽었고, 그 결과
+        academic_year가 영영 None으로 남아 로드맵이 학년을 1로 잡았다. 이 테스트의
+        픽스처도 같이 틀린 라벨을 쓰고 있어서 버그를 못 잡았다(2026-08-19).
+        """
+        db = self.make_db()
+        map_student_record(db, 1, {
+            "성명": "홍길동", "학번": "202412345",
+            "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
+            "학년/학기": "3", "교육과정적용년도": "2024", "학적상태": "재학",
+        })
+        self.assertEqual(3, db.get(User, 1).academic_year)
+
+    def test_학년에_학기가_붙어와도_학년만_읽는다(self):
+        """"3/1"처럼 학기까지 붙어 나와도 31이 되면 안 된다."""
+        db = self.make_db()
+        map_student_record(db, 1, {
+            "성명": "홍길동", "학번": "202412345",
+            "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
+            "학년/학기": "3/1", "교육과정적용년도": "2024", "학적상태": "재학",
+        })
+        self.assertEqual(3, db.get(User, 1).academic_year)
+
+    def test_학적변동에_편입학이_있으면_transfer로_잡는다(self):
+        db = self.make_db()
+        map_student_record(db, 1, {
+            "성명": "홍길동", "학번": "202455494",
+            "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
+            "학년/학기": "3", "교육과정적용년도": "2024", "학적상태": "재학",
+        }, [{"학년도": "2026", "학기": "1학기", "변동일자": "2026-03-01",
+             "변동구분": "편입학", "취소여부": "N"}])
+        self.assertEqual("transfer", db.get(User, 1).admission_type)
+
+    def test_학적변동을_못읽으면_기존_admission_type을_유지한다(self):
+        """빈 목록은 "신입학"이 아니라 "판정 불가"다.
+
+        표 구조가 바뀌어 못 읽은 경우와 진짜 신입학을 구분할 수 없으므로,
+        기존에 transfer로 잡혀 있던 사용자를 freshman으로 덮어쓰면 안 된다.
+        """
+        db = self.make_db()
+        db.get(User, 1).admission_type = "transfer"
+        db.flush()
+        map_student_record(db, 1, {
+            "성명": "홍길동", "학번": "202455494",
+            "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
+            "학년/학기": "3", "교육과정적용년도": "2024", "학적상태": "재학",
+        }, [])
+        self.assertEqual("transfer", db.get(User, 1).admission_type)
+
     def test_rerun_updates_the_same_primary_program(self):
         db = self.make_db()
-        base = {"성명": "홍길동", "학번": "202412345", "학년": "3학년",
+        base = {"성명": "홍길동", "학번": "202412345", "학년/학기": "3",
                 "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
                 "교육과정적용년도": "2024", "학적상태": "재학"}
         map_student_record(db, 1, base)
         db.commit()
-        map_student_record(db, 1, {**base, "학년": "4학년"})
+        map_student_record(db, 1, {**base, "학년/학기": "4"})
         db.commit()
 
         programs = db.query(UserAcademicProgram).filter_by(program_type="primary").all()
