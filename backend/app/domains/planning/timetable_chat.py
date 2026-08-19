@@ -573,7 +573,13 @@ def _times_violate_constraint(times, constraint: dict | None) -> str | None:
 # 조합을 실제로 짜는 건 여기서 한다.
 
 _MAX_SEARCH_NODES = 30_000     # 탐색 폭주 방지 (후보가 많아도 응답 시간이 튀지 않게)
-_MAX_COMBOS_COLLECTED = 60     # 랭킹 전에 모을 조합 수
+# 모아둔 조합이 이 수를 넘으면 학점 높은 순으로 잘라 메모리를 묶는다. **탐색은 멈추지
+# 않는다.** 예전엔 "N개 모으면 return"이었는데, DFS가 include-first라 그 N개를 1순위 과목의
+# 첫 분반 서브트리에서 다 써버리면 **그 과목의 다른 분반도, 그 과목을 빼는 가지도 영영
+# 탐색되지 않았다.** 독립 리뷰 실측: 같은 후보 풀에서 18학점이 가능한데 9학점만 내놓고
+# "최대 9학점"이라고 단언했다 — 이 변경이 없애려던 실패 유형 그대로다.
+_COMBO_PRUNE_AT = 400
+_COMBO_PRUNE_KEEP = 150
 _MAX_COURSE_GROUPS = 14        # 탐색에 넣을 과목 수 상한 (우선순위 앞쪽부터)
 _MAX_SCHEDULES_RETURNED = 3
 
@@ -627,7 +633,7 @@ def _search_feasible_combos(
     groups: list[tuple[bool, list[_SectionInfo]]],
     credit_cap: float,
     target_credits: float,
-) -> list[list[_SectionInfo]]:
+) -> tuple[list[list[_SectionInfo]], bool]:
     """과목별 분반 후보에서 시간 충돌 없는 조합들을 찾는다.
 
     groups: (필수 포함 여부, 그 과목의 분반 후보들) 목록. 우선순위 높은 과목이 앞.
@@ -636,21 +642,29 @@ def _search_feasible_combos(
     탐색은 "넣어보기"를 먼저, "건너뛰기"를 나중에 해서 학점을 많이 채우는 조합이 먼저
     쌓이게 한다. 노드 예산(_MAX_SEARCH_NODES)으로 상한을 둔다.
 
-    반환: 랭킹 전 조합 목록. 목표 학점(target_credits)을 넘긴 조합이 하나라도 있으면
-    그것들만, 하나도 없으면 찾은 것 중 학점이 큰 순으로 돌려준다 — 목표에 못 미쳐도
-    "아무것도 못 만들었다"보다 낫다.
+    반환: (랭킹 전 조합 목록, 탐색이 예산에 걸려 잘렸는지).
+    목표 학점(target_credits)을 넘긴 조합이 하나라도 있으면 그것들만, 하나도 없으면 찾은
+    것 중 학점이 큰 순으로 돌려준다 — 목표에 못 미쳐도 "아무것도 못 만들었다"보다 낫다.
+
+    두 번째 값이 True면 **"이게 최대다"라고 단언하면 안 된다** — 안 본 가지가 남아 있다.
     """
     collected: list[tuple[list[_SectionInfo], float]] = []
     nodes = 0
+    truncated = False
 
     def dfs(index: int, chosen: list[_SectionInfo], credits: float) -> None:
-        nonlocal nodes
-        if nodes >= _MAX_SEARCH_NODES or len(collected) >= _MAX_COMBOS_COLLECTED:
+        nonlocal nodes, truncated
+        if nodes >= _MAX_SEARCH_NODES:
+            truncated = True
             return
         nodes += 1
         if index == len(groups):
             if chosen:
                 collected.append((list(chosen), credits))
+                if len(collected) > _COMBO_PRUNE_AT:
+                    # 메모리만 묶는다. 여기서 return하면 트리가 굶는다.
+                    collected.sort(key=lambda pair: -pair[1])
+                    del collected[_COMBO_PRUNE_KEEP:]
             return
 
         required, sections = groups[index]
@@ -669,13 +683,13 @@ def _search_feasible_combos(
 
     dfs(0, [], 0.0)
     if not collected:
-        return []
+        return [], truncated
 
     reached = [combo for combo, credits in collected if credits >= target_credits]
     if reached:
-        return reached
+        return reached, truncated
     collected.sort(key=lambda pair: -pair[1])
-    return [combo for combo, _ in collected]
+    return [combo for combo, _ in collected], truncated
 
 
 class _TimeTableToolContext:
@@ -1136,6 +1150,12 @@ class _TimeTableToolContext:
         sections = self._sections_from_offering_ids(pool_ids)
         if sections is None:
             return {"ok": False, "reason": "some_offerings_not_found"}
+        # **호출자가 넘긴 순서로 되돌린다.** `_sections_from_offering_ids`는 `IN (...)`
+        # 조회라 DB 행 순서(대개 offering_id 오름차순)로 돌아온다. 그대로 쓰면 도구
+        # 설명("앞쪽이 우선 채택된다")과 실제 동작이 어긋나고, 아래 _MAX_COURSE_GROUPS
+        # 절삭에서 LLM이 1순위로 넣은 과목이 잘려나간다(독립 리뷰 실측).
+        pool_rank = {offering_id: index for index, offering_id in enumerate(pool_ids)}
+        sections.sort(key=lambda s: pool_rank.get(s.offering_id, len(pool_ids)))
 
         # 사용자가 이미 담아둔 강좌를 고정 기반으로 깔고 시작한다. 그 학점만큼 상한이
         # 줄고, 그것과 시간이 겹치는 후보는 애초에 조합에 못 들어간다.
@@ -1219,10 +1239,21 @@ class _TimeTableToolContext:
 
         required_course_ids = {s.course_id for s in usable if s.offering_id in must_include}
         order.sort(key=lambda cid: 0 if cid in required_course_ids else 1)
-        groups = [(cid in required_course_ids, grouped[cid]) for cid in order[:_MAX_COURSE_GROUPS]]
+        kept, cut = order[:_MAX_COURSE_GROUPS], order[_MAX_COURSE_GROUPS:]
+        # 절삭분을 조용히 버리면 "왜 그 과목이 안 들어갔는지"를 아무도 모른다.
+        for cid in cut:
+            for s in grouped[cid]:
+                dropped.append({
+                    "offering_id": s.offering_id, "course_name": s.course_name,
+                    "reason": (
+                        f"후보 과목이 많아 탐색에서 제외 (한 번에 최대 {_MAX_COURSE_GROUPS}과목). "
+                        "꼭 넣어야 하면 must_include_offering_ids로 지정하거나 후보를 줄여 다시 호출해라."
+                    ),
+                })
+        groups = [(cid in required_course_ids, grouped[cid]) for cid in kept]
 
         # 고정분을 뺀 나머지 예산 안에서만 새 과목을 찾는다.
-        combos = _search_feasible_combos(
+        combos, search_truncated = _search_feasible_combos(
             groups,
             credit_cap=cap - locked_credits,
             target_credits=max(0.0, floor - locked_credits),
@@ -1301,12 +1332,23 @@ class _TimeTableToolContext:
             )
         if dropped:
             payload["dropped"] = dropped
+        if search_truncated:
+            payload["search_truncated"] = True
         best_credits = max((s["total_credits"] for s in schedules), default=0.0)
         if not any(s["reaches_target_credits"] for s in schedules):
             # 후보를 넓혀도 학점이 안 늘면 그만 시도하라고 알려준다. 엔진이 이미 학점을
             # 최대화하므로 같은 후보로 다시 부르는 건 순수 낭비인데, 그냥 "더 넓혀라"라고만
             # 하면 mini가 상한(8 iterations)까지 계속 재시도한다(2026-08-17 관측).
-            if self._build_calls and best_credits <= self._best_built_credits:
+            if search_truncated:
+                # 예산에 걸려 안 본 가지가 남아 있다. 여기서 "최대 N학점"이라고 단언하면
+                # 실제로는 가능한 조합을 두고 사용자에게 거짓말을 하게 된다.
+                payload["below_target_note"] = (
+                    f"목표 학점({floor})에 도달하는 조합을 찾지 못했다(현재 최대 "
+                    f"{best_credits:g}학점). 다만 **후보가 많아 탐색을 끝까지 하지 못했으므로 "
+                    "'이게 최대'라고 단언하지 마라.** 후보를 좀 줄여서(우선순위 높은 과목 위주로) "
+                    "다시 호출하면 더 나은 조합이 나올 수 있다."
+                )
+            elif self._build_calls and best_credits <= self._best_built_credits:
                 payload["below_target_note"] = (
                     f"목표 학점({floor})에 못 미치는데 후보를 바꿔도 최대 학점이 "
                     f"{self._best_built_credits:g}에서 늘지 않았다. **더 시도하지 말고** "
@@ -1712,7 +1754,14 @@ def _resolve_plan_id(
     """
     if plan_id is not None:
         plan = db.get(CoursePlan, plan_id)
-        if plan is not None and plan.user_id == user.id:
+        # 학기 검사를 빠뜨리면 지난 학기 시간표가 고정분으로 깔려 **학점 상한을 먹고
+        # 시간대를 막는다.** 지금 UI는 학기로 필터해 목록을 주지만 엔드포인트는 공개다.
+        if (
+            plan is not None
+            and plan.user_id == user.id
+            and plan.year == year
+            and plan.semester == semester
+        ):
             return plan.id
         return None
     return db.scalar(

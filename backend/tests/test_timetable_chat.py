@@ -285,6 +285,122 @@ class BuildTimetableTest(unittest.TestCase):
         self.assertEqual([], result["schedules"][0]["locked_offering_ids"])
 
 
+class BuildTimetableReviewFindingsTest(unittest.TestCase):
+    """독립 리뷰(2026-08-19)에서 나온 결함 3건의 회귀 테스트."""
+
+    def test_search_does_not_starve_when_many_combos_exist(self):
+        """조합 수집 상한이 백트래킹까지 끊어 탐색 트리를 굶기던 문제.
+
+        예전 구현은 "조합 N개 모으면 return"이었는데 DFS가 include-first라, 1순위 과목의
+        첫 분반 서브트리에서 N개를 다 써버리면 **그 과목의 다른 분반도, 그 과목을 빼는
+        가지도 영영 탐색되지 않았다.** 결과적으로 18학점이 가능한 풀에서 9학점만 내놓고
+        "이게 최대"라고 단언했다.
+
+        여기서는 그 모양을 만든다: 1순위 과목이 고학점 과목들과 전부 충돌하고, 그것과
+        양립하는 저학점 과목이 많아 조합 수가 폭발하는 상황.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        # 1순위: 월 09~18시를 통째로 먹는 1학점짜리 (뒤의 월요일 과목들과 전부 충돌)
+        _add_course_with_offering(db, course_id=1, offering_id=900, name="블로커",
+                                  credits=1.0, day="월", start="09:00", end="18:00")
+        # 이 블로커와 양립하는 저학점 과목 7개 (화요일) → 2^7 = 128가지 부분집합
+        for i in range(7):
+            _add_course_with_offering(
+                db, course_id=10 + i, offering_id=910 + i, name=f"소액{i}", credits=1.0,
+                day="화", start=f"{9 + i:02d}:00", end=f"{9 + i:02d}:45",
+            )
+        # 블로커를 빼야만 담을 수 있는 고학점 과목 3개 (월요일)
+        for i in range(3):
+            _add_course_with_offering(
+                db, course_id=20 + i, offering_id=920 + i, name=f"고학점{i}", credits=3.0,
+                day="월", start=f"{9 + i * 2:02d}:00", end=f"{10 + i * 2:02d}:15",
+            )
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        pool = [900] + [910 + i for i in range(7)] + [920 + i for i in range(3)]
+        result = ctx.build_timetable(offering_ids=pool, target_credits=15)
+
+        self.assertTrue(result["ok"])
+        best = max(s["total_credits"] for s in result["schedules"])
+        # 블로커(1학점)를 버리고 고학점 3개(9) + 화요일 7개(7) = 16학점이 가능하다.
+        self.assertGreaterEqual(
+            best, 15.0,
+            msg=f"탐색이 굶어서 최선을 못 찾았다: {[s['total_credits'] for s in result['schedules']]}",
+        )
+
+    def test_candidate_priority_order_is_respected(self):
+        """호출자가 넘긴 순서 = 우선순위. DB 행 순서가 아니다.
+
+        `_sections_from_offering_ids`가 `IN (...)` 조회라 offering_id 오름차순으로
+        돌아오는데 그걸 그대로 쓰면, 도구 설명("앞쪽이 우선 채택된다")과 어긋나고
+        과목 수 상한 절삭에서 LLM의 1순위가 잘려나간다.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        # 전부 같은 시간 → 한 과목만 담을 수 있다. 누가 뽑히는지로 우선순위를 본다.
+        for i in range(3):
+            _add_course_with_offering(
+                db, course_id=1 + i, offering_id=800 + i, name=f"과목{i}", credits=3.0,
+                day="월", start="09:00", end="10:15",
+            )
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        # 역순으로 넘긴다 — DB 행 순서(800,801,802)와 반대.
+        result = ctx.build_timetable(offering_ids=[802, 801, 800], target_credits=3)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([802], result["schedules"][0]["offering_ids"])
+
+    def test_dropped_records_courses_cut_by_group_cap(self):
+        """과목 수 상한으로 잘린 후보는 사유가 남아야 한다 (조용히 사라지면 안 됨)."""
+        db = _make_db()
+        user = _make_student(db)
+        count = 18  # _MAX_COURSE_GROUPS(14) 초과
+        for i in range(count):
+            _add_course_with_offering(
+                db, course_id=1 + i, offering_id=700 + i, name=f"과목{i}", credits=1.0,
+                day="월화수목금"[i % 5], start=f"{9 + i // 5:02d}:00", end=f"{9 + i // 5:02d}:45",
+            )
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.build_timetable(offering_ids=[700 + i for i in range(count)])
+
+        self.assertTrue(result["ok"])
+        cut_reasons = [d for d in result.get("dropped", []) if "탐색에서 제외" in d["reason"]]
+        self.assertEqual(count - 14, len(cut_reasons))
+
+
+class ResolvePlanIdTest(unittest.TestCase):
+    def test_explicit_plan_from_other_term_is_ignored(self):
+        """학기가 다른 시간표를 고정분으로 깔면 학점 상한을 먹고 시간대를 막는다."""
+        from app.domains.planning.timetable_chat import _resolve_plan_id
+
+        db = _make_db()
+        user = _make_student(db)
+        db.add(CoursePlan(id=5, user_id=user.id, year="2025", semester="1학기"))
+        db.add(CoursePlan(id=6, user_id=user.id, year="2026", semester="2학기"))
+        db.flush()
+
+        self.assertIsNone(_resolve_plan_id(db, user, "2026", "2학기", 5))
+        self.assertEqual(6, _resolve_plan_id(db, user, "2026", "2학기", 6))
+
+    def test_other_users_plan_is_ignored(self):
+        from app.domains.planning.timetable_chat import _resolve_plan_id
+
+        db = _make_db()
+        user = _make_student(db)
+        db.add(User(id=99, email="x@e.com", password_hash="x", name="남", department_id=100))
+        db.flush()
+        db.add(CoursePlan(id=7, user_id=99, year="2026", semester="2학기"))
+        db.flush()
+
+        self.assertIsNone(_resolve_plan_id(db, user, "2026", "2학기", 7))
+
+
 class StudentContextTest(unittest.TestCase):
     def test_get_student_context_includes_completed_courses_and_career(self):
         db = _make_db()
