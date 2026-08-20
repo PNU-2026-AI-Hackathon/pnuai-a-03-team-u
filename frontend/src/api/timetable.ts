@@ -123,6 +123,12 @@ export type SuggestedOffering = {
   credits: number | null;
   section: string | null;
   professor: string | null;
+  /**
+   * 학부만 고르고 전공을 안 고르면 그 학부의 모든 전공 과목이 함께 나온다.
+   * 어느 전공 과목인지 줄마다 보여주려고 받는다(전공 미지정이면 null).
+   * 시간표 챗 추천(TimetableChatSuggestion.offerings)에는 없어서 optional.
+   */
+  major_name?: string | null;
   times: TimetableTime[];
 };
 
@@ -219,8 +225,6 @@ export type OfferingSearchParams = {
   semester: string;
   departmentId?: number | null;
   major?: string | null;
-  /** true면 전공이 지정되지 않은(학부 공통) 과목만. */
-  majorUnassigned?: boolean;
   /** 화면의 한 갈래가 DB 이수구분 여러 개일 수 있어 배열로 받는다. */
   categories?: string[];
   q?: string;
@@ -238,7 +242,6 @@ export async function searchOfferings({
   semester,
   departmentId,
   major,
-  majorUnassigned,
   categories,
   q = "",
   limit = 50,
@@ -249,7 +252,6 @@ export async function searchOfferings({
       semester,
       department_id: departmentId ?? undefined,
       major: major || undefined,
-      major_unassigned: majorUnassigned || undefined,
       category: categories?.length ? categories : undefined,
       q,
       limit,
