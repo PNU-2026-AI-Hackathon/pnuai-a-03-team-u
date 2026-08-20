@@ -20,7 +20,17 @@ from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.core.ratelimit import PORTAL_SYNC_LIMIT, limiter
 from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
-from app.domains.academics.models import Major, StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.course_substitution import (
+    is_transfer_credit_record,
+    set_substitutions,
+)
+from app.domains.academics.models import (
+    Major,
+    StudentCourseRecord,
+    StudentCourseSubstitution,
+    UserAcademicProgram,
+)
+from app.domains.courses.models import Course
 from app.domains.planning.history import sync_completed_courses_to_roadmap
 from app.domains.planning.models import CourseRoadmap
 from app.domains.users.models import User
@@ -115,8 +125,53 @@ class CourseRecordResponse(BaseModel):
     grade: str | None
     match_status: str
     source: str
+    # 편입/조기이수로 "입학 전 인정"된 행인지. 화면이 이 행에만 "어떤 PNU 과목을
+    # 대체했나요?" 를 띄운다. 프론트가 semester 문자열을 다시 해석하지 않도록
+    # 서버가 판정해서 내려준다(`course_substitution.is_transfer_credit_record`).
+    is_transfer_credit: bool = False
+    # 학생이 직접 지정한 대체 대상 PNU 과목들. 추측하지 않는다 — 지정 전에는 빈 목록.
+    # 한 줄이 여러 개를 대체할 수 있다(전적대 `교양선택 15학점` → 교양 세부영역 여러 개).
+    substitutes: list["SubstitutedCourseResponse"] = []
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class SubstitutedCourseResponse(BaseModel):
+    """전적대 이수기록이 대체한 PNU 과목 하나. 교양은 세부영역 placeholder가 온다."""
+
+    course_id: int
+    course_name: str
+    category: str | None = None
+
+
+def _course_record_responses(
+    db: Session, records: list[StudentCourseRecord]
+) -> list[CourseRecordResponse]:
+    """이수기록 ORM 행을 응답 모델로. 대체 과목은 한 번에 모아서 붙인다(N+1 방지)."""
+    record_ids = [r.id for r in records]
+    by_record: dict[int, list[SubstitutedCourseResponse]] = {}
+    if record_ids:
+        rows = db.execute(
+            select(StudentCourseSubstitution.record_id, Course)
+            .join(Course, Course.id == StudentCourseSubstitution.course_id)
+            .where(StudentCourseSubstitution.record_id.in_(record_ids))
+            .order_by(Course.course_name)
+        ).all()
+        for record_id, course in rows:
+            by_record.setdefault(record_id, []).append(
+                SubstitutedCourseResponse(
+                    course_id=course.id,
+                    course_name=course.course_name,
+                    category=course.category,
+                )
+            )
+    responses = []
+    for record in records:
+        response = CourseRecordResponse.model_validate(record)
+        response.is_transfer_credit = is_transfer_credit_record(record)
+        response.substitutes = by_record.get(record.id, [])
+        responses.append(response)
+    return responses
 
 
 class AcademicProgramResponse(BaseModel):
@@ -316,7 +371,7 @@ def sync_portal_data(
 
     return PortalSyncResponse(
         student_record=_public_student_record(student_record),
-        courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
+        courses=_course_record_responses(db, saved_records),
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
         official_categories_synced=(
@@ -464,7 +519,7 @@ def list_course_records(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """마지막 포털 동기화 및 사용자 편집 결과를 DB에서 다시 조회한다."""
-    return _list_course_records(db, current_user.id)
+    return _course_record_responses(db, _list_course_records(db, current_user.id))
 
 
 @router.put("/course-records", response_model=list[CourseRecordResponse])
@@ -510,7 +565,67 @@ def replace_course_records(
         record.grade = course.grade.strip() if course.grade else None
 
     db.commit()
-    return _list_course_records(db, current_user.id)
+    return _course_record_responses(db, _list_course_records(db, current_user.id))
+
+
+# 한 이수기록이 대체할 수 있는 과목 수 상한. 실제로는 교양 세부영역 9개 + 교양과목
+# 몇 개가 최대라 두 자리면 충분한데, 상한이 없으면 한 요청으로 `courses` 전량(운영 DB
+# 기준 6천 행대)을 밀어 넣을 수 있다.
+MAX_SUBSTITUTION_COURSES = 50
+
+
+class CourseSubstitutionRequest(BaseModel):
+    """이 전적대 이수기록이 대체한 PNU 과목 **전체 집합**. 빈 목록이면 대체 해제.
+
+    기본값을 두지 않는다 — 필드를 빼먹은 요청이 조용히 "전체 해제"로 처리되면,
+    프론트 버그 하나로 학생이 등록해 둔 대체가 통째로 날아간다. 해제하려면 `[]`를
+    명시해야 한다.
+    """
+
+    course_ids: list[int] = Field(..., max_length=MAX_SUBSTITUTION_COURSES)
+
+
+@router.put("/course-records/{record_id}/substitutions", response_model=CourseRecordResponse)
+def set_course_substitutions(
+    record_id: int,
+    payload: CourseSubstitutionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """전적대 이수기록이 대체한 PNU 과목들을 학생이 직접 지정한다.
+
+    편입 학점 인정은 학과가 학생 개인에게 통보하는 것이라 데이터에 근거가 없다.
+    그래서 서버는 이름 유사도로 추천하지 않고 **학생이 고른 course_ids만 저장한다**
+    (`app.domains.academics.course_substitution` 참고).
+
+    부분 갱신이 아니라 **치환**이다 — 화면이 체크박스 전체 상태를 보낸다. 통보를
+    나중에 받거나 잘못 골랐을 때 언제든 다시 부를 수 있게 멱등으로 만든다.
+
+    학점은 건드리지 않는다. 전적대에서 인정받은 학점은 이 행에 그대로 남고,
+    졸업요건 판정 합계도 그대로다. 바뀌는 건 시간표/로드맵 추천에서 그 PNU 과목이
+    "이미 이수함"으로 빠지는 것뿐이다.
+    """
+    record = db.get(StudentCourseRecord, record_id)
+    # 남의 기록인지 없는 기록인지 구분해 주지 않는다(존재 여부 노출 방지).
+    if record is None or record.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="이수 기록을 찾을 수 없습니다")
+    if not is_transfer_credit_record(record):
+        raise HTTPException(
+            status_code=422,
+            detail="입학 전 인정 학점(전적대 이수) 과목에만 대체 관계를 지정할 수 있습니다",
+        )
+
+    course_ids = set(payload.course_ids)
+    if course_ids:
+        found = set(db.scalars(select(Course.id).where(Course.id.in_(course_ids))).all())
+        missing = course_ids - found
+        if missing:
+            raise HTTPException(status_code=404, detail="대체할 과목을 찾을 수 없습니다")
+
+    set_substitutions(db, record.id, list(course_ids))
+    db.commit()
+    db.refresh(record)
+    return _course_record_responses(db, [record])[0]
 
 
 @router.patch("/advisor-consulted")

@@ -33,6 +33,10 @@ from sqlalchemy.orm import Session
 
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
+from app.domains.academics.course_substitution import (
+    substituted_course_names,
+    substituting_record,
+)
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from app.domains.academics.program_evaluator import evaluate_program
 from app.domains.academics.models import (
@@ -846,6 +850,10 @@ def _compute_critical_missing_required(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
     ).all():
         completed_norms.add(_norm(r.raw_course_name))
+    # 편입생이 "전적대 데이터구조가 PNU 자료구조를 대체했다"고 직접 등록해 뒀으면
+    # 성적표에 없는 PNU 과목명도 이수 완료로 본다 (course_substitution 참고).
+    for name in substituted_course_names(db, user.id):
+        completed_norms.add(_norm(name))
     if roadmap_id is not None:
         for it in db.scalars(
             select(CourseRoadmapItem).where(
@@ -922,6 +930,10 @@ def _compute_missing_required_available(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
     ).all():
         completed_norms.add(_norm(r.raw_course_name))
+    # 편입생이 "전적대 데이터구조가 PNU 자료구조를 대체했다"고 직접 등록해 뒀으면
+    # 성적표에 없는 PNU 과목명도 이수 완료로 본다 (course_substitution 참고).
+    for name in substituted_course_names(db, user.id):
+        completed_norms.add(_norm(name))
     if roadmap_id is not None:
         for it in db.scalars(
             select(CourseRoadmapItem).where(
@@ -1170,6 +1182,10 @@ def _compute_prereq_blocked(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
     ).all():
         completed_norms.add(_norm(r.raw_course_name))
+    # 편입생이 "전적대 데이터구조가 PNU 자료구조를 대체했다"고 직접 등록해 뒀으면
+    # 성적표에 없는 PNU 과목명도 이수 완료로 본다 (course_substitution 참고).
+    for name in substituted_course_names(db, user.id):
+        completed_norms.add(_norm(name))
     if roadmap_id is not None:
         for it in db.scalars(
             select(CourseRoadmapItem).where(
@@ -1800,7 +1816,17 @@ class _ToolContext:
                 completed = self.db.scalars(
                     select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
                 ).all()
-                match = next((r for r in completed if _norm(r.raw_course_name) == new_norm), None)
+                match = next(
+                    (r for r in completed if _norm(r.raw_course_name) == new_norm), None
+                )
+                # 편입생이 "이 PNU 과목은 전적대 과목으로 대체했다"고 직접 등록한 경우도
+                # 이미 이수한 것으로 본다. 성적표에는 전적대 과목명('데이터구조')만 있어서
+                # 이름 매칭으로는 안 잡힌다 (course_substitution 참고).
+                #
+                # **대체한 바로 그 행**을 가져온다. "대체됐나?"만 보고 아무 전적대 행이나
+                # match로 쓰면 아래 에러 메시지가 엉뚱한 과목을 근거로 인용한다.
+                if match is None:
+                    match = substituting_record(self.db, self.user.id, course_obj.id)
                 if match is not None:
                     # is_retake=True + 재수강 자격(=최고 grade_point ≤ 2.5) 확인되면 가드 우회.
                     # LLM이 사용자 명시적 재수강 요청 시에만 이 플래그를 걸도록 프롬프트에서 지시.

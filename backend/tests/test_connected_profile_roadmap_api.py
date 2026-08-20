@@ -23,7 +23,7 @@ from app.domains.academics.models import (
     Department,
     Major,
     School,
-    StudentCourseRecord,
+    StudentCourseRecord, StudentCourseSubstitution,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
@@ -50,6 +50,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
             UserAcademicProgram.__table__,
             Course.__table__,
             StudentCourseRecord.__table__,
+            StudentCourseSubstitution.__table__,  # 추천 경로가 substituted_course_names를 조회한다
             CourseRoadmap.__table__,
             CourseRoadmapItem.__table__,
             CourseRoadmapChatSession.__table__,
@@ -151,7 +152,9 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
             current_user=self.user,
             db=self.db,
         )
-        self.assertEqual(created[0].raw_course_name, "데이터베이스")
+        # 응답 모델은 raw_course_name을 course_name으로 내보낸다
+        # (대체 과목 필드가 붙으면서 ORM 행이 아니라 CourseRecordResponse를 돌려주게 됐다).
+        self.assertEqual(created[0].course_name, "데이터베이스")
 
         saved_id = created[0].id
         replace_course_records(
