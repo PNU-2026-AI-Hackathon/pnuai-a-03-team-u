@@ -74,11 +74,13 @@ class Settings(BaseSettings):
     # 쉼표로 구분한 프론트엔드 origin 목록. 로컬과 배포 주소를 환경별로 덮어쓴다.
     CORS_ORIGINS: str = (
         "http://127.0.0.1:5173,http://localhost:5173,"
-        "https://pnuai-a-03-team-u.vercel.app"
+        "https://pnuai-a-03-team-u.vercel.app,"
+        "https://planu-pnu.netlify.app"
     )
     CORS_ORIGIN_REGEX: str | None = (
         r"^http://(localhost|127\.0\.0\.1):\d+$|"
-        r"^https://pnuai-a-03-team-u(?:-[a-z0-9-]+)?\.vercel\.app$"
+        r"^https://pnuai-a-03-team-u(?:-[a-z0-9-]+)?\.vercel\.app$|"
+        r"^https://[a-z0-9-]+--planu-pnu\.netlify\.app$"
     )
 
     # --- 레이트 리밋 (docs/backend/security-privacy-plan.md P0-1) ---
