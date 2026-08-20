@@ -1945,3 +1945,343 @@ class ApplyPendingChangeItemOwnershipTest(unittest.TestCase):
 
         self.assertIsNotNone(db.get(CourseRoadmapItem, victim_item_id),
                              "남의 로드맵 항목이 삭제됐다")
+
+
+class FullHorizonPlanningTest(unittest.TestCase):
+    """"졸업까지 로드맵 짜줘"에 미래 학기가 하나도 안 만들어지던 문제.
+
+    2026-08-20 실계정(편입 3학년, 남은 학기 3개 = 3-2/4-1/4-2) 실측: "졸업까지 로드맵
+    짜줘" / "남은 학기 전부 계획해줘" / "4학년 2학기까지 어떻게 들어야 해?" 세 요청 모두
+    **다음 한 학기(3-2)에만** 0~2건을 제안하고 "승인해주시면 4-1, 4-2도 이어서
+    해드릴게요"로 끝냈다 — 4-1·4-2 항목은 0건. 도구 반복 상한(당시 8)에 걸린 게 아니라
+    3/5/4회만 쓰고 스스로 종료했다.
+
+    원인 세 가지를 각각 막는다:
+      1. 남은 학기가 몇 개인지 알려주는 값이 어디에도 없었다 → `remaining_terms`
+      2. 학기당 과목마다 propose_change를 부르면 왕복이 모자란다 → `propose_term_plan`
+      3. 학기 여유를 남긴 채 끝내도 아무도 안 막았다 → run 루프의 finish 게이트
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db, total_req=133, admission_type=None, major_elective=None):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20, admission_type=admission_type)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                   department_id=10, major_id=20, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                     curriculum_year="2026", required_total_credits=total_req,
+                                     required_major_elective=major_elective))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    # ---- 1) 남은 학기 노출 ----
+
+    def test_remaining_terms_covers_every_term_until_graduation(self):
+        """편입 3학년(2026-1 재학)이면 남은 학기는 3-2, 4-1, 4-2 세 개다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="transfer")
+        # 편입 첫 학기(3-1) 이수기록 — 커리큘럼 학년 환산의 기준점
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            terms = ctx.get_roadmap_items()["remaining_terms"]
+
+        self.assertEqual(
+            [("2026", "2학기", 3), ("2027", "1학기", 4), ("2027", "2학기", 4)],
+            [(t["planned_year"], t["planned_semester"], t["planned_grade"]) for t in terms],
+        )
+        # 빈 학기라면 상한만큼 여유가 있다고 알려줘야 한다
+        self.assertEqual(21.0, terms[0]["credits_left_in_term"])
+
+    # ---- 2) 벌크 제안 ----
+
+    def test_propose_term_plan_creates_items_across_multiple_terms(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add_all([
+            Course(id=301, course_name="가", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="2"),
+            Course(id=302, course_name="나", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="4", semester="1"),
+            Course(id=303, course_name="다", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="4", semester="2"),
+        ])
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[
+                {"planned_year": "2026", "planned_semester": "2학기",
+                 "planned_grade": 3, "course_ids": [301]},
+                {"planned_year": "2027", "planned_semester": "1학기",
+                 "planned_grade": 4, "course_ids": [302]},
+                {"planned_year": "2027", "planned_semester": "2학기",
+                 "planned_grade": 4, "course_ids": [303]},
+            ], reason="졸업까지 계획")
+
+        self.assertEqual(3, result["accepted_count"])
+        self.assertEqual(0, result["rejected_count"])
+        self.assertEqual(3, len(ctx.pending_changes))
+        self.assertEqual(
+            {("2026", "2학기"), ("2027", "1학기"), ("2027", "2학기")},
+            {(c.planned_year, c.planned_semester) for c in ctx.pending_changes},
+        )
+
+    def test_propose_term_plan_reuses_propose_change_guards(self):
+        """가드를 복제하지 않는다 — 계절수업 전용 과목은 벌크 경로에서도 거절돼야 한다.
+
+        한 과목이 거절돼도 나머지는 그대로 제안되고, 사유가 rejected에 담긴다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add_all([
+            Course(id=310, course_name="정상", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="2"),
+            Course(id=311, course_name="계절전용", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="여름계절수업"),
+        ])
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [310, 311],
+            }], reason="test")
+
+        self.assertEqual(1, result["accepted_count"])
+        self.assertEqual(1, result["rejected_count"])
+        rejected = result["terms"][0]["rejected"][0]
+        self.assertEqual(311, rejected["course_id"])
+        self.assertIn("여름계절수업", rejected["error"])
+
+    def test_pending_creates_count_toward_term_credit_cap(self):
+        """아직 승인 전인 이번 턴 제안도 학기 학점 합계에 세야 한다.
+
+        예전에는 DB의 CourseRoadmapItem만 셌다. 그래서 아직 비어 있는 미래 학기
+        (4학년 1학기 등)에는 과목을 몇 개를 밀어넣든 합계가 계속 0이라 상한 가드가
+        한 번도 걸리지 않았다 — 승인하면 그대로 저장되는데도.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # cap=21
+        for i in range(8):
+            db.add(Course(id=400 + i, course_name=f"과목{i}", department_id=10, major_id=20,
+                          category="전공선택", credits=3.0, year="4", semester="1"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2027", "planned_semester": "1학기",
+                "planned_grade": 4, "course_ids": [400 + i for i in range(8)],
+            }], reason="test")
+
+        # 3학점 × 7 = 21까지만 통과, 8번째는 상한 초과로 거절
+        self.assertEqual(7, result["accepted_count"])
+        self.assertEqual(1, result["rejected_count"])
+        self.assertIn("학기당 상한", result["terms"][0]["rejected"][0]["error"])
+        self.assertEqual(21.0, result["terms"][0]["term_credits_after"])
+
+    def test_requirement_coverage_reports_what_is_still_missing(self):
+        """제안을 다 이수해도 남는 이수구분을 도구가 계산해 준다 (판정은 규칙 기반)."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, major_elective=9)
+        db.add(Course(id=500, course_name="전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2027", "planned_semester": "1학기",
+                "planned_grade": 4, "course_ids": [500],
+            }], reason="test")
+
+        coverage = {c["category_name"]: c for c in result["requirement_coverage"]}
+        self.assertEqual(3.0, coverage["전공선택"]["planned_in_this_turn"])
+        self.assertEqual(6.0, coverage["전공선택"]["remaining_after_plan"])
+        self.assertIn("전공선택", [u["category_name"]
+                                for u in result["unmet_categories_after_plan"]])
+        # 아직 채울 여지가 있으면 finish 게이트가 볼 상태가 남는다
+        self.assertIsNotNone(ctx.plan_gap)
+
+    def test_plan_gap_flags_terms_left_completely_empty(self):
+        """`course_ids: []`인 빈 학기를 넣고 넘어가는 걸 잡아낸다.
+
+        원래 보고된 증상이 정확히 "미래 학기 항목 0건"이었고, 고친 뒤 실측에서도
+        LLM이 2027-1/2027-2를 `course_ids: []`로 넣고 2026-2만 채운 채 끝내려 한
+        적이 있다. "N학점 미배정"보다 "2027년 1학기가 비어 있다"가 구체적이라
+        게이트 메시지가 그 학기를 이름으로 지목하게 한다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="transfer")
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add(Course(id=550, course_name="가", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            ctx.propose_term_plan(terms=[
+                {"planned_year": "2026", "planned_semester": "2학기",
+                 "planned_grade": 3, "course_ids": [550]},
+                {"planned_year": "2027", "planned_semester": "1학기",
+                 "planned_grade": 4, "course_ids": []},
+                {"planned_year": "2027", "planned_semester": "2학기",
+                 "planned_grade": 4, "course_ids": []},
+            ], reason="test")
+
+        self.assertIsNotNone(ctx.plan_gap)
+        self.assertEqual(
+            ["2027년 1학기(4학년)", "2027년 2학기(4학년)"],
+            ctx.plan_gap["empty_terms"],
+        )
+
+    def test_reproposing_same_course_is_not_a_rejection(self):
+        """이미 제안한 과목을 다시 넘기면 실패가 아니라 already_in_plan이다.
+
+        LLM이 보강 라운드에서 같은 계획을 통째로 다시 넘기는 일이 잦은데, 중복 create가
+        rejected에 섞이면 "다 반려됐다"고 읽고 앞서 성공한 제안까지 없던 일처럼 답한다
+        (2026-08-20 실측: 실제로 accepted된 4학년 1학기 3과목을 "확정 없음"이라고 적었다).
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=520, course_name="가", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1"))
+        db.flush()
+        term = {"planned_year": "2027", "planned_semester": "1학기",
+                "planned_grade": 4, "course_ids": [520]}
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            first = ctx.propose_term_plan(terms=[dict(term)], reason="test")
+            second = ctx.propose_term_plan(terms=[dict(term)], reason="test")
+
+        self.assertEqual(1, first["accepted_count"])
+        self.assertEqual(0, second["accepted_count"])
+        self.assertEqual(0, second["rejected_count"], "중복 재제출이 반려로 잡혔다")
+        self.assertEqual([520], [c["course_id"]
+                                 for c in second["terms"][0]["already_in_plan"]])
+        # 제안이 두 배로 쌓이지도 않는다
+        self.assertEqual(1, len(ctx.pending_changes))
+
+    def test_plan_so_far_carries_every_term_proposed_this_turn(self):
+        """여러 번 호출해도 답변에 옮겨 적을 단일 출처가 있어야 한다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add_all([
+            Course(id=530, course_name="가", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="2"),
+            Course(id=531, course_name="나", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="4", semester="1"),
+        ])
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [530]}], reason="1차")
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2027", "planned_semester": "1학기",
+                "planned_grade": 4, "course_ids": [531]}], reason="2차")
+
+        plan = {(t["planned_year"], t["planned_semester"]): t for t in result["plan_so_far"]}
+        self.assertEqual(
+            ["가"], [c["course_name"] for c in plan[("2026", "2학기")]["courses"]],
+            "2차 호출 결과만 보면 1차에서 성공한 학기가 사라진다",
+        )
+        self.assertEqual(["나"], [c["course_name"] for c in plan[("2027", "1학기")]["courses"]])
+        self.assertEqual(3.0, plan[("2026", "2학기")]["total_credits"])
+
+    # ---- 3) 요청 판정 ----
+
+    def test_full_horizon_markers_need_both_scope_and_planning_intent(self):
+        from app.domains.planning.roadmap_chat import _looks_like_full_horizon_request
+        for msg in [
+            "졸업까지 로드맵 짜줘",
+            "남은 학기 전부 계획해줘",
+            "4학년 2학기까지 어떻게 들어야 해?",
+            "졸업할 때까지 수강계획 짜줘",
+        ]:
+            self.assertTrue(_looks_like_full_horizon_request(msg), msg)
+
+        # 범위 표현만 있고 계획 의도가 없으면 걸리면 안 된다 — 단순 조회 요청에
+        # 묻지도 않은 3개 학기 제안이 승인 대기에 쌓인다.
+        for msg in [
+            "졸업까지 뭐가 남았는지 정리해줘",
+            "졸업요건 얼마나 남았어?",
+            "다음 학기 뭐 들을까",
+            "데이터베이스만 옮겨줘",
+            None,
+            "",
+        ]:
+            self.assertFalse(_looks_like_full_horizon_request(msg), msg)
+
+    def test_narrow_scope_beats_full_horizon(self):
+        """"졸업까지 계획 중인데 이 과목만 옮겨줘"는 좁은 쪽이 이겨야 한다."""
+        from app.domains.planning.roadmap_chat import _build_system_prompt
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        _, rules = _build_system_prompt(
+            db, ctx.user, "졸업까지 로드맵 짜는 건 나중에 하고, 데이터베이스 그것만 옮겨줘"
+        )
+        self.assertIn("narrow_scope_request", rules)
+        self.assertNotIn("full_horizon_request", rules)
+
+
+class FullHorizonFinishGateTest(unittest.TestCase):
+    """미배정 학점을 남긴 채 끝내려는 finish_response를 루프가 한 번 되돌린다.
+
+    프롬프트로도, 도구 응답의 `next_action`으로도 "한 번 더 채워라"라고 지시했는데
+    LLM은 그 지시를 **사용자에게 설명만 하고** 끝냈다 (2026-08-20 실측: 전공선택
+    23학점을 남긴 채 "다음 단계로 더 채우는 플랜을 만들게요"로 종료). 그래서 프롬프트가
+    아니라 실행 루프에서 막는다.
+
+    되돌림은 턴당 한 번뿐이다 — 후보가 정말 없을 때 무한 루프가 되면 안 되고,
+    남은 왕복이 모자랄 때 되돌리면 finish_response를 아예 못 받는다.
+    """
+
+    def test_gate_reserve_leaves_room_for_another_round(self):
+        """게이트는 보충 검색 + 2차 제안 + finish를 할 왕복이 남았을 때만 발동한다."""
+        self.assertGreaterEqual(
+            roadmap_chat_mod.MAX_TOOL_ITERATIONS - roadmap_chat_mod._FINISH_GATE_RESERVE,
+            1,
+            "게이트가 첫 왕복부터 아예 못 걸리면 의미가 없다",
+        )
+        self.assertGreaterEqual(
+            roadmap_chat_mod._FINISH_GATE_RESERVE, 3,
+            "되돌린 뒤 search_courses + propose_term_plan + finish_response 3왕복은 남겨야 한다",
+        )
+
+    def test_fallback_summary_shows_proposals_instead_of_apology(self):
+        """LLM 마무리 요약까지 실패해도, 쌓인 제안은 사실 그대로 보여준다.
+
+        게이트를 넣은 직후 실측에서 제안 19건을 만들어놓고 "죄송해요, 답변을 정리하지
+        못했어요"만 나간 적이 있다 — 사용자는 승인 대기에 뭐가 올라왔는지 알 수 없다.
+        """
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        db = sessionmaker(bind=engine)()
+        db.add(Course(id=600, course_name="자료구조", department_id=10,
+                      category="전공필수", credits=3.0, year="2", semester="2"))
+        db.flush()
+        pending = [PendingRoadmapChange(
+            roadmap_id=1, action="create", course_id=600,
+            planned_year="2027", planned_semester="1학기", status="pending",
+        )]
+
+        text = roadmap_chat_mod._fallback_summary(db, pending)
+
+        self.assertIn("자료구조", text)
+        self.assertIn("2027년 1학기", text)
+        self.assertNotIn("죄송해요", text)
+
+    def test_fallback_summary_apologizes_when_nothing_was_proposed(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        db = sessionmaker(bind=engine)()
+        self.assertIn("죄송", roadmap_chat_mod._fallback_summary(db, []))
