@@ -64,8 +64,11 @@ export async function syncFromPortal(loginId: string, password: string) {
 
 /** 미리보기 카드에 쓸 값만 추려낸다.
  *
- * `student_record`는 백엔드가 가공하지 않고 **크롤러가 읽은 그대로** 넘긴다. 키는
- * One-Stop 학적부 화면의 한글 라벨(`성명`·`학번`·`소속학과`…)이다. 예전에는 여기서
+ * `student_record`의 키는 One-Stop 학적부 화면의 한글 라벨(`성명`·`학번`·`소속학과`…)이다.
+ * **백엔드가 화이트리스트로 추려서 보낸다** — `STUDENT_RECORD_PUBLIC_KEYS`
+ * (`backend/app/api/portal_sync.py`)에 있는 키만 온다. 학적부 원문에는 주민등록번호·
+ * 주소·보호자 연락처도 있지만 응답 경계에서 걸러진다. 여기 없는 라벨을 읽으면 조용히
+ * `undefined`가 되니, 새 키가 필요하면 그 상수에 먼저 추가해야 한다. 예전에는 여기서
  * `record.name`/`record.student_id` 같은 영문 키를 읽어서 **항상 null**이었고, 그래서
  * 회원가입 STEP 2 미리보기 카드가 이름·학번·학적상태 없이 학점 줄만 뜨는 상태였다
  * (포털 비밀번호를 막 넘긴 직후라 "동기화가 안 됐나?"로 읽힌다).
@@ -81,13 +84,19 @@ export function summarizePortalSync(result: PortalSyncResult) {
   // 두 번 나오므로, 원문이 있으면 그것만 쓰고 없을 때만 major로 대체한다.
   const affiliationRaw = record["소속학과"] ?? record["학부"] ?? null;
 
+  // 학적부의 실제 라벨은 `학년`이 아니라 `학년/학기`다(값 예: "3", "3/1"). `학년`으로만
+  // 읽던 동안 미리보기 카드의 학년이 항상 비어 있었다(백엔드 map_student_record가 같은
+  // 이유로 academic_year를 못 채웠던 것과 같은 버그).
+  const gradeRaw = record["학년/학기"] ?? record["학년"] ?? "";
+  const grade = /^\s*(\d+)/.exec(gradeRaw)?.[1];
+
   return {
     name: record["성명"] ?? record["이름"] ?? null,
     studentId: record["학번"] ?? null,
     affiliation: affiliationRaw ?? primary?.major ?? null,
     courseCount: result.courses.length,
     totalCredits,
-    academicStatus: [record["학년"], record["학적상태"]].filter(Boolean).join(" ") || null,
+    academicStatus: [grade ? `${grade}학년` : null, record["학적상태"]].filter(Boolean).join(" ") || null,
     graduationTableCount: result.graduation_table_count,
     myPusanFailed: isMyPusanSyncFailed(result),
     myPusanFailedMessage: myPusanSyncFailedMessage(result),

@@ -51,6 +51,47 @@ from app.ingestion.normalizers.pnu_normalizer import (
 
 router = APIRouter(prefix="/me", tags=["portal-sync"])
 
+# 학적부 원문(fetch_student_record)에는 `주민등록번호`·`주소`·`보호자성명`/`보호자전화번호`
+# ·`이메일`·`휴대폰번호`가 라벨 그대로 들어 있다. DB에 저장하지는 않지만 응답에 그대로
+# 실으면 브라우저까지 흘러간다(개발자도구·네트워크 탭·확장 프로그램) — CLAUDE.md
+# 개인정보 원칙 2(최소 수집)에 어긋난다. 그래서 응답에는 프론트가 실제로 쓰는 키만 남긴다.
+#
+# (`sessionStorage`에는 들어가지 않는다. 거기 쓰는 `InfoPage`는 목 모드 전용 분기이고,
+#  목 모드면 `syncPortalData`가 API를 호출하지 않고 하드코딩 목을 돌려주므로 서버 응답이
+#  도달할 수 없다 — 조건이 상호 배타적이다.)
+#
+# 화이트리스트인 이유: 블랙리스트로 뒤집으면 학적부 화면에 라벨이 하나 추가되는
+# 순간 조용히 새기 시작한다. 새 키가 필요해지면 여기에 명시적으로 추가하고,
+# "나중에 쓸지도 몰라서"로는 넣지 않는다.
+#
+# 실제 소비처:
+#   - frontend/src/api/portal.ts:summarizePortalSync — 성명·이름·학번·소속학과·학부·
+#     학년/학기·학적상태
+#   - frontend/src/pages/{InfoPage,DashboardPage}.tsx — 이름·성명·학번·학부·전공
+#     (목 데이터 경로)
+# `학년`은 실제 학적부에 없는 라벨이지만(진짜 라벨은 `학년/학기`) 표기가 되돌아가도
+# 안 깨지도록 같이 통과시킨다.
+STUDENT_RECORD_PUBLIC_KEYS = (
+    "성명",
+    "이름",
+    "학번",
+    "소속학과",
+    "학부",
+    "전공",
+    "학년/학기",
+    "학년",
+    "학적상태",
+)
+
+
+def _public_student_record(record: dict[str, str]) -> dict[str, str]:
+    """학적부 원문에서 응답으로 내보내도 되는 키만 추린다.
+
+    서버 내부(map_student_record, 지도교수 보정 등)는 원문 dict를 그대로 쓴다 —
+    걸러내는 지점은 **응답 경계 한 곳**이다.
+    """
+    return {key: record[key] for key in STUDENT_RECORD_PUBLIC_KEYS if key in record}
+
 
 class PortalSyncRequest(BaseModel):
     """One-Stop 자격증명. 저장하지 않고 이 요청 처리 동안만 메모리에 있는다.
@@ -86,6 +127,8 @@ class AcademicProgramResponse(BaseModel):
 
 
 class PortalSyncResponse(BaseModel):
+    # 학적부 원문이 아니라 `STUDENT_RECORD_PUBLIC_KEYS`로 추린 결과만 들어간다
+    # (주민등록번호·주소·보호자 연락처 등은 응답에 싣지 않는다).
     student_record: dict[str, str]
     courses: list[CourseRecordResponse]
     academic_programs: list[AcademicProgramResponse]
@@ -272,7 +315,7 @@ def sync_portal_data(
     db.commit()
 
     return PortalSyncResponse(
-        student_record=student_record,
+        student_record=_public_student_record(student_record),
         courses=[CourseRecordResponse.model_validate(r) for r in saved_records],
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),

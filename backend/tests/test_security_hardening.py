@@ -308,10 +308,6 @@ class CorsCredentialsTest(unittest.TestCase):
                 self.assertIsNone(r.headers.get("set-cookie"), f"{path}가 쿠키를 굽는다")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class EnvDefaultFailsClosedTest(unittest.TestCase):
     """`ENV` 기본값은 안전한 쪽(production)이어야 한다.
 
@@ -390,3 +386,114 @@ class RagIngestRateLimitTest(unittest.TestCase):
             "request", inspect.signature(rag.ingest_rag_chunks).parameters,
             "핸들러에 `request: Request` 인자가 없다 — slowapi가 조용히 무력화된다.",
         )
+
+
+class StudentRecordResponseLeakTest(unittest.TestCase):
+    """학적부 응답이 개인정보를 그대로 실어 보내지 않는지.
+
+    One-Stop 학적부 화면에는 `주민등록번호`·`주소`·`보호자성명`/`보호자전화번호`·
+    `이메일`·`휴대폰번호`가 같이 있고, 크롤러는 그 영역을 라벨:값 dict로 통째로 읽는다.
+    저장은 안 하지만 예전에는 `PortalSyncResponse.student_record`에 **원문 그대로**
+    실려서 브라우저까지 흘러갔다 — CLAUDE.md 개인정보 원칙 2.
+
+    실계정 크롤이 필요 없도록 응답 경계 함수(`_public_student_record`)만 직접 태운다.
+    """
+
+    # 실계정(2026-08-19 확인) 학적부에서 실제로 나온 라벨 구성.
+    _RECORD = {
+        "성명": "홍길동",
+        "학번": "202455494",
+        "주민등록번호": "030101-3******",
+        "주소": "부산광역시 금정구 부산대학로63번길 2",
+        "휴대폰번호": "010-1234-5678",
+        "이메일": "hong@pusan.ac.kr",
+        "보호자성명": "홍부모",
+        "보호자전화번호": "010-8765-4321",
+        "소속학과": "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공",
+        "학년/학기": "3",
+        "학적상태": "재학",
+        "교육과정적용년도": "2024",
+        "지도교수": "김교수",
+    }
+
+    def test_sensitive_labels_are_dropped(self):
+        from app.api.portal_sync import _public_student_record
+
+        public = _public_student_record(self._RECORD)
+
+        for label in ("주민등록번호", "주소", "휴대폰번호", "이메일", "보호자성명", "보호자전화번호"):
+            self.assertNotIn(
+                label, public,
+                f"학적부 응답에 `{label}`이 그대로 실린다 — 화이트리스트에서 빼야 한다.",
+            )
+        # 값 기준으로도 한 번 더 본다(라벨명이 바뀌어도 값이 새면 잡힌다).
+        serialized = str(public)
+        # 라벨명이 바뀌어도 값이 새면 잡히도록. 예전에는 라벨 6개 대비 값 4개만 봐서
+        # 이메일·보호자성명이 검사에서 빠져 있었다(독립 리뷰 지적).
+        for value in ("030101-3******", "부산대학로63번길", "010-1234-5678",
+                      "hong@pusan.ac.kr", "홍부모", "010-8765-4321"):
+            self.assertNotIn(value, serialized, f"응답에 개인정보 값이 남아 있다: {value}")
+
+    def test_fields_the_frontend_uses_survive(self):
+        """지우기만 하면 회원가입 STEP 2 미리보기 카드가 통째로 빈다."""
+        from app.api.portal_sync import _public_student_record
+
+        public = _public_student_record(self._RECORD)
+
+        self.assertEqual("홍길동", public.get("성명"))
+        self.assertEqual("202455494", public.get("학번"))
+        self.assertEqual(
+            "정보의생명공학대학 정보컴퓨터공학부 컴퓨터공학전공", public.get("소속학과")
+        )
+        self.assertEqual("3", public.get("학년/학기"))
+        self.assertEqual("재학", public.get("학적상태"))
+
+        # 프론트가 읽는 키 **전수**. 예전에는 5개만 봐서 `이름`·`학부`·`전공`을
+        # 화이트리스트에서 빼도 테스트가 통과했다(독립 리뷰 지적).
+        from app.api.portal_sync import STUDENT_RECORD_PUBLIC_KEYS
+
+        for key in ("성명", "이름", "학번", "소속학과", "학부", "전공",
+                    "학년/학기", "학년", "학적상태"):
+            with self.subTest(key=key):
+                self.assertIn(
+                    key, STUDENT_RECORD_PUBLIC_KEYS,
+                    f"프론트가 읽는 `{key}`가 화이트리스트에서 빠지면 그 칸이 조용히 빈다",
+                )
+
+    def test_response_actually_uses_the_whitelist(self):
+        """**필터가 응답에 실제로 연결돼 있는지.** 이게 이 PR의 전부다.
+
+        독립 리뷰(2026-08-20)가 잡았다 — 아래 배선을 원래대로 되돌려 유출을 완전히
+        부활시켜도 456개 테스트가 전부 통과했다. 위 테스트들은 `_public_student_record`를
+        **직접만** 부르므로, 그 함수가 어디에도 안 쓰이면 그냥 죽은 코드가 된다.
+        같은 종류의 결함이 바로 앞 PR(#187)에서도 나왔다.
+
+        `/me/portal-sync`는 Playwright 크롤이 필요해 엔드투엔드로 태울 수 없다. 그래서
+        같은 파일의 `RagIngestRateLimitTest`가 쓰는 방식(소스 검사)을 따른다.
+        """
+        import inspect
+
+        from app.api import portal_sync
+
+        source = inspect.getsource(portal_sync.sync_portal_data)
+        self.assertIn(
+            "student_record=_public_student_record(student_record)", source,
+            "portal-sync 응답이 화이트리스트를 안 거치고 원문을 그대로 싣는다 — "
+            "주민등록번호·주소·보호자 연락처가 프론트로 나간다.",
+        )
+
+    def test_unknown_labels_are_not_passed_through(self):
+        """학적부 화면에 라벨이 추가돼도 자동으로 새지 않아야 한다(화이트리스트 계약)."""
+        from app.api.portal_sync import _public_student_record
+
+        public = _public_student_record({**self._RECORD, "군필여부": "미필"})
+        self.assertNotIn("군필여부", public)
+
+    def test_missing_labels_do_not_raise(self):
+        from app.api.portal_sync import _public_student_record
+
+        self.assertEqual({}, _public_student_record({}))
+
+
+if __name__ == "__main__":
+    unittest.main()
