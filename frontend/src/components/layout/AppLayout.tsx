@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
 import { BookOpen, CalendarDays, CircleHelp, Home, Mail, Map, Megaphone, MessageCircle } from "lucide-react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
   STUDENT_PROFILE_UPDATED_EVENT,
@@ -11,6 +11,8 @@ import { BrandMark } from "./BrandMark";
 import { themeLabels, useThemeMode, type ThemeMode } from "./useThemeMode";
 
 const ACADEMIC_CALENDAR_URL = "https://www.pusan.ac.kr/kor/CMS/Haksailjung/view.do?mCode=MN076";
+// One-Stop 지도교수 상담 예약 메뉴. 로그인은 포털이 알아서 요구한다.
+const ADVISOR_RESERVATION_URL = "https://onestop.pusan.ac.kr/page?menuCD=000000000000449";
 
 /**
  * 외부 링크를 항상 새 창으로 연다. 미리보기 패널처럼 target="_blank"를 무시하는
@@ -44,7 +46,6 @@ const pageMeta: Record<string, { eyebrow: string; title: string }> = {
 
 export function AppLayout() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { user, logoutUser } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta["/"];
   const [collapsed, setCollapsed] = useState(false);
@@ -71,16 +72,6 @@ export function AppLayout() {
     }
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [location.pathname, location.state]);
-
-  /** 상담 예약은 Home의 지도 교수 카드로 보낸다. */
-  function goToAdvisorCard(event: MouseEvent<HTMLAnchorElement>) {
-    event.preventDefault();
-    if (location.pathname === "/") {
-      document.getElementById("advisor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-    navigate("/", { state: { scrollTo: "advisor" } });
-  }
 
   const displayName = profileOverrides?.name ?? user?.name ?? "사용자";
 
@@ -132,7 +123,14 @@ export function AppLayout() {
           >
             학사 일정
           </a>
-          <a href="/" onClick={goToAdvisorCard}>상담 예약</a>
+          <a
+            href={ADVISOR_RESERVATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={openInNewWindow}
+          >
+            상담 예약
+          </a>
         </div>
 
         <NavLink className="mini-profile" to="/info" aria-label="나의 프로필 보기">
