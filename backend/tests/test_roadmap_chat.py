@@ -2220,9 +2220,12 @@ class FullHorizonPlanningTest(unittest.TestCase):
         LLM이 2027-1/2027-2를 `course_ids: []`로 넣고 2026-2만 채운 채 끝내려 한
         적이 있다. "N학점 미배정"보다 "2027년 1학기가 비어 있다"가 구체적이라
         게이트 메시지가 그 학기를 이름으로 지목하게 한다.
+
+        **단 졸업요건이 남아 있을 때만이다** — 요건을 다 채웠으면 빈 학기가 있어도
+        되돌리지 않는다(아래 `test_요건이_충족되면…` 참고).
         """
         db = self.make_db()
-        ctx = self.make_ctx(db, admission_type="transfer")
+        ctx = self.make_ctx(db, admission_type="transfer", major_elective=30)
         db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
                                    year="2026", semester="1학기", category="전공선택"))
         db.add(Course(id=550, course_name="가", department_id=10, major_id=20,
@@ -2244,6 +2247,59 @@ class FullHorizonPlanningTest(unittest.TestCase):
             ["2027년 1학기(4학년)", "2027년 2학기(4학년)"],
             ctx.plan_gap["empty_terms"],
         )
+
+    def test_요건이_충족되면_빈_학기가_있어도_더_채우라고_하지_않는다(self):
+        """목표는 "학기를 꽉 채우기"가 아니라 "졸업요건 충족"이다.
+
+        예전엔 빈 학기가 하나라도 있으면 게이트가 발동해서, 요건을 다 채운 학생에게도
+        "2027년 2학기가 비어 있으니 채워라"라고 밀어붙였다 — 졸업에 필요 없는 과목을
+        억지로 넣게 만든다.
+        """
+        db = self.make_db()
+        # 전공선택 3학점만 남은 상태 → 한 과목이면 요건이 다 찬다.
+        ctx = self.make_ctx(db, admission_type="transfer", major_elective=3)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add(Course(id=560, course_name="마지막전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [560],
+            }], reason="test")
+
+        # 2027-1, 2027-2가 통째로 비어 있지만 요건이 다 찼으므로 되돌리지 않는다.
+        self.assertEqual([], result["unmet_categories_after_plan"])
+        self.assertIsNone(ctx.plan_gap)
+        self.assertIn("더 채우지 마라", result["next_action"])
+
+    def test_요건_기준이_없으면_충족됐다고_말하지_않는다(self):
+        """학과 요건 행이 없으면 잔여 학점이 전부 None이라 "미충족 0"과 "판단 불가"가
+        구분되지 않는다. 그 둘을 섞으면 요건을 모르는 학생에게 "다 채웠다"고 말한다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="transfer")
+        # 요건 행 제거 — 기준을 모르는 상태를 만든다.
+        db.query(GraduationRequirement).delete()
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add(Course(id=570, course_name="아무전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [570],
+            }], reason="test")
+
+        self.assertFalse(ctx.requirements_known)
+        self.assertIn("확인할 수 없다", result["next_action"])
+        # "다 채워졌다"고 단정하는 문구는 없어야 한다("충족 여부를 확인할 수 없다"는 정상).
+        self.assertNotIn("모두 충족", result["next_action"])
+        self.assertNotIn("더 채우지 마라", result["next_action"])
 
     def test_reproposing_same_course_is_not_a_rejection(self):
         """이미 제안한 과목을 다시 넘기면 실패가 아니라 already_in_plan이다.

@@ -431,9 +431,15 @@ _CONDITIONAL_RULES: dict[str, str] = {
 
     "full_horizon_request": """
 - **이번 요청은 "졸업까지 남은 학기 전부"다 — 한 학기만 하고 끝내지 마라**:
+  0. **목표는 "학기를 꽉 채우기"가 아니라 "졸업요건을 채우기"다.** 남은 이수구분을 다
+     채웠으면 거기서 멈춰라 — 학기에 여유 학점이 남아도, 어떤 학기가 통째로 비어도
+     졸업에 필요 없는 과목을 억지로 넣지 마라. 그 판단은 네가 하지 말고
+     `propose_term_plan` 응답의 `unmet_categories_after_plan`(비어 있으면 요건 충족)과
+     `next_action`을 따라라.
   1. `get_roadmap_items` 응답의 `remaining_terms`가 다음 배치 가능 학기부터 졸업 예정
      학기까지의 목록이다(각 항목에 달력 연도/학기, 커리큘럼 학년, 그 학기에 이미
-     계획된 학점, 남은 여유 학점이 들어 있다). **그 목록에 있는 학기를 전부** 채워라.
+     계획된 학점, 남은 여유 학점이 들어 있다). **요건이 남아 있는 한** 그 목록의
+     학기를 순서대로 채워라.
   2. `search_courses`를 **1학기용·2학기용으로 각각**, 남은 이수구분(전공기초/전공필수/
      전공선택/교양필수 등)별로 호출해 후보 풀을 먼저 모아라. 한 과목을 두 학기에
      겹쳐 배치하지 마라.
@@ -454,7 +460,11 @@ _CONDITIONAL_RULES: dict[str, str] = {
   6. 배치 규칙은 평소와 같다: 1학기 전용 개설 과목은 1학기 슬롯, 2학기 전용은 2학기
      슬롯, 계절수업 전용은 정규 학기에 넣지 마라.
   7. 남은 이수구분을 다 채울 만큼 후보를 못 찾았으면 "몇 학점이 아직 미배정"인지
-     솔직히 적어라. 다 채운 척하지 마라.
+     솔직히 적어라. 다 채운 척하지 마라. 반대로 **요건이 다 채워졌으면 그렇다고 밝히고,
+     남은 학기가 가벼운 이유(더 들을 필요가 없다)를 한 줄로 설명해라** — 빈 학기를
+     설명 없이 두면 학생은 계획이 덜 짜였다고 읽는다. 단 `requirement_coverage`에
+     잔여 학점이 `null`로만 나오면 학과 요건 기준이 DB에 없다는 뜻이니, 충족됐다고
+     말하지 말고 **확인할 수 없다고 그대로 적어라.**
   8. **"지금 짜드릴까요?"라고 먼저 되묻지 마라.** 제안은 사용자가 승인해야만 저장되니
      되묻는 건 한 턴을 통째로 버리는 것이다. 제안부터 만들고, 확인은 finish_response
      마지막의 "이 변경을 반영할까요?" 한 문장으로 받아라.
@@ -954,7 +964,10 @@ _TOOLS = [
                 "여러 번 호출했으면 답변은 마지막 호출의 accepted가 아니라 이걸 보고 써라. "
                 "이미 제안한 과목을 다시 넘기면 실패가 아니라 already_in_plan으로 돌아온다. "
                 "주전공 이수구분별 requirement_coverage(이 제안을 다 이수하면 얼마가 남는지)도 "
-                "함께 온다."
+                "함께 온다. **`unmet_categories_after_plan`이 비어 있으면 졸업요건이 다 "
+                "채워졌다는 뜻이니 더 넣지 마라** — 학기에 여유 학점이 남아도, 어떤 학기가 "
+                "비어 있어도 졸업에 필요 없는 과목을 억지로 채울 이유가 없다. 다음에 무엇을 "
+                "할지는 `next_action`에 그대로 적혀 있다."
             ),
             "parameters": {
                 "type": "object",
@@ -1519,6 +1532,9 @@ class _ToolContext:
         self.user = user
         self.roadmap = roadmap
         self.pending_changes: list[PendingRoadmapChange] = []
+        # 졸업요건을 숫자로 알 수 있는 학생인가. `_requirement_coverage()`가 채운다.
+        # 요건 행이 없으면 "다 채웠다"고 말할 근거가 없다.
+        self.requirements_known = False
         # 턴 안에서 안 변하는 값들. 매 호출 재계산이 이수기록 전체 스캔·과목 조회로
         # 이어져 도구 한 번에 수백 건의 SELECT가 나갔다.
         self._remaining_terms_cache: list[dict] | None = None
@@ -2531,16 +2547,32 @@ class _ToolContext:
                 "더 넣지 말고, finish_response에서 졸업까지 학점이 모자란다는 사실과 "
                 "부족한 이수구분·학점을 그대로 알려라."
             )
+        elif self.requirements_known:
+            next_action = (
+                "졸업요건이 모두 충족됐다. **학기를 더 채우지 마라** — 남은 학기에 여유 "
+                "학점이 있어도 졸업에 필요 없는 과목을 억지로 넣을 이유가 없다. "
+                "finish_response에서 학기별 계획을 정리하고, 요건이 다 채워진다는 것과 "
+                "각 학기가 몇 학점인지 알려라. 더 듣고 싶으면 말해달라고 덧붙여라."
+            )
         else:
             next_action = (
-                "남은 이수구분이 모두 채워졌다. finish_response에서 학기별 계획을 정리해라."
+                "학과 졸업요건 기준이 DB에 없어 무엇이 남았는지 계산할 수 없다. "
+                "지금까지 제안한 계획을 finish_response에서 정리하되, **요건 충족 여부는 "
+                "확인할 수 없다는 것을 그대로 밝혀라.** 채워졌다고 말하지 마라."
             )
 
-        # 되돌림 게이트용 상태. 채울 수 있는데 안 채운 경우에만 남긴다.
-        # 항목이 **0건인 학기**를 따로 센다. 원래 보고된 증상이 정확히 그거였고
-        # ("미래 학기 항목 0건"), 실측에서 LLM이 `course_ids: []`인 빈 학기를 넣고
-        # 넘어간 적이 있다. "N학점 미배정"보다 "2027년 1학기가 비어 있다"가 훨씬
-        # 구체적인 지시라 후속 호출에서 실제로 채워진다.
+        # 되돌림 게이트용 상태.
+        #
+        # **기준은 "학기가 꽉 찼는가"가 아니라 "졸업요건이 남았는가"다.** 요건을 다
+        # 채웠으면 남은 학기에 여유가 있어도, 심지어 한 학기가 통째로 비어 있어도
+        # 되돌리지 않는다 — 졸업에 필요 없는 과목을 억지로 채우게 만들 이유가 없다.
+        # (예전에는 `empty_terms`만으로도 발동해서, 요건이 다 충족된 학생에게도
+        #  "2027년 2학기가 비어 있으니 채워라"라고 밀어붙였다.)
+        #
+        # 빈 학기 목록은 그대로 들고 간다. 요건이 남아 있을 때 "N학점 미배정"보다
+        # "2027년 1학기가 비어 있다"가 훨씬 구체적인 지시라 후속 호출에서 실제로
+        # 채워지기 때문이다(실측에서 LLM이 `course_ids: []`인 빈 학기를 넣고 넘어간
+        # 적이 있다).
         empty_terms = [
             f"{t['planned_year']}년 {t['planned_semester']}({t['planned_grade']}학년)"
             for t in self._remaining_terms()
@@ -2553,7 +2585,7 @@ class _ToolContext:
                 "terms_with_room": room,
                 "empty_terms": empty_terms,
             }
-            if empty_terms or (unmet and room)
+            if unmet and (room or empty_terms)
             else None
         )
 
@@ -2628,7 +2660,14 @@ class _ToolContext:
             self.db, self.user.id, program_types={"primary"}
         )
         if not progresses:
+            self.requirements_known = False
             return []
+        # 학과 요건 행이 없으면(`requirement_found=False`) 잔여 학점이 전부 None이라
+        # "미충족 0"과 "판단 불가"가 구분되지 않는다. 그 둘을 섞으면 요건을 모르는
+        # 학생에게 "요건을 다 채웠다"고 말하게 된다.
+        self.requirements_known = progresses[0].requirement_found and any(
+            c.remaining_credits is not None for c in progresses[0].categories
+        )
         proposed: dict[str, float] = {}
         for ch in self.pending_changes:
             if ch.action != "create" or ch.course_id is None:
