@@ -82,7 +82,10 @@ _FINISH_GATE_RESERVE = 4
 # 미이수로 오인할 수 있다.
 # 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
 # (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
-from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+from app.domains.academics.graduation_progress import (
+    BALANCED_LIBERAL_AREAS,
+    requirement_category_for_course,
+)
 from app.domains.academics.program_status import (
     ACTIVE_PROGRAM_STATUSES, is_active_program_status,
 )
@@ -580,9 +583,15 @@ _QUERY_ONLY_MARKERS = (
 
 # "만들어 달라"가 명시적인 동사. 조회 표현과 같이 나와도 이쪽이 이긴다
 # ("졸업까지 로드맵 짜서 보여줘").
+# 어간(`채워`/`편성`/`설계`)이 아니라 **요청형**으로 둔다. 어간이면 수동·서술형에도
+# 걸려서 "졸업 로드맵 어떻게 채워져 있는지 보여줘"가 계획 요청으로 잡힌다 — veto를
+# 뚫는 예외라 오탐이 곧 "조회 요청에 학기 제안이 쌓인다"가 된다.
 _BUILD_VERB_MARKERS = (
     "짜줘", "짜 줘", "짜주", "짜서", "짜봐", "짜자",
-    "편성", "설계", "채워", "채우", "계획해", "계획 세", "세워서", "만들어", "배치해",
+    "편성해", "설계해", "배치해", "만들어",
+    "채워줘", "채워 줘", "채워라", "채워주", "채워서",
+    "계획해줘", "계획해 줘", "계획해주", "계획해라", "계획해서",
+    "계획 세워줘", "계획 세워 줘", "계획 세워서", "계획을 세워",
 )
 
 # 실제로 **계획을 만들어 달라**는 신호. 위 범위 표현과 같이 나와야 full-horizon 요청이다.
@@ -1535,6 +1544,8 @@ class _ToolContext:
         # 졸업요건을 숫자로 알 수 있는 학생인가. `_requirement_coverage()`가 채운다.
         # 요건 행이 없으면 "다 채웠다"고 말할 근거가 없다.
         self.requirements_known = False
+        # 총 이수학점 기준 잔여(이번 턴 제안 반영 후). None이면 기준을 모른다는 뜻.
+        self.remaining_total_after_plan: float | None = None
         # 턴 안에서 안 변하는 값들. 매 호출 재계산이 이수기록 전체 스캔·과목 조회로
         # 이어져 도구 한 번에 수백 건의 SELECT가 나갔다.
         self._remaining_terms_cache: list[dict] | None = None
@@ -2526,6 +2537,11 @@ class _ToolContext:
         ]
         total_room = sum(r["credits_left_in_term"] for r in room)
         total_unmet = sum(u["remaining_credits"] for u in unmet)
+        # 총 이수학점이 남았으면 카테고리를 다 채웠어도 졸업요건 미충족이다.
+        total_short = self.remaining_total_after_plan or 0.0
+        # 요건을 숫자로 모르면(요건 행 없음) "채울 필요 없다"고 말할 근거도 없다.
+        # 그 경우엔 빈 학기가 남아 있는 한 계속 채우게 둔다 — 예전 동작이다.
+        still_to_fill = bool(unmet) or total_short > 0 or not self.requirements_known
 
         if rejected_count:
             next_action = (
@@ -2547,17 +2563,26 @@ class _ToolContext:
                 "더 넣지 말고, finish_response에서 졸업까지 학점이 모자란다는 사실과 "
                 "부족한 이수구분·학점을 그대로 알려라."
             )
+        elif total_short > 0:
+            next_action = (
+                f"이수구분별 잔여는 없지만 졸업 총 이수학점이 {total_short:g}학점 남았다"
+                "(학과 요건의 이수구분 합보다 총요구학점이 큰 경우다 — 사범대 교직학점 등). "
+                "여유 있는 학기에 과목을 더 담아 propose_term_plan을 한 번 더 호출해라. "
+                "후보를 더 못 찾겠으면 몇 학점이 남는지 finish_response에서 밝혀라."
+            )
         elif self.requirements_known:
             next_action = (
-                "졸업요건이 모두 충족됐다. **학기를 더 채우지 마라** — 남은 학기에 여유 "
-                "학점이 있어도 졸업에 필요 없는 과목을 억지로 넣을 이유가 없다. "
-                "finish_response에서 학기별 계획을 정리하고, 요건이 다 채워진다는 것과 "
-                "각 학기가 몇 학점인지 알려라. 더 듣고 싶으면 말해달라고 덧붙여라."
+                "졸업요건이 모두 충족됐다(이수구분별 잔여 0 + 총 이수학점 충족). "
+                "**학기를 더 채우지 마라** — 남은 학기에 여유 학점이 있어도 졸업에 필요 "
+                "없는 과목을 억지로 넣을 이유가 없다. finish_response에서 학기별 계획을 "
+                "정리하고, 요건이 다 채워진다는 것과 각 학기가 몇 학점인지 알려라. "
+                "더 듣고 싶으면 말해달라고 덧붙여라."
             )
         else:
             next_action = (
-                "학과 졸업요건 기준이 DB에 없어 무엇이 남았는지 계산할 수 없다. "
-                "지금까지 제안한 계획을 finish_response에서 정리하되, **요건 충족 여부는 "
+                "이 학생의 졸업요건 기준을 숫자로 확인할 수 없다(학과 요건 행이 없거나 "
+                "활성 학적이 등록되지 않았다). 남은 학기가 비어 있으면 계속 채우되, "
+                "지금까지 제안한 계획을 finish_response에서 정리할 때 **요건 충족 여부는 "
                 "확인할 수 없다는 것을 그대로 밝혀라.** 채워졌다고 말하지 마라."
             )
 
@@ -2582,10 +2607,11 @@ class _ToolContext:
             {
                 "unmet_credits": round(total_unmet, 1),
                 "unmet_categories": [u["category_name"] for u in unmet],
+                "remaining_total_credits": self.remaining_total_after_plan,
                 "terms_with_room": room,
                 "empty_terms": empty_terms,
             }
-            if unmet and (room or empty_terms)
+            if still_to_fill and (room or empty_terms)
             else None
         )
 
@@ -2609,6 +2635,10 @@ class _ToolContext:
             "rejected_count": rejected_count,
             "requirement_coverage": coverage,
             "unmet_categories_after_plan": unmet,
+            # 이수구분별 잔여가 0이어도 총 이수학점이 남을 수 있다(요건 행의 이수구분
+            # 합 < 총요구학점인 학과). `unmet_categories_after_plan`만 보고 "다 채웠다"고
+            # 판단하지 마라. None이면 기준을 몰라서 계산 못 한 것이다.
+            "remaining_total_credits_after_plan": self.remaining_total_after_plan,
             "terms_with_room": room,
             "next_action": next_action,
             "hint": (
@@ -2661,25 +2691,49 @@ class _ToolContext:
         )
         if not progresses:
             self.requirements_known = False
+            self.remaining_total_after_plan = None
             return []
+        program = progresses[0]
         # 학과 요건 행이 없으면(`requirement_found=False`) 잔여 학점이 전부 None이라
         # "미충족 0"과 "판단 불가"가 구분되지 않는다. 그 둘을 섞으면 요건을 모르는
         # 학생에게 "요건을 다 채웠다"고 말하게 된다.
-        self.requirements_known = progresses[0].requirement_found and any(
-            c.remaining_credits is not None for c in progresses[0].categories
+        self.requirements_known = (
+            any(c.remaining_credits is not None for c in program.categories)
+            or program.remaining_total_credits is not None
         )
         proposed: dict[str, float] = {}
+        proposed_total = 0.0
         for ch in self.pending_changes:
             if ch.action != "create" or ch.course_id is None:
                 continue
             course = self.db.get(Course, ch.course_id)
             if course is None:
                 continue
-            key = course.category or "미분류"
-            proposed[key] = proposed.get(key, 0.0) + float(course.credits or 0)
+            # 요건 라벨(성적표 어휘)과 `courses.category`(수강편람 어휘)가 교양에서
+            # 겹치지 않는다 — 정규화 없이 이름으로 맞추면 교양 과목을 아무리 계획해도
+            # 교양 잔여가 1학점도 안 줄어들어, "요건 충족" 상태에 영영 도달하지 못한다.
+            key = requirement_category_for_course(course.category) or "미분류"
+            credits = float(course.credits or 0)
+            proposed[key] = proposed.get(key, 0.0) + credits
+            proposed_total += credits
+
+        # 총 이수학점 요건. **카테고리 합만 보면 안 된다** — 운영 DB의 primary 요건
+        # 126행 중 17행(사범대 전체)이 카테고리 합 < 총요구학점이고, 그 차이 22학점이
+        # 교직이다. 카테고리를 다 채워도 총학점이 남는데 "다 충족됐다"고 말하게 된다
+        # (엔진은 같은 호출에서 satisfied=False라고 판정하고 있다).
+        remaining_total = (
+            float(program.remaining_total_credits)
+            if program.remaining_total_credits is not None
+            else None
+        )
+        self.remaining_total_after_plan = (
+            round(max(remaining_total - proposed_total, 0.0), 1)
+            if remaining_total is not None
+            else None
+        )
 
         out = []
-        for category in progresses[0].categories:
+        for category in program.categories:
             remaining = (
                 float(category.remaining_credits)
                 if category.remaining_credits is not None
@@ -2695,7 +2749,7 @@ class _ToolContext:
                 ),
             })
         # 요건 카테고리에 없는데 제안된 이수구분(예: 학과 카탈로그 태그가 다른 경우)도 노출
-        known = {c.category_name for c in progresses[0].categories}
+        known = {c.category_name for c in program.categories}
         for key, planned in proposed.items():
             if key not in known:
                 out.append({

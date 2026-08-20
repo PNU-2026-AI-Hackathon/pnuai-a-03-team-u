@@ -2256,8 +2256,10 @@ class FullHorizonPlanningTest(unittest.TestCase):
         억지로 넣게 만든다.
         """
         db = self.make_db()
-        # 전공선택 3학점만 남은 상태 → 한 과목이면 요건이 다 찬다.
-        ctx = self.make_ctx(db, admission_type="transfer", major_elective=3)
+        # 총 6학점짜리 요건 + 전공선택 3학점 잔여 → 한 과목이면 **총학점까지** 다 찬다.
+        # 총요구학점을 낮추지 않으면 이수구분 잔여가 0이어도 총학점이 남아 미충족이다
+        # (사범대처럼 이수구분 합 < 총요구학점인 요건 행이 운영 DB에 17개 있다).
+        ctx = self.make_ctx(db, admission_type="transfer", total_req=6, major_elective=3)
         db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
                                    year="2026", semester="1학기", category="전공선택"))
         db.add(Course(id=560, course_name="마지막전선", department_id=10, major_id=20,
@@ -2272,8 +2274,77 @@ class FullHorizonPlanningTest(unittest.TestCase):
 
         # 2027-1, 2027-2가 통째로 비어 있지만 요건이 다 찼으므로 되돌리지 않는다.
         self.assertEqual([], result["unmet_categories_after_plan"])
+        self.assertEqual(0.0, result["remaining_total_credits_after_plan"])
         self.assertIsNone(ctx.plan_gap)
         self.assertIn("더 채우지 마라", result["next_action"])
+
+    def test_이수구분을_다_채워도_총_이수학점이_남으면_충족이_아니다(self):
+        """운영 DB의 primary 요건 126행 중 17행(사범대 전체)이 **이수구분 합 <
+        총요구학점**이다(차이 22학점 = 교직). 이수구분 잔여만 보면 다 채웠는데
+        졸업요건 엔진은 같은 호출에서 `satisfied=False`라고 판정한다.
+
+        그 상태에서 "졸업요건이 모두 충족됐다. 더 채우지 마라"라고 지시하면 학생이
+        22학점을 덜 들은 채 졸업할 수 있다고 믿게 된다.
+        """
+        db = self.make_db()
+        # 사범대형: 총 30학점 요건인데 이수구분 합은 6학점뿐.
+        ctx = self.make_ctx(db, admission_type="transfer", total_req=30, major_elective=3)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add(Course(id=580, course_name="마지막전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [580],
+            }], reason="test")
+
+        self.assertEqual([], result["unmet_categories_after_plan"])
+        self.assertEqual(24.0, result["remaining_total_credits_after_plan"])
+        self.assertIsNotNone(ctx.plan_gap, "총학점이 남았는데 되돌리지 않았다")
+        self.assertNotIn("더 채우지 마라", result["next_action"])
+        self.assertIn("총 이수학점", result["next_action"])
+
+    def test_교양_과목을_제안하면_교양_요건_잔여가_줄어든다(self):
+        """요건 라벨(`교양필수`/`교양선택`)과 `courses.category`(`효원핵심교양` 등)의
+        어휘가 다르다 — 운영 DB에 `교양필수`/`교양선택` category 과목은 **0건**이다.
+
+        정규화 없이 이름으로 맞추면 교양 과목을 아무리 계획해도 교양 잔여가 1학점도
+        안 줄어들어, "요건 충족" 상태에 영영 도달하지 못하고 게이트가 계속 되돌린다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="transfer", total_req=133)
+        db.add(GraduationRequirement(
+            department_id=10, major_id=20, program_type="primary",
+            curriculum_year="2026", required_total_credits=133,
+            required_general_required=3, required_general_elective=6,
+        ))
+        db.query(GraduationRequirement).filter(
+            GraduationRequirement.required_general_required.is_(None)).delete()
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add_all([
+            Course(id=590, course_name="핵심교양과목", department_id=10, major_id=20,
+                   category="효원핵심교양", credits=3.0, year="3", semester="2"),
+            Course(id=591, course_name="균형교양과목", department_id=10, major_id=20,
+                   category="효원균형교양", credits=3.0, year="3", semester="2"),
+        ])
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [590, 591],
+            }], reason="test")
+
+        cov = {c["category_name"]: c for c in result["requirement_coverage"]}
+        # 효원핵심교양 → 교양필수, 효원균형교양 → 교양선택 (2026 개편 대응)
+        self.assertEqual(3.0, cov["교양필수"]["planned_in_this_turn"])
+        self.assertEqual(0.0, cov["교양필수"]["remaining_after_plan"])
+        self.assertEqual(3.0, cov["교양선택"]["planned_in_this_turn"])
+        self.assertEqual(3.0, cov["교양선택"]["remaining_after_plan"])
 
     def test_요건_기준이_없으면_충족됐다고_말하지_않는다(self):
         """학과 요건 행이 없으면 잔여 학점이 전부 None이라 "미충족 0"과 "판단 불가"가
@@ -2297,6 +2368,9 @@ class FullHorizonPlanningTest(unittest.TestCase):
 
         self.assertFalse(ctx.requirements_known)
         self.assertIn("확인할 수 없다", result["next_action"])
+        # 요건을 **모른다**는 건 "채울 필요 없다"의 근거가 못 된다. 빈 학기가 남아
+        # 있으면 계속 채우게 둔다 — 아니면 원래 증상("한 학기만 제안")으로 돌아간다.
+        self.assertIsNotNone(ctx.plan_gap, "요건 미상인데 게이트가 통째로 사라졌다")
         # "다 채워졌다"고 단정하는 문구는 없어야 한다("충족 여부를 확인할 수 없다"는 정상).
         self.assertNotIn("모두 충족", result["next_action"])
         self.assertNotIn("더 채우지 마라", result["next_action"])
@@ -2709,6 +2783,15 @@ class FullHorizonDetectionBoundaryTest(unittest.TestCase):
     """
 
     QUERY_ONLY = [
+        # 계획 동사의 **수동·서술형**. veto 예외 마커를 어간으로 두면 여기 다 걸린다
+        # ("채워"가 "채워져 있는지"에 걸리는 식) — 3차 리뷰가 뚫은 축이다.
+        "졸업 로드맵 어떻게 채워져 있는지 보여줘",
+        "전체 학기가 어떻게 채워져 있는지 확인해줘",
+        "남은 학기 전부 편성이 끝났는지 확인해줘",
+        "졸업 로드맵이 어떻게 설계돼 있는지 보여줘",
+        "전체 로드맵에 뭐가 채워져 있는지만 정리해줘",
+        "4학년까지 계획해둔 과목 알려줘",
+        "졸업까지 계획 세워져 있는지 확인해줘",
         "졸업 로드맵 지금 어떻게 돼 있어?",
         "졸업까지 계획 잘 세워져 있는지 확인만 해줘",
         "이전 학기 계획 어떻게 됐지?",
