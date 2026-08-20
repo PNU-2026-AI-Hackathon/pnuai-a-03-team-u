@@ -102,11 +102,100 @@ class ResendOneLineConfigTest(unittest.TestCase):
         self.assertEqual("smtp.gmail.com", smtp.host)
         self.assertEqual("pw", smtp.password)
 
+    def test_smtp_host_without_password_falls_back_to_resend_api(self):
+        """팀원들이 가장 밟기 쉬운 경로 (독립 리뷰 지적).
+
+        기존 `.env`는 옛 `.env.example`에서 복사해 `SMTP_HOST=smtp.resend.com`이 이미
+        들어 있다. 거기에 새 안내대로 `RESEND_API=`만 채우면, 예전에는 SMTP_HOST 분기를
+        타면서 password가 None이 되어 **로그인을 건너뛰고 발송이 실패**했다.
+        `.env.example`을 고쳐도 이미 존재하는 `.env`는 안 고쳐진다.
+        """
+        with patch.object(mailer.settings, "SMTP_HOST", "smtp.resend.com"), \
+             patch.object(mailer.settings, "SMTP_USER", "resend"), \
+             patch.object(mailer.settings, "SMTP_PASSWORD", None), \
+             patch.object(mailer.settings, "RESEND_API", "re_test_key"):
+            smtp = mailer.resolve_smtp()
+
+        self.assertEqual("re_test_key", smtp.password)
+        self.assertTrue(
+            smtp.user and smtp.password,
+            "사용자/비밀번호가 다 있어야 login()을 탄다 — 하나라도 비면 인증을 건너뛰고 "
+            "Resend가 발송을 거부한다",
+        )
+
     def test_nothing_set_means_unconfigured(self):
         with patch.object(mailer.settings, "SMTP_HOST", None), \
              patch.object(mailer.settings, "RESEND_API", None):
             self.assertIsNone(mailer.resolve_smtp().host)
             self.assertFalse(mailer.is_smtp_configured())
+
+
+class UnconfiguredProductionNeverLogsLinkTest(unittest.TestCase):
+    """SMTP **미설정** 경로에서도 운영이면 링크를 안 남기는가 (P0-4의 나머지 절반).
+
+    독립 리뷰(2026-08-20)가 잡은 구멍이다. 위 `SendFailureFallbackTest`는 *발송 실패*
+    경로만 고정하고 있었고, *미설정* 경로는 dev 쪽 테스트(`test_unconfigured_dev_...`)만
+    있어 production 쌍이 없었다. 실제로 `mailer.py`의 미설정 폴백에서 `is_dev_environment()`
+    가드를 `True`로 바꿔도 464개 테스트가 전부 통과했다 — **운영 로그에 재설정 링크를
+    찍는 회귀를 아무도 못 잡는 상태**였다.
+    """
+
+    def test_production_unconfigured_does_not_log_the_link(self):
+        with patch.object(mailer.settings, "SMTP_HOST", None), \
+             patch.object(mailer.settings, "RESEND_API", None), \
+             patch.object(mailer.settings, "ENV", "production"):
+            with self.assertLogs("app.core.mailer", level="ERROR") as logs:
+                sent = mailer.send_email(
+                    "s@pusan.ac.kr", "제목",
+                    "링크: http://x/reset-password?token=UNCONFIGURED_PROD_TOKEN",
+                )
+
+        output = "\n".join(logs.output)
+        self.assertFalse(sent)
+        self.assertNotIn(
+            "UNCONFIGURED_PROD_TOKEN", output,
+            "SMTP 미설정 상태의 운영 로그에 재설정 링크가 남으면 로그 접근자가 "
+            "임의 계정을 가져갈 수 있다 (P0-4).",
+        )
+        # 링크는 막되 "왜 메일이 안 갔는지"는 남아야 추적이 된다.
+        self.assertIn("SMTP", output)
+
+
+class ResetUrlBaseGuardTest(unittest.TestCase):
+    """배포에서 메일 링크가 localhost를 가리키면 경고하는가.
+
+    독립 리뷰가 잡았다 — 이 가드를 `if False:`로 죽여도 테스트가 전부 통과했다.
+    메일은 정상 발송되는데 링크가 받는 사람 PC의 localhost를 가리켜 열리지 않고,
+    발송이 성공하니 아무도 눈치채지 못한다.
+    """
+
+    def _startup_logs(self, env: str, base: str):
+        """가드는 매 발송이 아니라 **기동 시 한 번**(`startup_log`) 검사한다 —
+        요청마다 같은 error를 반복해 찍으면 로그가 무의미해진다."""
+        with patch.object(mailer.settings, "SMTP_HOST", None), \
+             patch.object(mailer.settings, "RESEND_API", None), \
+             patch.object(mailer.settings, "ENV", env), \
+             patch.object(mailer.settings, "PASSWORD_RESET_URL_BASE", base):
+            with self.assertLogs("app.core.mailer", level="WARNING") as logs:
+                mailer.startup_log()
+        return "\n".join(logs.output)
+
+    def test_production_with_local_url_base_warns(self):
+        for base in (
+            "http://localhost:5173/reset-password",
+            "http://127.0.0.1:5173/reset-password",
+        ):
+            with self.subTest(base=base):
+                self.assertIn("PASSWORD_RESET_URL_BASE", self._startup_logs("production", base))
+
+    def test_production_with_deployed_url_base_is_quiet(self):
+        output = self._startup_logs("production", "https://planu-pnu.netlify.app/reset-password")
+        self.assertNotIn("PASSWORD_RESET_URL_BASE", output)
+
+    def test_dev_with_local_url_base_is_not_flagged(self):
+        """로컬 개발자에게 오탐을 띄우면 진짜 경고를 무시하게 된다."""
+        output = self._startup_logs("local", "http://localhost:5173/reset-password")
+        self.assertNotIn("PASSWORD_RESET_URL_BASE", output)
 
 
 class EnvExampleDoesNotCreateHalfConfiguredStateTest(unittest.TestCase):

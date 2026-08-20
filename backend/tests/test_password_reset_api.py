@@ -64,11 +64,21 @@ class PasswordResetApiTest(unittest.TestCase):
         "메일이 나갔는가"를 계속 검증하려면 그 작업을 여기서 돌려줘야 한다.
         """
         tasks = BackgroundTasks()
+        before = len(self.sent)
         response = request_password_reset(
             request=None,
             payload=PasswordResetRequest(email=email, name=name),
             background_tasks=tasks,
             db=self.db,
+        )
+        # **핸들러 안에서 메일이 나가면 안 된다.** 이 단언이 없으면 발송을 동기 호출로
+        # 되돌려도 아래 루프가 no-op이 될 뿐 테스트는 그대로 통과한다 — 실제로 독립
+        # 리뷰(2026-08-20)가 그 변이로 464개 전부 초록인 걸 확인했다. 이 PR이 산
+        # 유일한 성능/타이밍 이득에 회귀 테스트가 0개였다.
+        self.assertEqual(
+            before, len(self.sent),
+            "메일이 요청 처리 중에 발송됐다 — SMTP 왕복이 응답을 붙잡는다(최악 38.6초 실측). "
+            "background_tasks.add_task()로 예약해야 한다.",
         )
         for task in tasks.tasks:
             task.func(*task.args, **task.kwargs)

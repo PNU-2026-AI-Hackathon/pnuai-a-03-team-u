@@ -45,7 +45,13 @@ def resolve_smtp() -> SmtpSettings:
             host=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
             user=settings.SMTP_USER,
-            password=settings.SMTP_PASSWORD,
+            # 비밀번호가 비어 있으면 `RESEND_API`로 폴백한다. 팀원들 기존 `.env`는 옛
+            # `.env.example`에서 복사해 `SMTP_HOST=smtp.resend.com`이 이미 들어 있는데,
+            # 거기에 새 안내대로 `RESEND_API=`만 채우면 이 분기를 타면서 키가 통째로
+            # 무시됐다 — 로그인을 건너뛰고 발송이 실패한다. `.env.example`을 고쳐도
+            # **이미 존재하는 `.env`는 안 고쳐진다**. 이 PR이 없앴다고 한 반쪽 설정
+            # 함정이 가장 밟기 쉬운 경로에 그대로 남아 있었다(독립 리뷰 지적).
+            password=settings.SMTP_PASSWORD or settings.RESEND_API,
             use_tls=settings.SMTP_USE_TLS,
         )
     if settings.RESEND_API:
