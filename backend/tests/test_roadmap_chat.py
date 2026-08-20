@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -10,9 +10,15 @@ from app.domains.academics.models import (
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
-from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange
+from app.domains.planning.models import (
+    CourseRoadmap,
+    CourseRoadmapChatMessage,
+    CourseRoadmapChatSession,
+    CourseRoadmapItem,
+    PendingRoadmapChange,
+)
 from app.domains.planning import roadmap_chat as roadmap_chat_mod
-from app.domains.planning.roadmap_chat import _ToolContext
+from app.domains.planning.roadmap_chat import _ToolContext, run_roadmap_chat
 from app.domains.users.models import User
 
 
@@ -23,6 +29,7 @@ _ROADMAP_TEST_TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, Course.__table__,
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
+    CourseRoadmapChatSession.__table__, CourseRoadmapChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__,
     StudentCourseSubstitution.__table__,  # 추천 경로가 substituted_course_names를 조회한다
@@ -2088,6 +2095,70 @@ class FullHorizonPlanningTest(unittest.TestCase):
         self.assertIn("학기당 상한", result["terms"][0]["rejected"][0]["error"])
         self.assertEqual(21.0, result["terms"][0]["term_credits_after"])
 
+    def test_학기를_안_옮기는_update는_그_학기_학점을_증발시키지_않는다(self):
+        """학점 상한 가드가 **느슨해지는** 방향의 회귀를 막는다.
+
+        `_planned_credits_by_term`은 옛 학기에서 학점을 빼고 새 학기에 더하는 식으로
+        update를 반영하는데, 예전엔 `planned_year`가 없는 update(예: planned_grade만
+        교정)에도 빼기만 하고 다시 더하지 않았다. 그런 제안 하나가 그 학기 학점을 통째로
+        증발시켜서, 이미 21학점이 찬 학기에 과목을 더 밀어넣을 수 있었다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # cap=21
+        # 이미 21학점이 찬 학기를 만든다.
+        for i in range(7):
+            db.add(CourseRoadmapItem(
+                id=700 + i, roadmap_id=1, course_name=f"기존{i}", credits=3.0,
+                planned_year="2027", planned_semester="1학기", planned_grade=3,
+                status="planned",
+            ))
+        db.add(Course(id=600, course_name="추가과목", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1"))
+        db.flush()
+
+        counted = ctx._planned_credits_by_term()[("2027", "1학기")]
+        self.assertEqual(21.0, counted)
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            # 학기는 그대로 두고 학년 표기만 고치는 update.
+            moved = ctx.propose_change(
+                action="update", reason="학년 표기 교정", item_id=700, planned_grade=4,
+            )
+            self.assertNotIn("error", moved, moved)
+
+            # 그 학기 학점은 여전히 21이어야 한다.
+            self.assertEqual(21.0, ctx._planned_credits_by_term()[("2027", "1학기")])
+
+            # 그러므로 3학점을 더 넣으려는 create는 상한으로 막혀야 한다.
+            blocked = ctx.propose_change(
+                action="create", reason="추가", course_id=600,
+                planned_year="2027", planned_semester="1학기", planned_grade=4,
+            )
+        self.assertIn("error", blocked)
+        self.assertIn("학기당 상한", blocked["error"])
+
+    def test_학기를_옮기는_update는_학점도_따라_옮긴다(self):
+        """위 수정이 반대로 "update는 아무것도 안 한다"가 되면 안 된다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)
+        db.add(CourseRoadmapItem(
+            id=800, roadmap_id=1, course_name="옮길과목", credits=3.0,
+            planned_year="2027", planned_semester="1학기", planned_grade=4,
+            status="planned",
+        ))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            moved = ctx.propose_change(
+                action="update", reason="학기 이동", item_id=800,
+                planned_year="2027", planned_semester="2학기", planned_grade=4,
+            )
+            self.assertNotIn("error", moved, moved)
+
+        planned = ctx._planned_credits_by_term()
+        self.assertEqual(0.0, planned.get(("2027", "1학기"), 0.0))
+        self.assertEqual(3.0, planned.get(("2027", "2학기"), 0.0))
+
     def test_requirement_coverage_reports_what_is_still_missing(self):
         """제안을 다 이수해도 남는 이수구분을 도구가 계산해 준다 (판정은 규칙 기반)."""
         db = self.make_db()
@@ -2285,3 +2356,295 @@ class FullHorizonFinishGateTest(unittest.TestCase):
         Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
         db = sessionmaker(bind=engine)()
         self.assertIn("죄송", roadmap_chat_mod._fallback_summary(db, []))
+
+
+class _ScriptedLLM:
+    """스크립트된 tool_calls를 순서대로 돌려주는 가짜 LLM.
+
+    `run_roadmap_chat`의 루프를 실제로 태우기 위한 것이다. finish 게이트는 그 루프
+    안에만 있어서, `_ToolContext`만 직접 부르는 테스트로는 **한 줄도 실행되지 않는다** —
+    독립 리뷰가 게이트를 `if False and (...)`로 무력화하고도 전체 스위트를 통과시켰다.
+    """
+
+    def __init__(self, script):
+        self._script = list(script)
+        self.calls_made = 0
+
+    def bind_tools(self, tools, tool_choice=None):
+        return self
+
+    def invoke(self, messages, config=None):
+        self.calls_made += 1
+        if not self._script:
+            raise AssertionError(
+                f"스크립트가 {self.calls_made - 1}번 만에 소진됐다 — 루프가 예상보다 더 돌았다"
+            )
+        calls = self._script.pop(0)
+        msg = MagicMock()
+        msg.content = ""
+        msg.tool_calls = calls
+        return msg
+
+
+class FinishGateBehaviourTest(unittest.TestCase):
+    """finish 게이트가 실제 루프에서 어떻게 동작하는가.
+
+    이 PR에서 가장 위험한 부분이다 — LLM의 종료를 서버가 되돌리므로, 되돌림이 안 걸리면
+    기능이 없는 것이고 계속 걸리면 무한루프다.
+    """
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_student(self, db):
+        # `_build_student_context_block`이 학과·전공 이름을 조회하므로 실제 행이 필요하다.
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=1, school_id=1, name="정보의생명공학대학"),
+            Department(id=10, college_id=1, name="정보컴퓨터공학부"),
+            Major(id=20, department_id=10, name="컴퓨터공학전공"),
+        ])
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20, admission_type="transfer")
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                   department_id=10, major_id=20, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                     curriculum_year="2026", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.flush()
+        return user, roadmap
+
+    def run_chat(self, db, user, roadmap, script, message):
+        llm = _ScriptedLLM(script)
+        with patch.object(roadmap_chat_mod, "_build_llm", return_value=llm), \
+                patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = run_roadmap_chat(db=db, user=user, roadmap=roadmap, message=message)
+        return result, llm
+
+    def test_전체_학기_요청인데_제안을_안_하고_끝내면_되돌린다(self):
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        script = [
+            [{"name": "finish_response", "args": {"message": "편성 들어갈까요?"}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "알겠습니다."}, "id": "c2"}],
+        ]
+        result, llm = self.run_chat(
+            db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        # 첫 finish가 되돌려져서 LLM이 한 번 더 불렸다.
+        self.assertEqual(2, llm.calls_made)
+        self.assertEqual("알겠습니다.", result["reply"])
+
+    def test_되돌림은_턴당_한_번뿐이다(self):
+        """무한루프 방지. 후보가 정말 없으면 두 번째 finish는 그대로 통과해야 한다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        script = [
+            [{"name": "finish_response", "args": {"message": "첫 시도"}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "두 번째 시도"}, "id": "c2"}],
+        ]
+        result, llm = self.run_chat(
+            db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        self.assertEqual(2, llm.calls_made, "세 번 불렸다면 되돌림이 두 번 걸린 것이다")
+        self.assertEqual("두 번째 시도", result["reply"])
+
+    def test_예산이_얼마_안_남았으면_되돌리지_않는다(self):
+        """`_FINISH_GATE_RESERVE`의 존재 이유. 되돌려도 채울 여유가 없으면 답을 내보낸다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        reserve = roadmap_chat_mod._FINISH_GATE_RESERVE
+        budget = roadmap_chat_mod.MAX_TOOL_ITERATIONS - reserve
+        # 게이트가 안 걸릴 때까지 get_roadmap_items로 예산을 태운다.
+        script = [
+            [{"name": "get_roadmap_items", "args": {}, "id": f"w{i}"}]
+            for i in range(budget)
+        ]
+        script.append(
+            [{"name": "finish_response", "args": {"message": "예산 소진"}, "id": "fin"}])
+        result, llm = self.run_chat(
+            db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        self.assertEqual(budget + 1, llm.calls_made, "되돌림이 걸렸다면 한 번 더 불렸을 것")
+        self.assertEqual("예산 소진", result["reply"])
+
+    def test_좁은_요청에는_게이트가_걸리지_않는다(self):
+        """"다음 학기만" 요청에 "나머지 학기도 채워라"라고 되돌리면 안 된다.
+
+        plan_gap의 empty_terms는 사용자가 요청한 학기가 아니라 남은 학기 **전부**를
+        보므로, expects_term_plan 가드가 없으면 여기서 걸린다.
+        """
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.add(Course(id=900, course_name="다음학기과목", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "다음 학기",
+                "terms": [{"planned_year": "2026", "planned_semester": "2학기",
+                           "planned_grade": 3, "course_ids": [900]}],
+            }, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "다음 학기만 짰어요."}, "id": "c2"}],
+        ]
+        result, llm = self.run_chat(
+            db, user, roadmap, script, "다음 학기만 짜줘")
+
+        self.assertEqual(2, llm.calls_made, "좁은 요청인데 되돌림이 걸렸다")
+        self.assertEqual("다음 학기만 짰어요.", result["reply"])
+
+
+class RemainingTermsEdgeCaseTest(unittest.TestCase):
+    """이수기록이 없는 학생에게 남은 학기를 지어내면 안 된다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def test_이수기록이_없으면_남은_학기를_지어내지_않는다(self):
+        """`project_curriculum_term`은 기록이 없으면 매번 "이번이 첫 학기"라고 답한다.
+
+        학년이 전진하지 않으므로 그대로 두면 상한(8)이 잘라줄 때까지 **같은 학기가
+        8개** 쌓이고, LLM은 "2030년 1학기(1학년)"를 계획하라는 지시를 받는다.
+        """
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            terms = roadmap_chat_mod._remaining_terms_until_graduation(db, 1)
+
+        self.assertEqual([], terms)
+
+    def test_이수기록이_있으면_학기가_전진한다(self):
+        """위 수정이 "항상 빈 목록"이 되면 안 된다."""
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20, admission_type="transfer"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            terms = roadmap_chat_mod._remaining_terms_until_graduation(db, 1)
+
+        self.assertEqual(
+            [("2026", "2학기", 3), ("2027", "1학기", 4), ("2027", "2학기", 4)],
+            [(t["planned_year"], t["planned_semester"], t["planned_grade"]) for t in terms],
+        )
+
+
+class AlreadyInPlanTest(unittest.TestCase):
+    """중복 재제출이 `rejected`로 새면 LLM이 "다 반려됐다"고 읽는다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                   department_id=10, major_id=20, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                     curriculum_year="2026", required_total_credits=133))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_이미_승인돼_저장된_로드맵_과목도_already_in_plan이다(self):
+        """"1턴에 승인 → 2턴에 '졸업까지 마저 짜줘'"가 이 기능의 주 시나리오다.
+
+        그때 DB 항목과의 중복이 rejected로 떨어지면, 고치려던 오독이 그대로 재현된다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=950, course_name="이미담긴과목", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="4", semester="1"))
+        db.add(CourseRoadmapItem(id=950, roadmap_id=1, course_id=950,
+                                 course_name="이미담긴과목", credits=3.0,
+                                 planned_year="2027", planned_semester="1학기",
+                                 planned_grade=4, status="planned"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2027", "planned_semester": "1학기",
+                "planned_grade": 4, "course_ids": [950],
+            }], reason="test")
+
+        self.assertEqual(0, result["rejected_count"])
+        self.assertEqual(0, result["accepted_count"])
+        self.assertEqual([950], [e["course_id"] for e in result["terms"][0]["already_in_plan"]])
+
+
+class FullHorizonDetectionBoundaryTest(unittest.TestCase):
+    """`_looks_like_full_horizon_request`의 오탐/미탐 경계.
+
+    오탐은 프롬프트 오염에서 끝나지 않는다 — `expects_term_plan=True`가 되어 finish
+    게이트가 첫 종료를 되돌리고 "propose_term_plan을 부른 뒤 끝내라"고 강제한다.
+    즉 **조회 요청에 묻지도 않은 학기 제안이 승인 대기에 쌓인다.**
+    """
+
+    QUERY_ONLY = [
+        "졸업 로드맵 지금 어떻게 돼 있어?",
+        "졸업까지 계획 잘 세워져 있는지 확인만 해줘",
+        "이전 학기 계획 어떻게 됐지?",
+        "직전 학기 수강계획 보여줘",
+        "4학년까지 내가 뭘 들었는지 알려줘",
+        "졸업 전에 인턴 계획 있는데 조언해줘",
+        "졸업까지 몇 학점 남았는지 계획 대비 알려줘",
+        "졸업까지 뭐가 남았는지 정리해줘",
+        "졸업 요건 알려줘",
+    ]
+    PLANNING = [
+        "졸업까지 로드맵 짜줘",
+        "남은 학기 전부 계획해줘",
+        "4학년 2학기까지 어떻게 들어야 해?",
+        "졸업 로드맵 짜줘",
+        "전체 로드맵 편성해줘",
+        "남은 학기 다 채워줘",
+        "졸업할 때까지 수강 순서 설계해줘",
+    ]
+
+    def test_조회성_요청은_전체계획으로_보지_않는다(self):
+        for message in self.QUERY_ONLY:
+            with self.subTest(message=message):
+                self.assertFalse(
+                    roadmap_chat_mod._looks_like_full_horizon_request(message))
+
+    def test_계획_요청은_전체계획으로_본다(self):
+        for message in self.PLANNING:
+            with self.subTest(message=message):
+                self.assertTrue(
+                    roadmap_chat_mod._looks_like_full_horizon_request(message))
+
+    def test_범위표현이_의도단어를_품고_있어도_AND가_유지된다(self):
+        """`졸업 로드맵`/`전체 로드맵`/`남은 학기 계획`은 그 자체가 의도 단어를 품는다.
+
+        문장 전체에서 의도를 찾으면 이 마커들에 대해 "둘 다 있어야 한다"가 무의미해진다.
+        """
+        for scope in ("졸업 로드맵", "전체 로드맵", "남은 학기 계획"):
+            with self.subTest(scope=scope):
+                self.assertFalse(
+                    roadmap_chat_mod._looks_like_full_horizon_request(f"{scope} 어떻게 되어 있어?"))
+                self.assertTrue(
+                    roadmap_chat_mod._looks_like_full_horizon_request(f"{scope} 짜줘"))
+
+    def test_이전_직전_학기는_전체_학기가_아니다(self):
+        """`전 학기`가 `이전학기`/`직전학기`의 부분문자열이라 걸리던 것."""
+        for message in ("이전 학기 계획 짜줘", "직전 학기 수강계획 편성해줘"):
+            with self.subTest(message=message):
+                self.assertFalse(
+                    roadmap_chat_mod._looks_like_full_horizon_request(message))
