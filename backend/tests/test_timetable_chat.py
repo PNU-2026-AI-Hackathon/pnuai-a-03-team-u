@@ -23,8 +23,9 @@ from app.domains.planning.models import (
     CoursePlan, CoursePlanItem, CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange,
     TimetableChatMessage, TimetableChatSession,
 )
+from app.domains.planning.timetable import _SectionInfo
 from app.domains.planning.timetable_chat import (
-    _TimeTableToolContext, clear_chat_messages, run_timetable_chat,
+    _rank_built_combos, _TimeTableToolContext, clear_chat_messages, run_timetable_chat,
 )
 from app.domains.users.models import User
 
@@ -1229,3 +1230,44 @@ class TimeConstraintEnforcementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankBuiltCombosOverTargetTest(unittest.TestCase):
+    """목표 학점을 넘긴 조합끼리는 초과가 적은 쪽이 위여야 한다.
+
+    `target_credits`는 시스템 안에서 "이 학점 **이상**"이라는 최소치로 쓰인다
+    (프롬프트의 `target_credit_floor`). 그래서 예전에는 사용자가 "18학점으로
+    짜줘"라고 명시해도 상한(21)까지 꽉 채운 조합만 내놓았다 — 2026-08-19 실계정
+    실측에서 18을 요청했는데 21학점 조합 3개가 나왔다. 최소치 의미는 그대로 두고,
+    이미 목표를 만족한 것들 중에서는 목표에 가까운 쪽을 고르게 한다.
+    """
+
+    @staticmethod
+    def _section(offering_id: int, credits: float, day: str, start: int) -> _SectionInfo:
+        return _SectionInfo(
+            item_id=offering_id, course_id=offering_id, course_code=f"C{offering_id}",
+            course_name=f"과목{offering_id}", category="전공선택", credits=credits,
+            offering_id=offering_id, section="001", professor=None,
+            times=(CourseTime(
+                offering_id=offering_id, day_of_week=day,
+                start_time=datetime.time(start, 0), end_time=datetime.time(start + 1, 15),
+                classroom=None,
+            ),),
+        )
+
+    def test_목표를_넘긴_조합끼리는_초과가_적은_쪽이_위(self):
+        # 같은 요일 수(1일)·같은 공백이 되도록 맞춰서 초과분만 차이나게 한다.
+        exactly_18 = [self._section(1, 9.0, "월", 9), self._section(2, 9.0, "월", 11)]
+        over_21 = [self._section(3, 9.0, "화", 9), self._section(4, 12.0, "화", 11)]
+        ranked = _rank_built_combos([over_21, exactly_18], target_credits=18.0)
+        self.assertEqual(
+            18.0, sum(s.credits for s in ranked[0]),
+            "18학점을 요청했는데 21학점 조합이 1순위로 오면 요청을 무시한 답이 된다",
+        )
+
+    def test_목표_미달_조합은_여전히_많이_채운_쪽이_위(self):
+        """초과 페널티가 '최대한 채운다'는 기존 동작을 되돌리면 안 된다."""
+        small = [self._section(1, 6.0, "월", 9)]
+        bigger = [self._section(2, 9.0, "화", 9), self._section(3, 6.0, "화", 11)]
+        ranked = _rank_built_combos([small, bigger], target_credits=18.0)
+        self.assertEqual(15.0, sum(s.credits for s in ranked[0]))

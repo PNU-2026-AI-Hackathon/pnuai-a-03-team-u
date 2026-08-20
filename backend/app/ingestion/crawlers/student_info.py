@@ -2,7 +2,7 @@ from playwright.sync_api import Page
 
 from app.ingestion.crawlers import menu_codes
 from app.ingestion.crawlers.pnu_session import goto_menu
-from app.ingestion.crawlers.table_extract import extract_row_items
+from app.ingestion.crawlers.table_extract import extract_row_items, extract_tables
 
 
 def fetch_student_record(page: Page) -> dict[str, str]:
@@ -36,3 +36,35 @@ def fetch_student_record(page: Page) -> dict[str, str]:
     if advisor_name:
         record["지도교수"] = advisor_name
     return record
+
+
+# 학적변동 표를 식별하는 헤더 조각. 학적부 페이지에는 표가 여러 개 있어서
+# (수강/성적/장학 등) 헤더로 골라내야 한다.
+_STATUS_CHANGE_HEADERS = ("학년도", "변동구분")
+
+
+def fetch_academic_status_changes(page: Page) -> list[dict[str, str]]:
+    """학적부의 "학적변동" 내역을 행 dict 목록으로 가져온다.
+
+    실계정 확인(2026-08-19) 기준 헤더는
+    `No | 학년도 | 학기 | 변동일자 | 변동구분 | 취소여부 | 취소일자 | 비고`이고,
+    편입생은 `2026 | 1학기 | 2026-03-01 | 편입학 | N` 행을 갖는다. 이 값으로
+    `admission_type`을 자동 판정한다 — 회원가입 때 사용자가 고르는 값에만 의존하면
+    잘못 고른 순간 로드맵 학년이 통째로 어긋난다(편입생이 1학년으로 잡힘).
+
+    이 함수는 `fetch_student_record`와 같은 학적부 메뉴를 쓴다. 표를 못 찾으면
+    빈 목록을 돌려주고, 호출부는 그때 기존 `admission_type`을 유지한다.
+    """
+    goto_menu(page, menu_codes.STUDENT_RECORD)
+    for table in extract_tables(page):
+        if len(table) < 2:
+            continue
+        header = [cell.strip() for cell in table[0]]
+        if not all(any(mark == cell for cell in header) for mark in _STATUS_CHANGE_HEADERS):
+            continue
+        return [
+            dict(zip(header, row))
+            for row in table[1:]
+            if len(row) == len(header) and row != header
+        ]
+    return []

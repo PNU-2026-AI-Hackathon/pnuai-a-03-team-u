@@ -7,7 +7,12 @@
 
 import unittest
 
-from app.domains.users.admission import entry_grade, is_transfer, normalize_admission_type
+from app.domains.users.admission import (
+    entry_grade,
+    infer_admission_type_from_status_changes,
+    is_transfer,
+    normalize_admission_type,
+)
 
 
 class NormalizeAdmissionTypeTest(unittest.TestCase):
@@ -25,6 +30,38 @@ class NormalizeAdmissionTypeTest(unittest.TestCase):
         self.assertEqual(3, entry_grade("transfer"))
         self.assertEqual(1, entry_grade("freshman"))
         self.assertEqual(1, entry_grade(None))
+
+
+class InferAdmissionTypeFromStatusChangesTest(unittest.TestCase):
+    """학적부 학적변동 내역 → admission_type 자동 판정.
+
+    회원가입 때 사용자가 고르는 값에만 의존하면, 잘못 고른 순간 로드맵 학년이
+    통째로 어긋난다(편입생이 1학년으로 잡혀 1·2학년 과목을 추천받음).
+    """
+
+    def test_편입학_행이_있으면_transfer(self):
+        rows = [{"학년도": "2026", "학기": "1학기", "변동일자": "2026-03-01",
+                 "변동구분": "편입학", "취소여부": "N"}]
+        self.assertEqual("transfer", infer_admission_type_from_status_changes(rows))
+
+    def test_취소된_편입은_무시한다(self):
+        rows = [{"변동구분": "편입학", "취소여부": "Y"}]
+        self.assertIsNone(infer_admission_type_from_status_changes(rows))
+
+    def test_편입이_아닌_변동은_판정하지_않는다(self):
+        rows = [{"변동구분": "휴학", "취소여부": "N"},
+                {"변동구분": "복학", "취소여부": "N"}]
+        self.assertIsNone(infer_admission_type_from_status_changes(rows))
+
+    def test_빈_입력은_판정불가로_None(self):
+        """None을 돌려줘야 호출부가 기존 값을 유지한다 — freshman으로 덮어쓰면 안 된다."""
+        for rows in (None, []):
+            with self.subTest(rows=rows):
+                self.assertIsNone(infer_admission_type_from_status_changes(rows))
+
+    def test_편입_표기가_바뀌어도_부분일치로_잡는다(self):
+        rows = [{"변동구분": "일반편입학", "취소여부": "N"}]
+        self.assertEqual("transfer", infer_admission_type_from_status_changes(rows))
 
 
 if __name__ == "__main__":
