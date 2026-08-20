@@ -83,6 +83,9 @@ class OfferingSearchResult(BaseModel):
     credits: float | None = None
     section: str | None = None
     professor: str | None = None
+    # 학부만 고르면 그 학부의 모든 전공 과목이 함께 나온다. 어느 전공 과목인지
+    # 줄마다 보여주지 않으면 "엉뚱한 과목이 섞였다"로 보인다(전공 미지정이면 None).
+    major_name: str | None = None
     times: list[OfferingTime] = []
 
 
@@ -98,14 +101,14 @@ def search_offerings(
     # 전공은 이름으로 받는다. 학부 자동완성(/departments/search)이 전공을 이름
     # 목록으로만 주기 때문에, id를 요구하면 프론트가 한 번 더 조회해야 한다.
     major: str | None = None,
-    # true면 전공이 지정되지 않은(학부 공통) 과목만. 화면에서 학부만 고르고
-    # 전공을 안 골랐을 때 모든 전공 과목이 섞여 나오는 대신 공통 과목을 보여준다.
-    major_unassigned: bool = False,
     # 여러 번 넘길 수 있다. "효원(균형·창의)교양"처럼 화면의 한 갈래가 DB에서는
     # 두 개 이상의 이수구분으로 나뉘어 있기 때문이다.
     category: list[str] | None = Query(None),
     q: str = "",
-    limit: int = 50,
+    # 상한을 둔 건 실수로 큰 값이 들어와 전 학기 개설(3천여 건)을 통째로
+    # 내보내는 걸 막기 위해서다. 지금 데이터에서 가장 큰 갈래(음악학과 전공
+    # 전체 368건)는 상한 안에 들어온다.
+    limit: int = Query(50, ge=1, le=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -115,12 +118,13 @@ def search_offerings(
     것이라, 아직 계획에 없는 과목은 아예 보이지 않았다. 다른 학부 과목을
     담으려면 여기서 직접 찾아야 한다.
 
-    학부만 주면 그 학부의 모든 전공이 함께 나온다(전공 미지정 과목 포함) —
-    학부 공통 과목을 놓치지 않게 하려는 것이다.
+    학부만 주고 전공을 안 주면 그 학부의 모든 전공이 함께 나온다(전공 미지정
+    과목 포함) — 학부 안의 어느 전공 과목도 놓치지 않게 하려는 것이다.
     """
     query = (
-        select(CourseOffering, Course)
+        select(CourseOffering, Course, Major.name)
         .join(Course, Course.id == CourseOffering.course_id)
+        .outerjoin(Major, Major.id == Course.major_id)
         .where(CourseOffering.year == year, CourseOffering.semester == semester)
     )
     if department_id is not None:
@@ -134,8 +138,6 @@ def search_offerings(
         # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한
         # 전공 과목까지 섞여 나온다.
         query = query.where(Course.major_id.in_(matched_major_ids))
-    elif major_unassigned:
-        query = query.where(Course.major_id.is_(None))
     wanted = [value.strip() for value in (category or []) if value.strip()]
     if wanted:
         # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
@@ -153,7 +155,7 @@ def search_offerings(
     if not rows:
         return []
 
-    offering_ids = [offering.id for offering, _ in rows]
+    offering_ids = [offering.id for offering, _, _ in rows]
     times_by_offering: dict[int, list[OfferingTime]] = {}
     for row in db.scalars(select(CourseTime).where(CourseTime.offering_id.in_(offering_ids))):
         times_by_offering.setdefault(row.offering_id, []).append(
@@ -175,7 +177,8 @@ def search_offerings(
             credits=course.credits,
             section=offering.section,
             professor=offering.professor,
+            major_name=major_name,
             times=times_by_offering.get(offering.id, []),
         )
-        for offering, course in rows
+        for offering, course, major_name in rows
     ]

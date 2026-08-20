@@ -8625,13 +8625,38 @@ body.theme-dark .topnav .theme-mode-button {
   white-space: nowrap;
 }
 
+.timetable-course-count {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  margin: 0;
+  color: var(--shell-dim);
+  font-size: 13px;
+}
+
+.timetable-course-count .is-warn {
+  color: var(--red);
+}
+
 .timetable-course-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
   margin: 0;
-  padding: 0;
+  /* 오른쪽 여백은 스크롤바가 카드 위에 겹쳐 앉지 않게 하려는 것. */
+  padding: 0 4px 0 0;
   list-style: none;
+  /*
+   * 목록 높이를 묶어두지 않으면 페이지가 통째로 길어진다. 효원핵심교양은
+   * 349건이라 문서 높이가 67,720px(1440x900 기준 75화면)까지 늘었고, 그러면
+   * 오른쪽 주간 시간표가 화면 밖으로 밀려 담은 결과를 볼 수 없다.
+   * 받아오는 것 자체는 121KiB · 130ms대라 부담이 아니어서(실측) 페이지네이션
+   * 대신 목록만 스크롤시킨다 — 결과를 감추지 않으면서 레이아웃을 지킨다.
+   */
+  max-height: min(68vh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .timetable-empty {

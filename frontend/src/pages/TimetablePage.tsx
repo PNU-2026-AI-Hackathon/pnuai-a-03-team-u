@@ -69,6 +69,16 @@ type CourseGroupKey = (typeof COURSE_GROUPS)[number]["key"];
 /** 전공 갈래 안에서 한 번 더 좁히는 이수구분. 비우면 전공 전체(기초+필수+선택). */
 const MAJOR_CATEGORIES = ["전공기초", "전공필수", "전공선택"] as const;
 
+/**
+ * 한 번에 받아오는 개설 강좌 수. 서버 상한(courses.py의 limit le=500)과 같은 값이다.
+ *
+ * 60이던 시절에는 조용히 잘렸다 — 2026-2학기에서 가장 큰 갈래인 학부 전체 전공
+ * (음악학과 368건)과 효원핵심교양(349건)이 60을 한참 넘는데 과목명 순으로 잘라서
+ * 뒤쪽 과목이 사라졌다. 349건을 통째로 받아도 121KiB · 130ms대라 나눠 받을 이유가
+ * 없다(실측). 그래도 잘릴 수는 있으므로 목록 위에 "상위 N건" 안내를 띄운다.
+ */
+const OFFERING_LIMIT = 500;
+
 const LEGEND = [
   { label: "전공 기초", tone: "base" },
   { label: "전공 필수", tone: "required" },
@@ -325,19 +335,27 @@ export function TimetablePage() {
     const group = COURSE_GROUPS.find((item) => item.key === groupKey);
     // 교양·일반선택은 전교 개설이라 학부로 좁히면 오히려 결과가 사라진다.
     const isMajor = groupKey === "major";
+    // 전공 갈래인데 학부도 검색어도 없으면 전교 전공 과목이 통째로 쏟아진다
+    // (2026-2학기 3천여 건). 화면 안내도 "단과대를 먼저 선택해 주세요"라 목록과
+    // 어긋났다. 학부를 고르거나 검색어를 넣을 때까지 요청 자체를 보내지 않는다.
+    if (isMajor && !selectedDepartment && !search.trim()) {
+      setOfferings([]);
+      setIsSearchingOfferings(false);
+      return;
+    }
     const timer = window.setTimeout(() => {
       void searchOfferings({
         year: TARGET_YEAR,
         semester: TARGET_SEMESTER,
         departmentId: isMajor ? selectedDepartment?.id ?? null : null,
+        // 전공을 안 고르면 그 학부의 모든 전공 과목이 함께 나온다(줄마다 전공 이름 표시).
+        // 예전에는 전공 미지정(major_id IS NULL) 과목만 보여줬는데, 정보컴퓨터공학부처럼
+        // 모든 과목이 전공에 배정된 학부는 그래서 목록이 통째로 비었다.
         major: isMajor ? selectedMajor || null : null,
-        // 학부만 고르고 전공을 안 골랐으면 학부 공통(전공 미지정) 과목만 보여준다.
-        // 모든 전공 과목이 한꺼번에 섞여 나오면 목록이 의미를 잃는다.
-        majorUnassigned: isMajor && selectedDepartment !== null && !selectedMajor,
         categories:
           isMajor && majorCategory ? [majorCategory] : group ? [...group.categories] : undefined,
         q: search.trim(),
-        limit: 60,
+        limit: OFFERING_LIMIT,
       })
         .then((list) => {
           if (!cancelled) setOfferings(list);
@@ -362,22 +380,30 @@ export function TimetablePage() {
 
   const allPlaced = detail?.offerings ?? [];
   const totalCredits = detail?.total_credits ?? 0;
-  const offeringEmptyTitle = groupKey === "major" && !selectedCollege
-    ? "단과대를 먼저 선택해 주세요"
+  // 학부도 검색어도 없을 때만 목록을 안 부른다(위 useEffect). 검색어가 있으면
+  // 학부 없이도 실제로 조회하므로, 그때 "학부를 먼저"라고 하면 결과가 0건인
+  // 이유를 잘못 알려주는 셈이 된다.
+  const needsMajorScope = groupKey === "major" && !selectedDepartment && !search.trim();
+  const offeringEmptyTitle = needsMajorScope
+    ? "학부를 먼저 선택해 주세요"
     : "조건에 맞는 개설 강좌가 없습니다";
-  const offeringEmptyDescription = groupKey === "major" && !selectedCollege
-    ? "전공 과목은 단과대와 학부를 선택하면 더 정확하게 찾을 수 있어요."
+  const offeringEmptyDescription = needsMajorScope
+    ? "전공 과목은 단과대 → 학부를 고르면 그 학부의 모든 전공 과목이 나옵니다. 과목명으로 바로 검색할 수도 있어요."
     : search.trim()
       ? "검색어를 줄이거나 이수구분 필터를 해제해 보세요."
       : "다른 갈래를 고르거나 필터를 조금 넓혀보세요.";
+  // 잘렸는지는 화면에서 셀 수 없다. 상한만큼 받아왔으면 뒤가 더 있을 수 있다.
+  const isOfferingListTruncated = offerings.length >= OFFERING_LIMIT;
 
   const selectedGroupLabel = COURSE_GROUPS.find((group) => group.key === groupKey)?.label ?? "갈래";
   const majorStepItems = [
     { label: "단과대", value: selectedCollege || "단과대 선택" },
-    { label: "학부", value: selectedDepartment?.name ?? (selectedCollege ? "학부 전체" : "단과대를 먼저") },
+    { label: "학부", value: selectedDepartment?.name ?? (selectedCollege ? "학부 선택" : "단과대를 먼저") },
     {
+      // 학부를 안 고르면 전공 칸은 아예 비활성이다. "전공 선택"이라고 쓰면
+      // 지금 누르면 되는 단계처럼 보여서, 학부 칸과 같은 "먼저" 문구로 맞춘다.
       label: "전공",
-      value: selectedMajor || (selectedDepartment ? "학부 공통" : "전공 선택"),
+      value: selectedMajor || (selectedDepartment ? "학부 전체" : "학부를 먼저"),
     },
     { label: "이수구분", value: majorCategory || "전공 전체" },
   ];
@@ -386,7 +412,7 @@ export function TimetablePage() {
         selectedGroupLabel,
         selectedCollege,
         selectedDepartment?.name,
-        selectedMajor || (selectedDepartment ? "학부 공통" : ""),
+        selectedMajor || (selectedDepartment ? "학부 전체" : ""),
         majorCategory || "전공 전체",
       ].filter(Boolean).join(" · ")
     : `${selectedGroupLabel} · 전교 개설 강좌`;
@@ -935,7 +961,7 @@ export function TimetablePage() {
                     setSelectedMajor(""); // 학부가 바뀌면 이전 전공은 맞지 않는다
                   }}
                 >
-                  <option value="">{selectedCollege ? "학부 전체" : "단과대를 먼저"}</option>
+                  <option value="">{selectedCollege ? "학부 선택" : "단과대를 먼저"}</option>
                   {collegeDepartments.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
@@ -952,7 +978,7 @@ export function TimetablePage() {
                 >
                   <option value="">
                     {selectedDepartment && selectedDepartment.majors.length > 0
-                      ? "학부 공통 (전공 미지정)"
+                      ? "학부 전체 (모든 전공)"
                       : "세부전공 없음"}
                   </option>
                   {(selectedDepartment?.majors ?? []).map((major) => (
@@ -983,6 +1009,20 @@ export function TimetablePage() {
             </div>
           ) : null}
 
+          {/* 목록이 스크롤 상자 안에 들어가면서 "몇 건인지"가 스크롤바 말고는
+              보이지 않게 됐다. 건수를 밖에 적어두고, 상한까지 채워 왔으면
+              뒤가 더 있을 수 있다는 것도 같이 알린다. */}
+          {!isSearchingOfferings && offerings.length > 0 ? (
+            <p className="timetable-course-count">
+              <span>개설 강좌 {offerings.length}건</span>
+              {isOfferingListTruncated ? (
+                <span className="is-warn">
+                  상위 {OFFERING_LIMIT}건만 표시했습니다. 검색어나 이수구분으로 좁혀 주세요.
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+
           <ul className="timetable-course-list">
             {isSearchingOfferings ? (
               <li className="timetable-empty">
@@ -1009,6 +1049,8 @@ export function TimetablePage() {
                     <strong>{offering.course_name ?? "과목"}</strong>
                     <div className="timetable-course-tags" aria-label="과목 정보">
                       {offering.category ? <span>{offering.category}</span> : null}
+                      {/* 학부 전체를 보면 여러 전공이 섞이므로 어느 전공 과목인지 밝힌다. */}
+                      {offering.major_name ? <span>{offering.major_name}</span> : null}
                       {offering.credits ? <span>{offering.credits}학점</span> : null}
                       {offering.section ? <span>{offering.section}분반</span> : null}
                     </div>
