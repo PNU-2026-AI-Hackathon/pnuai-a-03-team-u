@@ -10182,3 +10182,38 @@ body.theme-dark .auth-track-card {
 .timetable-ai header .ai-reset-button {
   margin-left: auto;
 }
+
+/* --- 접근성 유틸 — 시각적으로 숨기고 스크린리더에만 남긴다 ----------------
+   지금까지 이 클래스가 정의돼 있지 않아 "시간표 선택" 같은 스크린리더용
+   라벨이 화면에 그대로 보였다. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 로드맵 반영 줄 — 주간 시간표 아래 마무리 동작 */
+.timetable-apply-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.timetable-apply-row > span {
+  color: var(--shell-dim);
+  font-size: 12.5px;
+}
+
+.timetable-apply-row .timetable-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -154,6 +154,8 @@ export function TimetablePage() {
   const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
+  const [isSaveChecking, setIsSaveChecking] = useState(false);
+  const [saveFlash, setSaveFlash] = useState(false);
   const [activeOfferingActionId, setActiveOfferingActionId] = useState<number | null>(null);
   const [applyResult, setApplyResult] = useState<TimetableApplyResult | null>(null);
   const [applyError, setApplyError] = useState("");
@@ -611,6 +613,25 @@ export function TimetablePage() {
     }
   }
 
+  /**
+   * 수동 저장 버튼. 담기/빼기/이름 변경은 이미 요청 즉시 서버에 저장되므로
+   * 여기서 새로 쓸 것은 없다 — 서버에서 현재 시간표를 다시 읽어 화면과
+   * 일치함을 확인시켜 주는 안심 버튼이다.
+   */
+  async function handleManualSave() {
+    if (activeId === null || isSaveChecking) return;
+    setIsSaveChecking(true);
+    try {
+      syncDetail(await getTimetable(activeId));
+      setSaveFlash(true);
+      window.setTimeout(() => setSaveFlash(false), 2000);
+    } catch (caught) {
+      setApplyError(getApiErrorMessage(caught, "저장 상태를 확인하지 못했습니다."));
+    } finally {
+      setIsSaveChecking(false);
+    }
+  }
+
   /** "로드맵에 반영" — 여기서 처음으로 로드맵이 바뀐다. */
   async function applyToRoadmap() {
     if (roadmapId === null || detail === null || detail.offerings.length === 0 || isApplying) {
@@ -781,13 +802,11 @@ export function TimetablePage() {
           <button
             className="timetable-save"
             type="button"
-            title="이 시간표의 과목을 성장 로드맵에 반영합니다"
-            disabled={
-              isRenaming || isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0
-            }
-            onClick={() => void applyToRoadmap()}
+            title="담기·이름 변경·삭제는 즉시 저장됩니다. 눌러서 서버 저장 상태를 확인하세요"
+            disabled={isRenaming || detail === null || isSaveChecking}
+            onClick={() => void handleManualSave()}
           >
-            {isApplying ? "처리 중…" : "로드맵에 반영"}
+            {isSaveChecking ? "확인 중…" : saveFlash ? "저장됨 ✓" : "저장"}
           </button>
         </div>
       </header>
@@ -1109,6 +1128,46 @@ export function TimetablePage() {
               </li>
             ))}
           </ul>
+
+          {/* 로드맵 반영은 시간표를 다 짠 다음의 마무리 동작이라 주간 시간표
+              바로 아래가 자리다. 담기/빼기는 초안 수정일 뿐, 이 버튼을 눌러야
+              비로소 로드맵이 바뀐다. */}
+          <div className="timetable-apply-row">
+            <button
+              className="timetable-save"
+              type="button"
+              title="이 시간표의 과목을 성장 로드맵에 반영합니다"
+              disabled={isApplying || roadmapId === null || (detail?.offerings.length ?? 0) === 0}
+              onClick={() => void applyToRoadmap()}
+            >
+              <Check size={14} aria-hidden="true" />
+              {isApplying ? "처리 중…" : "로드맵에 반영"}
+            </button>
+            <span>이 시간표의 과목을 성장 로드맵 {TARGET_YEAR}년 {TARGET_SEMESTER} 계획으로 확정합니다</span>
+          </div>
+
+          {applyError ? (
+            <p className="timetable-proposal-error" role="alert">{applyError}</p>
+          ) : null}
+
+          {applyResult ? (
+            <section className="timetable-applied" aria-live="polite">
+              <p>
+                <Check size={14} aria-hidden="true" />
+                {applyResult.applied.length}개 과목을 {TARGET_YEAR}년 {TARGET_SEMESTER} 로드맵에
+                반영했습니다.
+              </p>
+              {applyResult.skipped.length > 0 ? (
+                <ul className="timetable-applied-skipped">
+                  {applyResult.skipped.map((item) => (
+                    <li key={item.offering_id}>
+                      {item.course_name ?? `분반 ${item.offering_id}`} — {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
         </section>
 
         <section className="timetable-panel timetable-ai">
@@ -1276,28 +1335,6 @@ export function TimetablePage() {
             </section>
           ) : null}
 
-          {applyError ? (
-            <p className="timetable-proposal-error" role="alert">{applyError}</p>
-          ) : null}
-
-          {applyResult ? (
-            <section className="timetable-applied" aria-live="polite">
-              <p>
-                <Check size={14} aria-hidden="true" />
-                {applyResult.applied.length}개 과목을 {TARGET_YEAR}년 {TARGET_SEMESTER} 로드맵에
-                반영했습니다.
-              </p>
-              {applyResult.skipped.length > 0 ? (
-                <ul className="timetable-applied-skipped">
-                  {applyResult.skipped.map((item) => (
-                    <li key={item.offering_id}>
-                      {item.course_name ?? `분반 ${item.offering_id}`} — {item.reason}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </section>
-          ) : null}
 
           <div className="timetable-quick">
             {QUICK_PROMPTS.map((item) => (
