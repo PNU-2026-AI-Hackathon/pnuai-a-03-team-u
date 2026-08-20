@@ -22,6 +22,7 @@ from app.api.timetable import router as timetable_router
 from app.api.timetable_agent import router as timetable_agent_router
 from app.api.tracks import public_router as tracks_public_router, router as tracks_router
 from app.ai.llm.langfuse_callback import flush as langfuse_flush, startup_log as langfuse_startup_log
+from app.core.mailer import startup_log as mailer_startup_log
 from app.core.config import settings
 from app.core.ratelimit import limiter
 from app.core.scheduler import scheduler
@@ -122,6 +123,8 @@ def _warn_if_hierarchy_sparse() -> None:
 async def lifespan(app: FastAPI):
     scheduler.start()
     langfuse_startup_log()
+    # SMTP를 빠뜨린 채 배포하면 비밀번호 재설정이 조용히 죽는다 — 기동 때 알린다.
+    mailer_startup_log()
     _warn_if_hierarchy_sparse()
     yield
     scheduler.shutdown()

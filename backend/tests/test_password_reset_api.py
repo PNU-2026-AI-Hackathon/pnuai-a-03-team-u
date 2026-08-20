@@ -8,7 +8,7 @@ import datetime
 import unittest
 from unittest.mock import patch
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -55,8 +55,37 @@ class PasswordResetApiTest(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def _call_request(self, email="dowon@pusan.ac.kr", name="이도원"):
+        """`request_password_reset`를 부르고, 예약된 백그라운드 작업까지 실행한다.
+
+        메일 발송은 응답 뒤로 미뤄졌다(2026-08-20) — SMTP 왕복이 요청을 붙잡고 있어서
+        사용자가 최대 38.6초를 기다렸다. 그래서 이제 `send_password_reset_email`은
+        핸들러 안에서 곧바로 불리지 않고 `BackgroundTasks`에 실린다. 테스트가
+        "메일이 나갔는가"를 계속 검증하려면 그 작업을 여기서 돌려줘야 한다.
+        """
+        tasks = BackgroundTasks()
+        before = len(self.sent)
+        response = request_password_reset(
+            request=None,
+            payload=PasswordResetRequest(email=email, name=name),
+            background_tasks=tasks,
+            db=self.db,
+        )
+        # **핸들러 안에서 메일이 나가면 안 된다.** 이 단언이 없으면 발송을 동기 호출로
+        # 되돌려도 아래 루프가 no-op이 될 뿐 테스트는 그대로 통과한다 — 실제로 독립
+        # 리뷰(2026-08-20)가 그 변이로 464개 전부 초록인 걸 확인했다. 이 PR이 산
+        # 유일한 성능/타이밍 이득에 회귀 테스트가 0개였다.
+        self.assertEqual(
+            before, len(self.sent),
+            "메일이 요청 처리 중에 발송됐다 — SMTP 왕복이 응답을 붙잡는다(최악 38.6초 실측). "
+            "background_tasks.add_task()로 예약해야 한다.",
+        )
+        for task in tasks.tasks:
+            task.func(*task.args, **task.kwargs)
+        return response
+
     def _request_token(self, email="dowon@pusan.ac.kr", name="이도원") -> str:
-        request_password_reset(request=None, payload=PasswordResetRequest(email=email, name=name), db=self.db)
+        self._call_request(email, name)
         return self.sent[-1][1].split("token=")[1]
 
     def test_request_sends_link_and_stores_only_hash(self):
@@ -70,24 +99,16 @@ class PasswordResetApiTest(unittest.TestCase):
         self.assertEqual(len(record.token_hash), 64)
 
     def test_request_for_unknown_email_does_not_reveal_or_send(self):
-        response = request_password_reset(
-            request=None, payload=PasswordResetRequest(email="nobody@pusan.ac.kr", name="이도원"), db=self.db
-        )
+        response = self._call_request("nobody@pusan.ac.kr", "이도원")
 
         # 가입 여부가 응답으로 드러나면 안 된다 — 문구가 같아야 한다.
-        known = request_password_reset(
-            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), db=self.db
-        )
+        known = self._call_request("dowon@pusan.ac.kr", "이도원")
         self.assertEqual(response.message, known.message)
         self.assertEqual([to for to, _ in self.sent], ["dowon@pusan.ac.kr"])
 
     def test_name_mismatch_does_not_send_and_does_not_reveal(self):
-        response = request_password_reset(
-            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="다른사람"), db=self.db
-        )
-        matched = request_password_reset(
-            request=None, payload=PasswordResetRequest(email="dowon@pusan.ac.kr", name="이도원"), db=self.db
-        )
+        response = self._call_request("dowon@pusan.ac.kr", "다른사람")
+        matched = self._call_request("dowon@pusan.ac.kr", "이도원")
 
         # 이름이 틀리면 메일도, 토큰도 만들어지지 않는다.
         self.assertEqual(response.message, matched.message)
