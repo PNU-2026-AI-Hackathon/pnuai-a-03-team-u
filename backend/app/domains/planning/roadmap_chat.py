@@ -555,8 +555,12 @@ _FULL_HORIZON_SCOPE_MARKERS = (
     "4학년 2학기까지", "4-2까지", "4학년까지",
 )
 
-# 이미 지난 일이나 현재 상태를 **묻는** 신호. 하나라도 있으면 계획 요청이 아니다.
+# 이미 지난 일이나 현재 상태를 **묻는** 신호.
 # "졸업 로드맵 지금 어떻게 돼 있어?"에 3개 학기 제안이 쌓이면 안 된다.
+#
+# 단 아래 `_BUILD_VERB_MARKERS`가 같이 있으면 veto하지 않는다 — "졸업까지 짜서 알려줘"는
+# 조회가 아니라 계획 요청이고, 이걸 죽이면 이 기능이 고치려던 증상(다음 한 학기만
+# 제안하고 끝냄)으로 그대로 돌아간다.
 _QUERY_ONLY_MARKERS = (
     "알려줘", "알려 줘", "알려주", "보여줘", "보여 줘", "보여주",
     "정리해줘", "정리해 줘", "정리해주", "확인만", "확인해줘", "확인해 줘",
@@ -564,9 +568,16 @@ _QUERY_ONLY_MARKERS = (
     "들었는지", "이수했는지", "남았는지", "세워져 있는지", "세워졌는지",
 )
 
+# "만들어 달라"가 명시적인 동사. 조회 표현과 같이 나와도 이쪽이 이긴다
+# ("졸업까지 로드맵 짜서 보여줘").
+_BUILD_VERB_MARKERS = (
+    "짜줘", "짜 줘", "짜주", "짜서", "짜봐", "짜자",
+    "편성", "설계", "채워", "채우", "계획해", "계획 세", "세워서", "만들어", "배치해",
+)
+
 # 실제로 **계획을 만들어 달라**는 신호. 위 범위 표현과 같이 나와야 full-horizon 요청이다.
 _PLANNING_INTENT_MARKERS = (
-    "로드맵", "계획", "짜줘", "짜 줘", "짜주", "짜봐", "짜자", "설계",
+    "로드맵", "계획", "짜줘", "짜 줘", "짜주", "짜서", "짜봐", "짜자", "설계", "세워",
     "배치", "편성", "채워", "채우", "수강계획", "커리큘럼 짜",
     "들어야", "들으면", "뭘 들", "무엇을 들", "어떻게 들", "수강 순서",
 )
@@ -591,7 +602,9 @@ def _looks_like_full_horizon_request(message: str | None) -> bool:
         return False
     compact = message.replace(" ", "")
 
-    if any(m.replace(" ", "") in compact for m in _QUERY_ONLY_MARKERS):
+    if any(m.replace(" ", "") in compact for m in _QUERY_ONLY_MARKERS) and not any(
+        m.replace(" ", "") in compact for m in _BUILD_VERB_MARKERS
+    ):
         return False
 
     matched = [m.replace(" ", "") for m in _FULL_HORIZON_SCOPE_MARKERS
@@ -603,10 +616,15 @@ def _looks_like_full_horizon_request(message: str | None) -> bool:
     # `남은 학기 계획`처럼 범위 표현 자체가 의도 단어(`로드맵`/`계획`)를 품고 있어서,
     # 그냥 문장 전체에서 찾으면 "둘 다 있어야 한다"는 조건이 그 마커들에 대해
     # 무의미해진다 — "졸업 로드맵 지금 어떻게 돼 있어?"가 계획 요청으로 잡혔다.
-    rest = compact
-    for m in matched:
-        rest = rest.replace(m, " ")
-    return any(m.replace(" ", "") in rest for m in _PLANNING_INTENT_MARKERS)
+    #
+    # 매칭된 마커를 **하나씩** 지워보고 그중 하나라도 의도가 남으면 참이다. 겹치는
+    # 마커를(`남은 학기 계획` ⊗ `앞으로 남은 학기`) 한꺼번에 지우면 그 사이의 의도
+    # 단어까지 사라져서, 결과가 마커 선언 순서에 좌우된다.
+    return any(
+        any(intent.replace(" ", "") in compact.replace(m, " ")
+            for intent in _PLANNING_INTENT_MARKERS)
+        for m in matched
+    )
 
 
 def _has_term_gap(db: Session, user: User) -> bool:
@@ -1767,9 +1785,17 @@ class _ToolContext:
             key = (it.planned_year, it.planned_semester)
             out[key] = out.get(key, 0.0) + float(it.credits or 0)
 
+        # 같은 항목에 대한 변경은 **첫 건만** 반영한다. 델타 누적 방식이라 같은 item을
+        # 두 번 delete하면 학점이 두 번 빠져서, 21학점이 찬 학기에 6학점이 더 들어간다
+        # (실측). 중복 가드는 create에만 있어서 delete/update는 그대로 쌓인다.
+        seen_items: set[int] = set()
         for ch in self.pending_changes:
             if exclude_item_id is not None and ch.item_id == exclude_item_id:
                 continue
+            if ch.action != "create" and ch.item_id is not None:
+                if ch.item_id in seen_items:
+                    continue
+                seen_items.add(ch.item_id)
             if ch.action == "create":
                 if ch.course_id is None:
                     continue
@@ -2419,7 +2445,16 @@ class _ToolContext:
                     )
                     is not None
                 ):
-                    already.append(entry)
+                    already.append({
+                        **entry,
+                        # 안내가 없으면 "다른 학기로 옮겨달라"는 요청이 조용한 no-op이
+                        # 된다 — 요청한 학기는 빈 채로 남는데 rejected도 아니라 LLM이
+                        # 뭘 해야 할지 모른다.
+                        "note": (
+                            "이미 로드맵에 있는 과목이라 새로 만들지 않았다. 학기를 옮기려면 "
+                            "propose_change(action='update', item_id=…)를 써라."
+                        ),
+                    })
                     continue
                 result = self.propose_change(
                     action="create",
@@ -3037,7 +3072,14 @@ def run_roadmap_chat(
                         not finish_gate_used
                         and iterations_used <= MAX_TOOL_ITERATIONS - _FINISH_GATE_RESERVE
                     ):
-                        if expects_term_plan and not ctx.term_plan_called:
+                        if (
+                            expects_term_plan
+                            and not ctx.term_plan_called
+                            # 남은 학기가 없으면 "remaining_terms에 있는 학기별로
+                            # 채워라"가 실행 불가능한 지시다. 성적표 미업로드 사용자는
+                            # 목록이 비므로(근거가 없으면 지어내지 않는다) 여기 걸린다.
+                            and ctx._remaining_terms()
+                        ):
                             # "4학년 2학기까지 어떻게 들어야 해?"에 제안을 하나도 만들지
                             # 않고 "바로 편성 들어갈까요?"라고 되묻고 끝낸 실측이 있다
                             # (2026-08-20). 제안은 승인 전까지 저장되지 않으므로 미리

@@ -2137,6 +2137,38 @@ class FullHorizonPlanningTest(unittest.TestCase):
         self.assertIn("error", blocked)
         self.assertIn("학기당 상한", blocked["error"])
 
+    def test_같은_항목에_변경이_두_번_쌓여도_학점이_이중으로_빠지지_않는다(self):
+        """델타 누적 방식이라 같은 item을 두 번 delete하면 학점이 두 번 빠진다.
+
+        중복 가드는 `action=="create"`에만 있어서 delete/update는 그대로 쌓인다.
+        실측으로 21학점이 찬 학기에 6학점이 더 들어갔다 — base(pending을 아예 안 세던
+        시절)에서는 막히던 경로라, 이 브랜치가 새로 연 구멍이다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # cap=21
+        for i in range(7):
+            db.add(CourseRoadmapItem(
+                id=750 + i, roadmap_id=1, course_name=f"기존{i}", credits=3.0,
+                planned_year="2027", planned_semester="1학기", planned_grade=4,
+                status="planned",
+            ))
+        db.add(Course(id=650, course_name="추가과목", department_id=10, major_id=20,
+                      category="전공선택", credits=6.0, year="4", semester="1,2"))
+        db.flush()
+        key = ("2027", "1학기")
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            for n in range(2):
+                ctx.propose_change(action="delete", reason=f"삭제{n}", item_id=750)
+            # 한 항목(3학점)만 빠져야 한다.
+            self.assertEqual(18.0, ctx._planned_credits_by_term()[key])
+            blocked = ctx.propose_change(
+                action="create", reason="추가", course_id=650,
+                planned_year="2027", planned_semester="1학기", planned_grade=4,
+            )
+        self.assertIn("error", blocked)
+        self.assertIn("학기당 상한", blocked["error"])
+
     def test_학기를_옮기는_update는_학점도_따라_옮긴다(self):
         """위 수정이 반대로 "update는 아무것도 안 한다"가 되면 안 된다."""
         db = self.make_db()
@@ -2474,6 +2506,26 @@ class FinishGateBehaviourTest(unittest.TestCase):
         self.assertEqual(budget + 1, llm.calls_made, "되돌림이 걸렸다면 한 번 더 불렸을 것")
         self.assertEqual("예산 소진", result["reply"])
 
+    def test_남은_학기가_없으면_게이트가_걸리지_않는다(self):
+        """"remaining_terms에 있는 학기별로 채워라"가 실행 불가능한 지시가 된다.
+
+        이수기록이 없으면 남은 학기 목록이 빈다(근거 없이 지어내지 않는다). 그 상태로
+        되돌리면 LLM은 채울 학기를 모르는 채 한 왕복을 버린다.
+        """
+        db = self.make_db()
+        # 이수기록 없는 학생 — make_student가 넣는 기록을 지운다.
+        user, roadmap = self.make_student(db)
+        db.query(StudentCourseRecord).delete()
+        db.flush()
+
+        script = [
+            [{"name": "finish_response", "args": {"message": "성적표를 먼저 올려주세요."}, "id": "c1"}],
+        ]
+        result, llm = self.run_chat(db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        self.assertEqual(1, llm.calls_made, "되돌림이 걸렸다면 두 번 불렸을 것")
+        self.assertEqual("성적표를 먼저 올려주세요.", result["reply"])
+
     def test_좁은_요청에는_게이트가_걸리지_않는다(self):
         """"다음 학기만" 요청에 "나머지 학기도 채워라"라고 되돌리면 안 된다.
 
@@ -2586,7 +2638,10 @@ class AlreadyInPlanTest(unittest.TestCase):
 
         self.assertEqual(0, result["rejected_count"])
         self.assertEqual(0, result["accepted_count"])
-        self.assertEqual([950], [e["course_id"] for e in result["terms"][0]["already_in_plan"]])
+        entry = result["terms"][0]["already_in_plan"][0]
+        self.assertEqual(950, entry["course_id"])
+        # 안내가 없으면 "다른 학기로 옮겨달라"가 조용한 no-op이 된다.
+        self.assertIn("propose_change", entry["note"])
 
 
 class FullHorizonDetectionBoundaryTest(unittest.TestCase):
@@ -2641,6 +2696,38 @@ class FullHorizonDetectionBoundaryTest(unittest.TestCase):
                     roadmap_chat_mod._looks_like_full_horizon_request(f"{scope} 어떻게 되어 있어?"))
                 self.assertTrue(
                     roadmap_chat_mod._looks_like_full_horizon_request(f"{scope} 짜줘"))
+
+    def test_계획_동사가_있으면_조회_표현이_섞여도_계획_요청이다(self):
+        """`짜서 알려줘`처럼 "만들어서 보여줘"가 자연스러운 한국어다.
+
+        조회 표현만 보고 무조건 veto하면 이 기능이 고치려던 증상(다음 한 학기만 제안하고
+        끝냄)으로 그대로 돌아간다.
+        """
+        for message in (
+            "졸업까지 어떻게 들어야 할지 짜서 알려줘",
+            "졸업까지 로드맵 짜서 보여줘",
+            "남은 학기 전부 계획 세워서 알려줘",
+            "전체 로드맵 짜서 정리해줘",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(
+                    roadmap_chat_mod._looks_like_full_horizon_request(message))
+
+    def test_범위표현만_있고_의도가_없으면_계획_요청이_아니다(self):
+        """veto가 아니라 **범위 밖에서 의도 찾기** 로직이 판정하는 자리다.
+
+        조회 표현이 하나도 없어서 veto가 안 걸리므로, 이 문장들은 그 로직만으로 갈린다.
+        """
+        for message in ("졸업 로드맵", "전체 로드맵", "남은 학기 계획"):
+            with self.subTest(message=message):
+                self.assertFalse(
+                    roadmap_chat_mod._looks_like_full_horizon_request(message))
+
+    def test_겹치는_범위표현에서도_의도를_찾는다(self):
+        """`남은 학기 계획` ⊗ `앞으로 남은 학기`가 겹친다. 한꺼번에 지우면 그 사이의
+        의도 단어까지 사라져서 결과가 마커 선언 순서에 좌우된다."""
+        self.assertTrue(
+            roadmap_chat_mod._looks_like_full_horizon_request("앞으로 남은 학기 계획 좀"))
 
     def test_이전_직전_학기는_전체_학기가_아니다(self):
         """`전 학기`가 `이전학기`/`직전학기`의 부분문자열이라 걸리던 것."""
