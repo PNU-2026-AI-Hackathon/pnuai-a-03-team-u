@@ -108,6 +108,22 @@ class StudentCourseRecord(TimestampMixin, Base):
     match_status: Mapped[str] = mapped_column(String(20), default="unmatched")
     source: Mapped[str] = mapped_column(String(20), default="crawler")
 
+    # 편입생의 전적대 과목이 "PNU의 어느 과목을 대체했는지". 학생 본인만 아는 정보다.
+    #
+    # 편입 학점 인정은 학칙에 표로 정해진 게 아니라 학과가 개별 학생에게 "이건 인정,
+    # 저건 불인정"을 통보하는 방식이라, 데이터 어디에도 근거가 없다. 그래서 이름
+    # 유사도로 추정하지 않는다 — `데이터구조`와 `자료구조`가 아무리 비슷해 보여도
+    # 학교가 실제로 그렇게 인정했는지는 학생만 안다. 틀리게 추정하면 학생이 졸업
+    # 요건을 잘못 믿게 되므로, **학생이 화면에서 직접 고른 값만** 여기 들어간다.
+    #
+    # 학점은 건드리지 않는다. 이 행에는 전적대에서 인정받은 학점이 그대로 있고
+    # 졸업요건 엔진은 category별 합계만 보므로, 대체를 등록해도 학점 계산은 그대로다.
+    # 이 컬럼의 실제 효과는 추천에서 대체된 PNU 과목을 빼는 것이다
+    # (`app/domains/planning/timetable.py::_completed_course_norms`).
+    substitutes_course_id: Mapped[int | None] = mapped_column(
+        ForeignKey("courses.id"), nullable=True, index=True
+    )
+
 
 class GraduationRequirement(TimestampMixin, Base):
     """학과(또는 세부전공)×이수유형×교육과정연도별 졸업요건 기준학점(flat).

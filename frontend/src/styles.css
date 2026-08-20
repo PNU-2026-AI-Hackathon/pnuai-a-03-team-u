@@ -5768,6 +5768,85 @@ body.theme-dark .semester-course-status.status-completed {
   color: var(--blue);
 }
 
+/* 전적대(입학 전 인정) 과목이 대체한 PNU 과목 지정 — 과목명 칸 안에 딸려 붙는다.
+   편입 학점 인정은 학과가 학생에게 개별 통보하는 것이라 시스템이 추측할 수 없고,
+   통보를 나중에 받을 수도 있어 언제든 다시 고칠 수 있게 열어 둔다. */
+.grade-term-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.course-substitution {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.course-substitution-current {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: #188653;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.course-substitution-current strong {
+  color: inherit;
+}
+
+.course-substitution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.course-substitution-actions button {
+  padding: 4px 9px;
+  border: 1px solid #d8e0eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #5f6c7d;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.course-substitution-actions button:hover:not(:disabled) {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.course-substitution-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.course-substitution-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.course-substitution-picker input {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+body.theme-dark .course-substitution-actions button,
+body.theme-dark .course-substitution-picker input {
+  border-color: #0e1116;
+  background: #243346;
+  color: var(--ink);
+}
+
 .grade-table select {
   width: 74px;
   height: 30px;

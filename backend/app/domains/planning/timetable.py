@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
+from app.domains.academics.course_substitution import substituted_course_names
 from app.domains.academics.models import (
     GraduationRequirement,
     StudentCourseRecord,
@@ -235,7 +236,13 @@ def _term_credit_cap(db: Session, user: User) -> int:
 
 
 def _completed_course_norms(db: Session, user_id: int) -> set[str]:
-    """이수 기록 과목명을 정규화해 셋으로. 대체 후보에서 이수 완료 과목을 제외할 때 쓴다."""
+    """이수 기록 과목명을 정규화해 셋으로. 대체 후보에서 이수 완료 과목을 제외할 때 쓴다.
+
+    편입생이 직접 등록한 대체 관계가 있으면 **대체된 PNU 과목명도 여기 들어간다.**
+    전적대 `데이터구조`가 PNU `자료구조`를 대체했다고 학생이 지정했으면, 성적표에는
+    `자료구조`가 없어도 다시 추천하면 안 되기 때문이다
+    (근거는 `app.domains.academics.course_substitution` 참고).
+    """
     def _norm(n: str | None) -> str:
         if not n:
             return ""
@@ -246,7 +253,9 @@ def _completed_course_norms(db: Session, user_id: int) -> set[str]:
     records = db.scalars(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
     ).all()
-    return {n for n in (_norm(r.raw_course_name) for r in records) if n}
+    names = [r.raw_course_name for r in records]
+    names.extend(substituted_course_names(db, user_id))
+    return {n for n in (_norm(name) for name in names) if n}
 
 
 def _roadmap_course_ids(db: Session, roadmap_id: int) -> set[int]:

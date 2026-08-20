@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { isAxiosError } from "axios";
 import { useNavigate } from "react-router-dom";
-import { Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { Check, LoaderCircle, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import {
   createActivity,
   createCertification,
@@ -35,8 +35,11 @@ import {
   isMockStudentDataEnabled,
   replaceCourseRecords,
   saveGraduationOverride,
+  setCourseSubstitution,
   syncPortalData,
 } from "../api/studentInfo";
+import { searchCourses } from "../api/roadmaps";
+import type { CourseSearchResult } from "../api/roadmaps";
 import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
 import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
@@ -271,6 +274,15 @@ export function InfoPage() {
   const [isAddingCourse, setIsAddingCourse] = useState(false);
   const [newCourseDraft, setNewCourseDraft] = useState<CourseDraft>(emptyCourseDraft);
   const [courseEditError, setCourseEditError] = useState("");
+  // 전적대 과목 대체 지정 — 어느 이수기록의 검색창이 열려 있는지, 그 검색 상태.
+  // 편입 학점 인정은 학과가 학생에게 개별 통보하는 것이라 데이터에 근거가 없다.
+  // 그래서 유사도 추천 없이 학생이 검색해서 고른 과목만 저장한다.
+  const [substitutionTargetId, setSubstitutionTargetId] = useState<number | null>(null);
+  const [substitutionQuery, setSubstitutionQuery] = useState("");
+  const [substitutionResults, setSubstitutionResults] = useState<CourseSearchResult[]>([]);
+  const [isSubstitutionSearching, setIsSubstitutionSearching] = useState(false);
+  const [savingSubstitutionId, setSavingSubstitutionId] = useState<number | null>(null);
+  const [substitutionError, setSubstitutionError] = useState("");
   const [graduationEditDraft, setGraduationEditDraft] = useState<GraduationProgram | null>(null);
   const [hasGraduationEdited, setHasGraduationEdited] = useState(false);
   const [graduationEditError, setGraduationEditError] = useState("");
@@ -358,6 +370,36 @@ export function InfoPage() {
         setEnrolledTracks([]);
       });
   }, [isAuthenticated]);
+
+  // 대체 과목 검색(자동완성). 로드맵 화면의 과목 검색과 같은 디바운스 패턴이다.
+  useEffect(() => {
+    const query = substitutionQuery.trim();
+    if (substitutionTargetId === null || query.length < 2) {
+      setSubstitutionResults([]);
+      setIsSubstitutionSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setIsSubstitutionSearching(true);
+      searchCourses(query)
+        .then((results) => {
+          if (!cancelled) setSubstitutionResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setSubstitutionResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsSubstitutionSearching(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [substitutionTargetId, substitutionQuery]);
 
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
   const displayedGraduation = isProfileEditing ? graduationEditDraft : graduation;
@@ -551,6 +593,41 @@ export function InfoPage() {
   function deleteCourse(course: CourseRecord) {
     setCourseEditDraft((current) => current.filter((record) => record !== course));
     setCourseEditError("");
+  }
+
+  function openSubstitutionPicker(course: CourseRecord) {
+    setSubstitutionTargetId(course.id);
+    setSubstitutionQuery("");
+    setSubstitutionResults([]);
+    setSubstitutionError("");
+  }
+
+  function closeSubstitutionPicker() {
+    setSubstitutionTargetId(null);
+    setSubstitutionQuery("");
+    setSubstitutionResults([]);
+  }
+
+  /** 대체 관계를 즉시 저장한다(courseId=null이면 해제).
+   *
+   * "내 정보 편집"의 임시 초안(courseEditDraft)에 섞지 않고 바로 서버에 보낸다 —
+   * 학과 통보를 받는 시점이 성적 편집과 무관하고, 언제든 고칠 수 있어야 하기 때문이다.
+   * 대신 저장 후 목록 상태 두 벌을 함께 갱신해 화면이 어긋나지 않게 한다. */
+  async function applySubstitution(course: CourseRecord, courseId: number | null) {
+    setSavingSubstitutionId(course.id);
+    setSubstitutionError("");
+    try {
+      const updated = await setCourseSubstitution(course.id, courseId);
+      const merge = (records: CourseRecord[]) =>
+        records.map((record) => (record.id === updated.id ? { ...record, ...updated } : record));
+      setCourses(merge);
+      setCourseEditDraft(merge);
+      closeSubstitutionPicker();
+    } catch (error) {
+      setSubstitutionError(getErrorMessage(error, "대체 과목을 저장하지 못했습니다."));
+    } finally {
+      setSavingSubstitutionId(null);
+    }
   }
 
   function updateGraduationTotal(field: "earned_total_credits" | "required_total_credits", value: string) {
@@ -1081,6 +1158,14 @@ export function InfoPage() {
                       <span>전공평점 <strong>{formatGpa(termMajorGpa)}</strong></span>
                     </div>
                   </div>
+                  {/* 편입 학점 인정은 규정이 아니라 학과가 학생 개인에게 통보하는 것이라
+                      우리가 알 방법이 없다. 그래서 "왜 직접 골라야 하는지"를 여기서 밝힌다. */}
+                  {term === PRE_ADMISSION_LABEL && !isProfileEditing ? (
+                    <p className="grade-term-note">
+                      학과가 인정해 준 PNU 과목은 성적표에 안 나옵니다. 직접 지정하면 그 과목을
+                      시간표·로드맵 추천에서 빼드립니다. (학점은 지금 그대로 계산됩니다.)
+                    </p>
+                  ) : null}
                   <div className="grade-table-wrap">
                     <table className="grade-table">
                       <thead>
@@ -1095,7 +1180,83 @@ export function InfoPage() {
                       <tbody>
                         {termCourses.map((course, index) => (
                           <tr key={`${course.course_name}-${index}`}>
-                            <td>{course.course_name}</td>
+                            <td>
+                              {course.course_name}
+                              {/* 전적대(입학 전 인정) 과목에만 붙는다. 학교가 이 과목으로
+                                  어느 PNU 과목을 인정했는지는 학생 본인만 알기 때문에
+                                  시스템이 추측하지 않고 직접 고르게 한다. 편집 모드에서는
+                                  성적 초안과 섞이지 않도록 감춘다. */}
+                              {course.is_transfer_credit && !isProfileEditing ? (
+                                <div className="course-substitution">
+                                  {course.substitutes_course_name ? (
+                                    <p className="course-substitution-current">
+                                      <Check size={13} aria-hidden="true" />
+                                      PNU <strong>{course.substitutes_course_name}</strong> 대체
+                                    </p>
+                                  ) : null}
+                                  {substitutionTargetId === course.id ? (
+                                    <div className="course-substitution-picker">
+                                      <input
+                                        value={substitutionQuery}
+                                        type="search"
+                                        autoComplete="off"
+                                        aria-label={`${course.course_name}이(가) 대체한 PNU 과목 검색`}
+                                        placeholder="PNU 과목명을 2글자 이상 입력"
+                                        onChange={(event) => setSubstitutionQuery(event.target.value)}
+                                      />
+                                      {isSubstitutionSearching ? (
+                                        <p className="course-search-status">
+                                          <LoaderCircle size={13} aria-hidden="true" /> 검색 중
+                                        </p>
+                                      ) : null}
+                                      {substitutionResults.length > 0 ? (
+                                        <div className="course-search-results">
+                                          {substitutionResults.map((result) => (
+                                            <button
+                                              type="button"
+                                              key={result.id}
+                                              disabled={savingSubstitutionId === course.id}
+                                              onClick={() => applySubstitution(course, result.id)}
+                                            >
+                                              <strong>{result.course_name}</strong>
+                                              <span>
+                                                {result.category ?? "이수구분 미정"} · {result.credits ?? 0}학점
+                                                {result.course_code ? ` · ${result.course_code}` : ""}
+                                              </span>
+                                            </button>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      <div className="course-substitution-actions">
+                                        <button type="button" onClick={closeSubstitutionPicker}>취소</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="course-substitution-actions">
+                                      <button
+                                        type="button"
+                                        disabled={savingSubstitutionId === course.id}
+                                        onClick={() => openSubstitutionPicker(course)}
+                                      >
+                                        {course.substitutes_course_name ? "대체 과목 변경" : "어떤 과목을 대체했나요?"}
+                                      </button>
+                                      {course.substitutes_course_id ? (
+                                        <button
+                                          type="button"
+                                          disabled={savingSubstitutionId === course.id}
+                                          onClick={() => applySubstitution(course, null)}
+                                        >
+                                          해제
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                  {substitutionError && substitutionTargetId === course.id ? (
+                                    <p className="profile-edit-error" role="alert">{substitutionError}</p>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </td>
                             <td>{course.category ?? "-"}</td>
                             <td>{course.credits === null ? "-" : formatCredit(course.credits)}</td>
                             <td>

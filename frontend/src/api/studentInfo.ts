@@ -13,6 +13,13 @@ export type CourseRecord = {
   grade: string | null;
   match_status: string;
   source: string;
+  /** 편입/조기이수로 "입학 전 인정"된 행인지. 서버가 판정해서 내려준다 —
+   * 이 행에만 "어떤 PNU 과목을 대체했나요?" 를 띄운다. */
+  is_transfer_credit?: boolean;
+  /** 학생이 직접 지정한 대체 대상 PNU 과목. 학교가 무엇을 인정했는지는 데이터에
+   * 없어서 시스템이 추측하지 않는다 — 지정 전에는 null이다. */
+  substitutes_course_id?: number | null;
+  substitutes_course_name?: string | null;
 };
 
 export type PortalSyncResponse = {
@@ -180,6 +187,18 @@ export async function replaceCourseRecords(courses: CourseRecord[]) {
       grade: course.grade,
     })),
   });
+  return data;
+}
+
+/** 전적대 이수기록이 대체한 PNU 과목을 지정/해제한다(courseId=null이면 해제).
+ *
+ * 편입 학점 인정은 학과가 학생 개인에게 통보하는 것이라 데이터에 근거가 없다.
+ * 그래서 자동 매핑 없이, 학생이 검색해서 고른 course_id만 서버에 보낸다. */
+export async function setCourseSubstitution(recordId: number, courseId: number | null) {
+  const { data } = await apiClient.patch<CourseRecord>(
+    `/me/course-records/${recordId}/substitution`,
+    { course_id: courseId },
+  );
   return data;
 }
 
