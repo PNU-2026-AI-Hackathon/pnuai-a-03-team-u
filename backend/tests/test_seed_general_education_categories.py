@@ -46,7 +46,12 @@ Supabase `courses`에 `효원브릿지`가 **효원핵심교양**으로 들어�
 import csv
 from pathlib import Path
 
-from scripts.import_courses_from_ais import find_general_education_category_conflicts
+import pytest
+
+from scripts.import_courses_from_ais import (
+    find_general_education_category_conflicts,
+    import_courses,
+)
 
 SEED_CSV = Path(__file__).resolve().parent.parent / "seeds" / "ais_courses_2026.csv"
 
@@ -124,3 +129,122 @@ def test_group_conflict_is_detected():
     assert conflict["majority"] == "효원균형교양"
     assert conflict["tied"] is False
     assert conflict["minority_units"] == {"효원핵심교양": ["국어국문학과"]}
+
+
+# --- 검사기가 아니라 **적재 경로**에 실제로 물려 있는지 -------------------------
+#
+# 위 테스트들은 순수 함수 `find_general_education_category_conflicts()`만 본다. 그것만으로는
+# "검사기는 맞게 세는데 import_courses()가 그 결과를 안 쓴다"를 못 잡는다 — 실제로 독립
+# 리뷰가 프리플라이트 호출을 통째로 지우는 뮤테이션으로 이 공백을 뚫었다(전부 통과했다).
+# 아래 둘은 `import_courses()`를 직접 부른다.
+
+_MAPPING_ROW = {
+    "ais_dept_code": "311100",
+    "unit_name": "국어국문학과",
+    "department_id": "1",
+    "major_id": "",
+}
+
+
+def _write_conflict_fixture(tmp_path, minority_first: bool):
+    """소수값 1행 + 다수값 2행짜리 최소 CSV. `minority_first`면 소수값이 앞에 온다."""
+    minority = {"category": "효원핵심교양", "ais_dept_code": "311100", "unit_name": "국어국문학과"}
+    majority = [
+        {"category": "효원균형교양", "ais_dept_code": "311100", "unit_name": "국어국문학과"},
+        {"category": "효원균형교양", "ais_dept_code": "311100", "unit_name": "국어국문학과"},
+    ]
+    ordered = [minority] + majority if minority_first else majority + [minority]
+
+    courses = tmp_path / "courses.csv"
+    with courses.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["ais_dept_code", "unit_name", "curriculum_year", "grade",
+                        "semester", "category", "course_name", "course_code", "credits"],
+        )
+        w.writeheader()
+        for r in ordered:
+            w.writerow({**r, "course_code": "ZFz000098", "course_name": "효원브릿지",
+                        "credits": "3", "curriculum_year": "2026", "grade": "전학년",
+                        "semester": ""})
+
+    mapping = tmp_path / "mapping.csv"
+    with mapping.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(_MAPPING_ROW))
+        w.writeheader()
+        w.writerow(_MAPPING_ROW)
+    return courses, mapping
+
+
+def test_적재는_이수구분_충돌을_만나면_중단한다(tmp_path):
+    """기본 동작은 다수결이 아니라 **중단**이다.
+
+    `--general-education-majority-category` 없이는 한 행도 쓰지 않고 죽어야 한다.
+    검사기가 충돌을 세더라도 `import_courses()`가 그 결과를 안 보면 옛 동작("먼저 나온
+    행이 조용히 이긴다")으로 돌아가는데, 그걸 여기서 잡는다.
+    """
+    courses, mapping = _write_conflict_fixture(tmp_path, minority_first=True)
+    with pytest.raises(SystemExit) as exc:
+        import_courses(courses, mapping, dry_run=True)
+    assert exc.value.code == 1
+
+
+class _StopBeforeDb(Exception):
+    """프리플라이트까지만 돌리고 DB 접속 직전에 멈추기 위한 신호."""
+
+
+def test_다수결_옵션을_주면_소수값이_앞에_있어도_다수값이_적재된다(tmp_path, capsys, monkeypatch):
+    """사고의 핵심은 "행 순서가 결과를 정한다"였다. 그게 뒤집혔는지 확인한다.
+
+    `dry_run=True`여도 `import_courses()`는 세션을 열고 기존 행을 조회한다. 이 레포의
+    `DATABASE_URL`은 **팀 공유 Supabase를 직접 가리키므로** 테스트가 거기 붙으면 안 된다.
+    DB 접속 직전에 끊고, 프리플라이트가 내린 결정을 출력으로 확인한다.
+    """
+    courses, mapping = _write_conflict_fixture(tmp_path, minority_first=True)
+
+    def _no_db():
+        raise _StopBeforeDb
+
+    monkeypatch.setattr(
+        "scripts.import_courses_from_ais.SessionLocal", _no_db, raising=True
+    )
+    with pytest.raises(_StopBeforeDb):
+        import_courses(courses, mapping, dry_run=True, use_majority_category=True)
+
+    out = capsys.readouterr().out
+    assert "--general-education-majority-category" in out
+    # 소수값이 CSV 앞에 있는데도 다수값으로 적재한다고 말해야 한다.
+    assert "효원균형교양 2행 / 효원핵심교양 1행" in out
+
+
+def test_동률이면_다수결_옵션을_줘도_중단한다(tmp_path):
+    """2:2처럼 갈리면 `majority`는 CSV 순서에 좌우된다 — 비결정적 값을 DB에 넣으면 안 된다."""
+    rows = [
+        {"ais_dept_code": "311100", "unit_name": "국어국문학과", "category": "효원핵심교양",
+         "course_code": "ZFz000098", "course_name": "효원브릿지"},
+        {"ais_dept_code": "311200", "unit_name": "다른학과", "category": "효원균형교양",
+         "course_code": "ZFz000098", "course_name": "효원브릿지"},
+    ]
+    (conflict,) = find_general_education_category_conflicts(rows)
+    assert conflict["tied"] is True, "1:1은 동률로 잡혀야 한다"
+
+
+def test_기초교양은_다수값_후보에서_빠진다():
+    """기초교양은 과목의 성질이 아니라 학과가 덧씌우는 지정이다(규정 제11조⑪).
+
+    그 학과 행이 많다는 이유로 전학교 이수구분이 `기초교양`으로 박히면, 정작 그 과목이
+    어느 영역 소속인지가 사라진다.
+    """
+    rows = (
+        [{"ais_dept_code": str(i), "unit_name": f"학과{i}", "category": "기초교양",
+          "course_code": "ZF1200703", "course_name": "브릿지기초물리(I)"} for i in range(9)]
+        + [{"ais_dept_code": "90", "unit_name": "핵심학과", "category": "효원핵심교양",
+            "course_code": "ZF1200703", "course_name": "브릿지기초물리(I)"}]
+        + [{"ais_dept_code": "91", "unit_name": "균형학과", "category": "효원균형교양",
+            "course_code": "ZF1200703", "course_name": "브릿지기초물리(I)"}]
+    )
+    (conflict,) = find_general_education_category_conflicts(rows)
+    assert conflict["counts"]["기초교양"] == 9, "행 수는 그대로 보고한다"
+    assert conflict["majority"] != "기초교양"
+    # 핵심 1 : 균형 1 이라 사람이 정해야 한다.
+    assert conflict["tied"] is True

@@ -157,15 +157,22 @@ def find_general_education_category_conflicts(rows: list[dict]) -> list[dict]:
         # 기초교양을 빼고도 이수구분이 갈리면 그건 과목 자체의 그룹이 어긋난 것 = 사고.
         intrinsic = {c for c in counter if c != BASE_LIBERAL_ARTS_CATEGORY}
         kind = "group_conflict" if len(intrinsic) > 1 else "기초교양_overlay"
+        # 다수값은 **기초교양을 뺀 값들 중에서** 고른다. 기초교양은 과목의 성질이 아니라
+        # 학과가 자기 교육과정에 덧씌우는 지정이라(규정 제11조⑪), 그 학과 행이 많다는
+        # 이유로 전학교 이수구분이 `기초교양`으로 박히면 안 된다. 실제로 어떤 코드는
+        # {기초교양 9, 효원핵심교양 1, 효원균형교양 1}로 들어와 그냥 세면 기초교양이 이긴다.
+        intrinsic_ranked = [(c, n) for c, n in ranked if c != BASE_LIBERAL_ARTS_CATEGORY]
+        majority_pool = intrinsic_ranked or ranked
         conflicts.append(
             {
                 "course_code": code,
                 "course_name": names[code],
                 "counts": dict(ranked),
                 "kind": kind,
-                "majority": ranked[0][0],
+                "majority": majority_pool[0][0],
                 # 다수값이 동점이면 majority를 믿을 수 없다 — 표시만 하고 사람이 정한다.
-                "tied": len(ranked) > 1 and ranked[0][1] == ranked[1][1],
+                "tied": len(majority_pool) > 1
+                and majority_pool[0][1] == majority_pool[1][1],
                 "minority_units": {
                     category: units[(code, category)] for category, _ in ranked[1:]
                 },
