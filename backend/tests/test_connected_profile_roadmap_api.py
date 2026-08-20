@@ -50,7 +50,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
             UserAcademicProgram.__table__,
             Course.__table__,
             StudentCourseRecord.__table__,
-            StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
+            StudentCourseSubstitution.__table__,  # 추천 경로가 substituted_course_names를 조회한다
             CourseRoadmap.__table__,
             CourseRoadmapItem.__table__,
             CourseRoadmapChatSession.__table__,

@@ -20,7 +20,7 @@ from app.api.tracks import (
 from app.core.db import Base
 from app.domains.academics.models import (
     College, Department, GraduationRequirement, Major, ProgramCourse, School,
-    StudentCourseRecord, StudentCourseSubstitution, UserAcademicProgram,
+    StudentCourseRecord, UserAcademicProgram,
 )
 from app.domains.courses.models import Course
 from app.domains.users.models import User
@@ -30,7 +30,6 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, UserAcademicProgram.__table__,
     Course.__table__, StudentCourseRecord.__table__,
-    StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
     GraduationRequirement.__table__, ProgramCourse.__table__,
 ]
 

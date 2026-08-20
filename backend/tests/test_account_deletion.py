@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, configure_mappers
 from app.api.profile import _ACCOUNT_DELETE_STEPS, delete_account
 from app.core.db import Base
 from app.domains.academics.models import (
-    College, Department, Major, School, StudentCourseRecord, StudentCourseSubstitution, UserAcademicProgram,
+    College, Department, Major, School, StudentCourseRecord, UserAcademicProgram,
 )
 from app.domains.courses.models import Course
 from app.domains.planning.models import (
@@ -33,7 +33,6 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, UserAcademicProgram.__table__, Course.__table__,
     StudentCourseRecord.__table__,
-    StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
     CourseRoadmap.__table__, CourseRoadmapItem.__table__,
     CourseRoadmapChatSession.__table__, CourseRoadmapChatMessage.__table__,
     PendingRoadmapChange.__table__,

@@ -34,7 +34,11 @@ from app.api.portal_sync import (
     set_course_substitutions,
 )
 from app.core.db import Base
-from app.domains.academics.course_substitution import substituted_course_names
+from app.domains.academics.course_substitution import (
+    set_substitutions,
+    substituted_course_names,
+    substituting_record,
+)
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from app.domains.academics.models import (
     College,
@@ -458,6 +462,31 @@ class TransferCourseSubstitutionTest(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             CourseSubstitutionRequest(course_ids=list(range(MAX_SUBSTITUTION_COURSES + 1)))
+
+    def test_남의_대체_등록이_내_이수_완료에_섞이지_않는다(self):
+        """조회 경로의 `user_id` 필터. 개인정보 경계이자 판정 정확성 문제다.
+
+        남이 등록한 대체가 내 "이미 이수" 집합에 섞이면, 아직 안 들은 과목이 추천에서
+        빠져 학생이 졸업요건을 잘못 믿는다. 필터를 지워도 안 깨지던 자리다.
+        """
+        self.db.add(User(id=3, email="other2@example.com", password_hash="x", name="타인2",
+                         department_id=100, admission_type="transfer"))
+        self.db.add(StudentCourseRecord(
+            id=9, user_id=3, raw_course_name="남의전적대과목", category="전공필수",
+            credits=3, year="2026", semester="입학전성적", source="crawler",
+        ))
+        self.db.commit()
+        # 남(user 3)이 자기 기록에 '자료구조' 대체를 등록한다.
+        set_substitutions(self.db, 9, [10])
+        self.db.commit()
+
+        # 내(user 1) 쪽에는 아무것도 없어야 한다.
+        self.assertEqual([], substituted_course_names(self.db, 1))
+        self.assertNotIn("자료구조", _completed_course_norms(self.db, 1))
+        self.assertIsNone(substituting_record(self.db, 1, 10))
+        # 남 쪽에는 그대로 있다(필터가 과하게 걸린 게 아니다).
+        self.assertEqual(["자료구조"], substituted_course_names(self.db, 3))
+        self.assertEqual(9, substituting_record(self.db, 3, 10).id)
 
     def test_없는_과목으로는_지정할_수_없다(self):
         """프론트가 자동완성 결과에서 고른 course_id만 오는 게 정상이지만,
