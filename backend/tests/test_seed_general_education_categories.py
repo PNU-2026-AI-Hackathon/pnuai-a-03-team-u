@@ -176,6 +176,30 @@ def _write_conflict_fixture(tmp_path, minority_first: bool):
     return courses, mapping
 
 
+def _write_tied_fixture(tmp_path):
+    """이수구분이 1:1로 갈리는 최소 CSV. 어느 쪽이 majority가 될지 순서에 달려 있다."""
+    courses = tmp_path / "tied_courses.csv"
+    with courses.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["ais_dept_code", "unit_name", "curriculum_year", "grade",
+                        "semester", "category", "course_name", "course_code", "credits"],
+        )
+        w.writeheader()
+        for category in ("효원핵심교양", "효원균형교양"):
+            w.writerow({"ais_dept_code": "311100", "unit_name": "국어국문학과",
+                        "curriculum_year": "2026", "grade": "전학년", "semester": "",
+                        "category": category, "course_name": "효원브릿지",
+                        "course_code": "ZFz000098", "credits": "3"})
+
+    mapping = tmp_path / "tied_mapping.csv"
+    with mapping.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(_MAPPING_ROW))
+        w.writeheader()
+        w.writerow(_MAPPING_ROW)
+    return courses, mapping
+
+
 def test_적재는_이수구분_충돌을_만나면_중단한다(tmp_path):
     """기본 동작은 다수결이 아니라 **중단**이다.
 
@@ -217,8 +241,22 @@ def test_다수결_옵션을_주면_소수값이_앞에_있어도_다수값이_�
     assert "효원균형교양 2행 / 효원핵심교양 1행" in out
 
 
-def test_동률이면_다수결_옵션을_줘도_중단한다(tmp_path):
-    """2:2처럼 갈리면 `majority`는 CSV 순서에 좌우된다 — 비결정적 값을 DB에 넣으면 안 된다."""
+def test_동률이면_다수결_옵션을_줘도_적재가_중단된다(tmp_path):
+    """1:1처럼 갈리면 `majority`는 CSV 행 순서에 좌우된다(`Counter.most_common()`이
+    동률에서 삽입 순서를 따른다). 비결정적 값이 DB에 들어가면 안 되므로, opt-in
+    플래그를 줘도 중단해야 한다.
+
+    **`import_courses()`를 직접 부른다.** 순수 함수의 `tied` 필드만 확인하면
+    `if not use_majority_category or tied:`의 `or tied`를 지워도 안 잡힌다 — 검사기는
+    맞게 세는데 적재가 그 결과를 안 쓰는, 1차 리뷰가 뚫었던 것과 같은 공백이다.
+    """
+    courses, mapping = _write_tied_fixture(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        import_courses(courses, mapping, dry_run=True, use_majority_category=True)
+    assert exc.value.code == 1
+
+
+def test_동률은_검사기에서도_tied로_잡힌다():
     rows = [
         {"ais_dept_code": "311100", "unit_name": "국어국문학과", "category": "효원핵심교양",
          "course_code": "ZFz000098", "course_name": "효원브릿지"},

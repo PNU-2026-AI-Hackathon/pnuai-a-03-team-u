@@ -159,9 +159,13 @@ def find_general_education_category_conflicts(rows: list[dict]) -> list[dict]:
         kind = "group_conflict" if len(intrinsic) > 1 else "기초교양_overlay"
         # 다수값은 **기초교양을 뺀 값들 중에서** 고른다. 기초교양은 과목의 성질이 아니라
         # 학과가 자기 교육과정에 덧씌우는 지정이라(규정 제11조⑪), 그 학과 행이 많다는
-        # 이유로 전학교 이수구분이 `기초교양`으로 박히면 안 된다. 실제로 어떤 코드는
-        # {기초교양 9, 효원핵심교양 1, 효원균형교양 1}로 들어와 그냥 세면 기초교양이 이긴다.
+        # 이유로 전학교 이수구분이 `기초교양`으로 박히면 그 과목의 영역 소속이 사라진다.
+        # 예: {기초교양 9, 효원핵심교양 3, 효원균형교양 1}이면 그냥 세면 기초교양이 이긴다.
+        # 2026-08 스냅샷에는 아직 그런 분포가 없다 — 방어적 처리다(현재 기초교양이 섞인
+        # 3개 코드는 전부 `기초교양_overlay`라 majority를 쓰지도 않는다).
         intrinsic_ranked = [(c, n) for c, n in ranked if c != BASE_LIBERAL_ARTS_CATEGORY]
+        # `or ranked`는 실제로는 도달하지 않는다 — 키가 2개 미만이면 위에서 continue 했고
+        # 기초교양은 최대 1개 키이므로 intrinsic_ranked는 항상 1개 이상이다. 방어용으로만 둔다.
         majority_pool = intrinsic_ranked or ranked
         conflicts.append(
             {
@@ -173,8 +177,13 @@ def find_general_education_category_conflicts(rows: list[dict]) -> list[dict]:
                 # 다수값이 동점이면 majority를 믿을 수 없다 — 표시만 하고 사람이 정한다.
                 "tied": len(majority_pool) > 1
                 and majority_pool[0][1] == majority_pool[1][1],
+                # 채택값을 **뺀** 나머지가 소수다. `ranked[1:]`로 두면 기초교양이 원시
+                # 최다값일 때 정작 채택되는 값이 "소수 …행의 학과"로 출력된다 — 이 출력이
+                # 사람이 보고 판단하는 인터페이스라 이름이 뒤집히면 안 된다.
                 "minority_units": {
-                    category: units[(code, category)] for category, _ in ranked[1:]
+                    category: units[(code, category)]
+                    for category, _ in ranked
+                    if category != majority_pool[0][0]
                 },
             }
         )
