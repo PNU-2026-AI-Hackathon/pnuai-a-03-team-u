@@ -67,7 +67,7 @@ _CATEGORY_ROLLUP: dict[str, str] = {area: "교양선택" for area in BALANCED_LI
 # `교직과목`은 어느 요건 컬럼에도 대응이 없다(사범대 요건 행은 카테고리 합보다
 # 총요구학점이 22학점 크고, 그 차이가 교직이다). 여기 넣지 않고 미분류로 남긴다 —
 # 총 이수학점에는 잡히되 특정 이수구분을 채웠다고 주장하지 않는다.
-_COURSE_CATEGORY_TO_REQUIREMENT: dict[str, str] = {
+COURSE_CATEGORY_TO_REQUIREMENT: dict[str, str] = {
     "효원핵심교양": "교양필수",
     "효원균형교양": "교양선택",
     "효원창의교양": "교양선택",
@@ -83,7 +83,7 @@ def requirement_category_for_course(category: str | None) -> str | None:
     """
     if category is None:
         return None
-    return _COURSE_CATEGORY_TO_REQUIREMENT.get(
+    return COURSE_CATEGORY_TO_REQUIREMENT.get(
         category, _CATEGORY_ROLLUP.get(category, category)
     )
 

@@ -2697,10 +2697,11 @@ class _ToolContext:
         # 학과 요건 행이 없으면(`requirement_found=False`) 잔여 학점이 전부 None이라
         # "미충족 0"과 "판단 불가"가 구분되지 않는다. 그 둘을 섞으면 요건을 모르는
         # 학생에게 "요건을 다 채웠다"고 말하게 된다.
-        self.requirements_known = (
-            any(c.remaining_credits is not None for c in program.categories)
-            or program.remaining_total_credits is not None
-        )
+        # 총요구학점을 모르면 "모두 충족"을 주장할 수 없다 — 이수구분 잔여가 0이어도
+        # 총학점 축이 통째로 빠진 채 판정하게 된다(사범대처럼 그 축에만 남는 학점이 있다).
+        # 운영 DB의 primary 요건 126행은 전부 총요구학점이 있지만, 없는 행이 들어오면
+        # 조용히 "다 채웠다"가 되는 게 아니라 "확인할 수 없다"로 떨어져야 한다.
+        self.requirements_known = program.required_total_credits is not None
         proposed: dict[str, float] = {}
         proposed_total = 0.0
         for ch in self.pending_changes:
@@ -3210,6 +3211,28 @@ def run_roadmap_chat(
                                     "propose_term_plan을 한 번 더 호출해라. "
                                     "`course_ids`가 빈 학기를 넣는 건 계획한 게 아니다. "
                                     "그 다음에 finish_response 해라."
+                                )
+                            elif not gap["unmet_categories"]:
+                                # 이수구분 잔여는 0인데 게이트가 걸린 경우다. 총 이수학점이
+                                # 남았거나(요건 행의 이수구분 합 < 총요구학점) 요건 기준
+                                # 자체를 모른다. 아래 문구를 그대로 쓰면 "아직 0학점이
+                                # 미배정이다()"라는 자가당착 지시가 나간다.
+                                total_left = gap.get("remaining_total_credits")
+                                gate_reason = (
+                                    (
+                                        f"이수구분별 잔여는 없지만 졸업 총 이수학점이 "
+                                        f"{total_left:g}학점 남았다."
+                                        if total_left
+                                        else "이 학생의 졸업요건 기준을 숫자로 확인할 수 없어 "
+                                        "무엇이 남았는지 계산하지 못했다."
+                                    )
+                                    + f" 여유 있는 학기: "
+                                    f"{json.dumps(gap['terms_with_room'], ensure_ascii=False)}. "
+                                    "지금 끝내지 말고 그 학기에 담을 과목을 search_courses로 "
+                                    "찾아 propose_term_plan을 한 번 더 호출해라. 그 다음에 "
+                                    "finish_response 해라. 후보를 더 못 찾겠으면 그대로 다시 "
+                                    "finish_response 하되, 요건 충족 여부에 대해 확인된 것만 "
+                                    "적어라."
                                 )
                             else:
                                 gate_reason = (

@@ -2346,6 +2346,37 @@ class FullHorizonPlanningTest(unittest.TestCase):
         self.assertEqual(3.0, cov["교양선택"]["planned_in_this_turn"])
         self.assertEqual(3.0, cov["교양선택"]["remaining_after_plan"])
 
+    def test_총요구학점을_모르면_충족됐다고_말하지_않는다(self):
+        """이수구분 잔여가 0이어도 총요구학점을 모르면 "모두 충족"을 주장할 수 없다.
+
+        사범대처럼 총학점 축에만 남는 학점이 있는 학과가 실재하므로, 그 축을 모르는
+        채로 "다 채웠다"고 말하면 학생이 덜 들은 채 졸업할 수 있다고 믿는다.
+        """
+        db = self.make_db()
+        ctx = self.make_ctx(db, admission_type="transfer")
+        db.query(GraduationRequirement).delete()
+        # 총요구학점 없이 이수구분만 있는 요건 행.
+        db.add(GraduationRequirement(
+            department_id=10, major_id=20, program_type="primary",
+            curriculum_year="2026", required_total_credits=None,
+            required_major_elective=3))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+                                   year="2026", semester="1학기", category="전공선택"))
+        db.add(Course(id=920, course_name="마지막전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_term_plan(terms=[{
+                "planned_year": "2026", "planned_semester": "2학기",
+                "planned_grade": 3, "course_ids": [920],
+            }], reason="test")
+
+        self.assertEqual([], result["unmet_categories_after_plan"])
+        self.assertFalse(ctx.requirements_known, "총요구학점을 모르는데 안다고 판단했다")
+        self.assertNotIn("모두 충족", result["next_action"])
+        self.assertIn("확인할 수 없다", result["next_action"])
+
     def test_요건_기준이_없으면_충족됐다고_말하지_않는다(self):
         """학과 요건 행이 없으면 잔여 학점이 전부 None이라 "미충족 0"과 "판단 불가"가
         구분되지 않는다. 그 둘을 섞으면 요건을 모르는 학생에게 "다 채웠다"고 말한다.
@@ -2531,6 +2562,9 @@ class _ScriptedLLM:
     def __init__(self, script):
         self._script = list(script)
         self.calls_made = 0
+        # 게이트 되돌림 문구는 ToolMessage로 다음 호출에 실려 온다. 발동 여부만 세면
+        # 문구가 자가당착이어도 테스트가 통과한다.
+        self.tool_messages: list[str] = []
 
     def bind_tools(self, tools, tool_choice=None):
         return self
@@ -2541,6 +2575,10 @@ class _ScriptedLLM:
             raise AssertionError(
                 f"스크립트가 {self.calls_made - 1}번 만에 소진됐다 — 루프가 예상보다 더 돌았다"
             )
+        for m in messages:
+            content = getattr(m, "content", None)
+            if isinstance(content, str) and content:
+                self.tool_messages.append(content)
         calls = self._script.pop(0)
         msg = MagicMock()
         msg.content = ""
@@ -2655,6 +2693,46 @@ class FinishGateBehaviourTest(unittest.TestCase):
 
         self.assertEqual(1, llm.calls_made, "되돌림이 걸렸다면 두 번 불렸을 것")
         self.assertEqual("성적표를 먼저 올려주세요.", result["reply"])
+
+    def test_이수구분_잔여가_0인데_되돌릴_때_0학점_미배정이라고_하지_않는다(self):
+        """총학점만 남았거나 요건을 모를 때도 게이트가 걸린다. 그때 이수구분 문구를
+        그대로 쓰면 "아직 0학점이 미배정이다()"라는 자가당착 지시가 나간다 — 되돌림은
+        finish를 막는 가장 강한 신호인데 도구 자신의 next_action과 반대말을 하게 된다.
+        """
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        # 이수구분 잔여는 0이고 총학점만 남은 사범대형 + 빈 학기 없음(else 분기로 간다)
+        db.query(GraduationRequirement).delete()
+        db.add(GraduationRequirement(
+            department_id=10, major_id=20, program_type="primary",
+            curriculum_year="2026", required_total_credits=60, required_major_elective=3))
+        for i, (y, sem, g) in enumerate(
+                [("2026", "2학기", 3), ("2027", "1학기", 4), ("2027", "2학기", 4)]):
+            db.add(CourseRoadmapItem(
+                id=900 + i, roadmap_id=1, course_name=f"기존{i}", credits=3.0,
+                planned_year=y, planned_semester=sem, planned_grade=g, status="planned"))
+        db.add(Course(id=910, course_name="마지막전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1,2"))
+        db.flush()
+
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "계획", "terms": [{
+                    "planned_year": "2026", "planned_semester": "2학기",
+                    "planned_grade": 3, "course_ids": [910]}]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "1차"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "2차"}, "id": "c3"}],
+        ]
+        result, llm = self.run_chat(db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        self.assertEqual(3, llm.calls_made, "총학점이 남았는데 되돌리지 않았다")
+        self.assertEqual("2차", result["reply"])
+
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        self.assertTrue(gate, "되돌림 메시지를 못 찾았다")
+        text = " ".join(gate)
+        self.assertIn("총 이수학점", text)
+        self.assertNotIn("0학점이 미배정", text)
 
     def test_좁은_요청에는_게이트가_걸리지_않는다(self):
         """"다음 학기만" 요청에 "나머지 학기도 채워라"라고 되돌리면 안 된다.

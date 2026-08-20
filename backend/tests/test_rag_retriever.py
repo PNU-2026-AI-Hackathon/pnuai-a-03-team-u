@@ -327,10 +327,20 @@ class RagRetrieverTest(unittest.TestCase):
         names = [r["course_name"] for r in results]
         self.assertEqual(names.count("공학작문및발표"), 1)
 
-    def test_category_alias_교양필수_matches_효원핵심교양_and_기초교양(self):
-        """졸업요건 표기(교양필수)로 필터해도 DB 원시 카테고리(효원핵심교양·기초교양)에 매칭돼야 한다.
+    def test_category_alias_교양필수_matches_효원핵심교양(self):
+        """졸업요건 표기(교양필수)로 필터해도 DB 원시 카테고리(효원핵심교양)에 매칭돼야 한다.
         실제 사고: CB1000119 공학작문및발표를 category='교양필수'로 검색하면 0건이 나와
-        LLM이 교양필수 추천을 못했다."""
+        LLM이 교양필수 추천을 못했다.
+
+        ⚠️ 예전에는 `기초교양`도 `교양필수` alias였다. **틀렸다** — 교양교육원 수강지도
+        지침은 2005~2021 전 세대에서 "기초교양과목은 **교양선택** 이수학점에 포함"이라고
+        하고, 2026교육과정은 "효원균형교양 및 효원창의교양 이수학점에 포함"이라고 한다.
+        양쪽 다 선택 버킷이다(`docs/progress/liberal-arts-area-requirements.md` §3.2).
+
+        이 오류가 실제로 루프를 만들었다: LLM이 교양필수를 채우려고 검색 → 기초교양을
+        받아 제안 → 집계는 교양선택으로 세니 교양필수 잔여는 그대로 → 게이트가 다시
+        교양필수를 요구 → 같은 기초교양이 또 나온다. 검색과 집계가 두 벌로 유지되다
+        어긋난 것이라, 이제 `COURSE_CATEGORY_TO_REQUIREMENT` 한 곳에서 역인덱싱한다."""
         db = self.make_db()
         db.add_all([
             Course(id=1, course_name="공학작문및발표", department_id=None, category="효원핵심교양",
@@ -349,14 +359,16 @@ class RagRetrieverTest(unittest.TestCase):
             filters={"category": "교양필수"},
         )
         ids = {r["course_id"] for r in results}
-        self.assertEqual({1, 2}, ids)  # 효원핵심교양 + 기초교양만
+        self.assertEqual({1}, ids)  # 효원핵심교양만 (기초교양은 교양선택 쪽이다)
 
         results2 = CurriculumRetriever(db).search(
             query="", department_id=10, major_id=None, curriculum_year=2026,
             filters={"category": "교양선택"},
         )
         ids2 = {r["course_id"] for r in results2}
-        self.assertEqual({3}, ids2)  # 효원균형교양 (창의교양은 이 테스트에 없음)
+        # 효원균형교양 + 기초교양. 검색과 집계가 같은 매핑을 쓰는지 여기서 고정한다 —
+        # 어긋나면 LLM이 받은 후보와 요건 차감이 달라져 게이트가 같은 요구를 반복한다.
+        self.assertEqual({2, 3}, ids2)
 
         # 전공 카테고리는 exact match 유지
         results3 = CurriculumRetriever(db).search(
