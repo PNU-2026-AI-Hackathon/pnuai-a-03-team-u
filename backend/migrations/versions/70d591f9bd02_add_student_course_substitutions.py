@@ -46,8 +46,11 @@ def upgrade() -> None:
         # 행이 갈아끼워질 수 있어 고아 행이 남지 않도록 DB 레벨에서 끊는다.
         sa.Column("record_id", sa.Integer(), nullable=False),
         sa.Column("course_id", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        # naive DateTime이다. `TimestampMixin`(app/core/db.py)이 tz 없는 값을 넣고 레포의
+        # 다른 마이그레이션도 전부 `sa.DateTime()`이라, 여기만 timezone=True로 두면 이
+        # 테이블만 aware 값을 돌려주고 `alembic check`가 매번 타입 변경을 감지한다.
+        sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["record_id"], ["student_course_records.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["course_id"], ["courses.id"]),
         sa.PrimaryKeyConstraint("id"),

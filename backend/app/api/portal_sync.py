@@ -568,10 +568,21 @@ def replace_course_records(
     return _course_record_responses(db, _list_course_records(db, current_user.id))
 
 
-class CourseSubstitutionRequest(BaseModel):
-    """이 전적대 이수기록이 대체한 PNU 과목 **전체 집합**. 빈 목록이면 대체 해제."""
+# 한 이수기록이 대체할 수 있는 과목 수 상한. 실제로는 교양 세부영역 9개 + 교양과목
+# 몇 개가 최대라 두 자리면 충분한데, 상한이 없으면 한 요청으로 `courses` 전량(운영 DB
+# 기준 6천 행대)을 밀어 넣을 수 있다.
+MAX_SUBSTITUTION_COURSES = 50
 
-    course_ids: list[int] = []
+
+class CourseSubstitutionRequest(BaseModel):
+    """이 전적대 이수기록이 대체한 PNU 과목 **전체 집합**. 빈 목록이면 대체 해제.
+
+    기본값을 두지 않는다 — 필드를 빼먹은 요청이 조용히 "전체 해제"로 처리되면,
+    프론트 버그 하나로 학생이 등록해 둔 대체가 통째로 날아간다. 해제하려면 `[]`를
+    명시해야 한다.
+    """
+
+    course_ids: list[int] = Field(..., max_length=MAX_SUBSTITUTION_COURSES)
 
 
 @router.put("/course-records/{record_id}/substitutions", response_model=CourseRecordResponse)

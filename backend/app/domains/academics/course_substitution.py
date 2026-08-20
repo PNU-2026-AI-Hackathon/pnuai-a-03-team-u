@@ -84,22 +84,31 @@ def set_substitutions(db: Session, record_id: int, course_ids: list[int]) -> Non
         db.add(StudentCourseSubstitution(record_id=record_id, course_id=course_id))
 
 
-def substituted_course_ids_for_user(db: Session, user_id: int) -> set[int]:
-    """이 학생이 대체 대상으로 등록한 PNU 과목 id 전체.
+def substituting_record(
+    db: Session, user_id: int, course_id: int
+) -> StudentCourseRecord | None:
+    """이 PNU 과목을 대체한 것으로 등록된 **바로 그 이수기록**.
 
-    "이 과목 이미 인정받았나?"를 이수기록마다 관계로 캐물으면 N+1이 된다.
-    한 번에 모아서 집합으로 들고 판정한다.
+    "이 과목이 대체됐나?"만 보면 차단 판정은 맞지만 학생에게 보여줄 근거를 못 고른다.
+    "자료구조는 이미 이수했습니다(성적표 원문 '교양선택')"처럼 엉뚱한 행을 인용하면
+    학생이 자기 성적표를 의심하게 된다 — 졸업요건에 관해 틀린 말을 하지 않는 게 이
+    제품의 전제다.
+
+    여러 이수기록이 같은 과목을 대체했으면(전적대 두 과목 → PNU 한 과목) 그중 하나를
+    돌려준다. 어느 쪽이든 실제로 그 과목을 대체한 행이므로 근거로 옳다.
     """
-    return set(
-        db.scalars(
-            select(StudentCourseSubstitution.course_id)
-            .join(
-                StudentCourseRecord,
-                StudentCourseRecord.id == StudentCourseSubstitution.record_id,
-            )
-            .where(StudentCourseRecord.user_id == user_id)
-        ).all()
-    )
+    return db.scalars(
+        select(StudentCourseRecord)
+        .join(
+            StudentCourseSubstitution,
+            StudentCourseSubstitution.record_id == StudentCourseRecord.id,
+        )
+        .where(
+            StudentCourseRecord.user_id == user_id,
+            StudentCourseSubstitution.course_id == course_id,
+        )
+        .order_by(StudentCourseRecord.id)
+    ).first()
 
 
 def substituted_course_names(db: Session, user_id: int) -> list[str]:

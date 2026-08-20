@@ -28,6 +28,7 @@ from app.api.portal_sync import (
     CourseRecordInput,
     CourseRecordsReplaceRequest,
     CourseSubstitutionRequest,
+    MAX_SUBSTITUTION_COURSES,
     list_course_records,
     replace_course_records,
     set_course_substitutions,
@@ -46,7 +47,13 @@ from app.domains.academics.models import (
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
-from app.domains.planning.roadmap_chat import _compute_critical_missing_required
+from app.domains.planning.roadmap_chat import (
+    _ToolContext,
+    _compute_critical_missing_required,
+    _compute_missing_required_available,
+    _compute_prereq_blocked,
+)
+from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem, PendingRoadmapChange
 from app.domains.planning.timetable import _completed_course_norms
 from app.domains.users.models import User
 
@@ -56,6 +63,7 @@ _TABLES = [
     User.__table__, Course.__table__, StudentCourseRecord.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseSubstitution.__table__,
+    CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
 ]
 
 
@@ -357,6 +365,99 @@ class TransferCourseSubstitutionTest(unittest.TestCase):
         self.assertEqual(["자료구조"], substituted_course_names(self.db, 1))
         self.assertEqual(3, float(self.db.get(StudentCourseRecord, 1).credits))
         self.assertEqual(3, float(self.db.get(StudentCourseRecord, 6).credits))
+
+    def test_로드맵_재추가를_막을_때_인용하는_근거가_실제_대체_행이다(self):
+        """차단만 맞으면 되는 게 아니라 **왜 막혔는지**도 맞아야 한다.
+
+        이 에러 문자열은 LLM 도구 결과로 들어가 학생에게 그대로 전달된다. `자료구조`를
+        대체한 건 `데이터구조` 행인데 엉뚱한 `교양선택` 행을 인용하면, 학생은 자기
+        성적표를 의심하게 된다 — 졸업요건에 관해 틀린 말을 하지 않는 게 이 제품의 전제다.
+
+        "대체된 과목이 있나?"만 보고 아무 전적대 행이나 근거로 집으면 여기서 깨진다.
+        """
+        # 실제로 대체를 등록하는 행은 **뒤쪽**에 둔다. 앞에 있는 전적대 행(record 1,
+        # '데이터구조')이 미끼다 — "아무 전적대 행이나 집는" 구현은 이걸 집는다.
+        self.db.add(StudentCourseRecord(
+            id=7, user_id=1, raw_course_name="자료구조기초", category="전공필수",
+            credits=3, year="2025", semester="입학전성적", source="crawler",
+        ))
+        self.db.add(CourseRoadmap(id=1, user_id=1, title="테스트", status="draft"))
+        self.db.commit()
+        set_course_substitutions(
+            record_id=7,
+            payload=CourseSubstitutionRequest(course_ids=[10]),
+            current_user=self.user,
+            db=self.db,
+        )
+
+        ctx = _ToolContext(self.db, self.user, self.db.get(CourseRoadmap, 1))
+        result = ctx.propose_change(
+            action="create", reason="테스트", course_id=10,
+            planned_year="2026", planned_semester="2학기",
+        )
+
+        self.assertIn("error", result, "대체 등록된 과목은 재추가가 막혀야 한다")
+        self.assertIn("자료구조기초", result["error"])
+        self.assertNotIn("데이터구조", result["error"])
+
+    def test_로드맵_경고_세_경로_모두에서_대체된_과목이_빠진다(self):
+        """시간표뿐 아니라 로드맵의 **세 계산 경로 전부**에서 빠져야 한다.
+
+        한 곳만 배선하면 "이번 학기 놓치면 위험"에서는 사라졌는데 "이번 학기 들을 수
+        있는 미이수 필수"에는 그대로 남는, 서로 다른 말을 하는 상태가 된다.
+        """
+        # description에 선수과목 라벨을 둔다 — 그래야 prereq_blocked 경로에도 뜬다.
+        # (선수과목 `대학수학`은 미이수라 대체 등록 전에는 blocked에 잡힌다.)
+        self.db.add(Course(
+            id=12, course_name="이산수학", category="전공필수", credits=3,
+            department_id=100, semester="2", year="1",
+            description="선수과목: 대학수학",
+        ))
+        self.db.add(StudentCourseRecord(
+            id=8, user_id=1, raw_course_name="이산수학개론", category="전공필수",
+            credits=3, year="2026", semester="입학전성적", source="crawler",
+        ))
+        self.db.commit()
+
+        paths = {
+            "critical_missing": lambda: _compute_critical_missing_required(
+                self.db, self.user, None, "1학기"),
+            "missing_available": lambda: _compute_missing_required_available(
+                self.db, self.user, None, "2학기"),
+            "prereq_blocked": lambda: _compute_prereq_blocked(self.db, self.user, None),
+        }
+        # 대체 등록 전에는 **세 경로 모두** 떠 있어야 한다. 한 경로라도 원래 안 뜨면
+        # 그 경로의 배선을 지워도 이 테스트가 안 깨진다(= 검증하는 척만 한다).
+        for name, fn in paths.items():
+            with self.subTest(path=name, phase="before"):
+                self.assertIn("이산수학", [c["course_name"] for c in fn()])
+
+        set_course_substitutions(
+            record_id=8,
+            payload=CourseSubstitutionRequest(course_ids=[12]),
+            current_user=self.user,
+            db=self.db,
+        )
+
+        for name, fn in paths.items():
+            with self.subTest(path=name):
+                self.assertNotIn("이산수학", [c["course_name"] for c in fn()])
+
+    def test_course_ids를_빼먹은_요청은_거절된다(self):
+        """필드 누락이 조용히 "전체 해제"가 되면 프론트 버그 하나로 등록이 다 날아간다."""
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            CourseSubstitutionRequest()
+        # 해제는 빈 배열을 **명시**해야 한다.
+        self.assertEqual([], CourseSubstitutionRequest(course_ids=[]).course_ids)
+
+    def test_한_요청에_담을_수_있는_과목_수에_상한이_있다(self):
+        """상한이 없으면 한 요청으로 courses 전량을 밀어 넣을 수 있다."""
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            CourseSubstitutionRequest(course_ids=list(range(MAX_SUBSTITUTION_COURSES + 1)))
 
     def test_없는_과목으로는_지정할_수_없다(self):
         """프론트가 자동완성 결과에서 고른 course_id만 오는 게 정상이지만,
