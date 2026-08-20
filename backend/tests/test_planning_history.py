@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
-from app.domains.academics.models import StudentCourseRecord
+from app.domains.academics.models import StudentCourseRecord, StudentCourseSubstitution
 from app.domains.courses.models import Course
 from app.domains.planning import roadmap_chat as roadmap_chat_mod
 from app.domains.planning.history import (
@@ -21,6 +21,7 @@ _TABLES = [
     User.__table__,
     Course.__table__,
     StudentCourseRecord.__table__,
+    StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
     CourseRoadmap.__table__,
     CourseRoadmapItem.__table__,
 ]

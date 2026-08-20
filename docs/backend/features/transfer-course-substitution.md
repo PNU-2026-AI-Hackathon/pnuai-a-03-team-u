@@ -28,33 +28,64 @@
 
 ## 스키마
 
-`student_course_records.substitutes_course_id` (nullable FK → `courses.id`,
-마이그레이션 `70d591f9bd02`).
+`student_course_substitutions(record_id → student_course_records.id ON DELETE CASCADE,
+course_id → courses.id, UNIQUE(record_id, course_id))` — 마이그레이션 `70d591f9bd02`.
 
-전적대 과목 행이 "이건 PNU ○○를 대체했다"를 가리킨다. 학점 컬럼은 손대지 않는다.
+컬럼 하나가 아니라 조인 테이블인 이유는 관계가 **N:M**이기 때문이다.
+
+- **1:N** — 전적대 `교양선택 15학점` 한 줄은 개별 과목이 아니라 여러 **세부영역**을 채운
+  것으로 인정받는다. 반대 방향으로도, 전적대 한 과목이 PNU 여러 과목을 대체할 수 있다.
+- **N:1** — 전적대에서 1·2학기로 쪼개 들은 두 과목이 PNU 한 과목으로 인정되기도 한다.
+  두 이수기록이 같은 `course_id`를 가리키면 되고, 각 행의 학점은 그대로 남는다.
+
+학점 컬럼은 손대지 않는다.
+
+### 교양은 과목이 아니라 "영역"을 고른다
+
+부산대는 효원균형·창의교양의 **영역 자체**를 `courses`에 과목처럼 한 행씩 넣어둔다
+(`ZFz000091 사상과역사` …). 실제 수강 과목이 아니라 "이 영역을 이수했다"를 가리키는
+자리표시자다. 규정 제9조가 균형 6영역 중 2영역 / 창의 3영역 중 2영역처럼 **영역 단위**로
+요건을 정하기 때문에, 뭉쳐 들어온 전적대 교양 학점도 영역으로 대응시킨다.
+
+기초교양·효원핵심교양은 영역 개념 없이 지정된 과목 목록이라 실제 과목을 고른다.
 
 ## API
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `GET` | `/me/course-records` | 응답에 `is_transfer_credit` / `substitutes_course_id` / `substitutes_course_name` 포함 |
-| `PATCH` | `/me/course-records/{record_id}/substitution` | `{"course_id": 123}` 지정, `{"course_id": null}` 해제. 멱등 |
-| `GET` | `/courses/search?q=` | 대체 대상 PNU 과목 검색 — 기존 엔드포인트 재사용 |
+| `GET` | `/me/course-records` | 응답에 `is_transfer_credit` / `substitutes[]`(`course_id`·`course_name`·`category`) 포함 |
+| `PUT` | `/me/course-records/{record_id}/substitutions` | `{"course_ids": [1, 2]}` 지정, `{"course_ids": []}` 해제. 부분 갱신이 아니라 **치환**이고 멱등 |
+| `GET` | `/me/curriculum` | 고를 후보 — 본인 학과·전공 교육과정으로 좁힌 목록 |
 
-`PATCH`의 검증:
+`PUT`의 검증:
 - 남의 이수기록이면 404 (존재 여부를 알려주지 않는다)
 - `입학전성적`/`편입인정` 행이 아니면 422 — PNU에서 직접 들은 과목엔 걸 수 없다
-- 없는 `course_id`면 404
+- `course_ids`에 없는 id가 하나라도 있으면 404 (일부만 저장하지 않는다)
 
-`PUT /me/course-records`(내 정보 편집 저장)는 이 컬럼을 건드리지 않는다. 단, 그 화면에서
+`PUT /me/course-records`(내 정보 편집 저장)는 이 테이블을 건드리지 않는다. 단, 그 화면에서
 행을 삭제하면 대체 관계도 행과 함께 사라진다.
 
 ## 화면
 
 내 정보(`/info`) → "학기별 성적" → **입학 전 인정 학점** 그룹. 각 전적대 과목 행의 과목명
-칸에 "어떤 과목을 대체했나요?" 버튼이 붙고, 누르면 PNU 과목 검색창이 열린다. 이미 지정돼
-있으면 `PNU 자료구조 대체`로 표시되고 변경/해제할 수 있다 — 학과 통보를 나중에 받거나
-잘못 골랐을 때 언제든 고칠 수 있어야 하기 때문이다.
+칸에 "어떤 과목을 대체했나요?" 버튼이 붙고, 누르면 화면 중앙 모달이 열린다. 이미 지정돼
+있으면 `PNU 사상과역사, 융합과 창의 대체`처럼 표시되고 변경/해제할 수 있다 — 학과 통보를
+나중에 받거나 잘못 골랐을 때 언제든 고칠 수 있어야 하기 때문이다.
+
+**후보는 그 행의 이수구분에 맞춰 좁힌다.** 이수구분이 섞이면 학생이 실수로 엉뚱한 걸 고른다.
+
+| 전적대 행의 이수구분 | 고를 수 있는 것 |
+|---|---|
+| `교양*` | 교양만 — 균형·창의는 **영역**(6/3개) 체크박스, 기초교양·효원핵심교양은 과목 |
+| `전공*` | PNU 전공 과목만, 1~2학년 것만 (편입 인정은 저학년 과정에 몰린다) |
+| 그 외(`일반선택` 등) | 전체 |
+
+체크박스는 **다중 선택**이고, 고른 것을 `저장 (n개)`으로 한 번에 보낸다. 체크할 때마다
+저장하면 요청이 쏟아지고 실수로 켠 중간 상태까지 서버에 남는다.
+
+목록은 **같은 이름을 한 번만** 보여준다. 수강편람은 같은 교양 과목을 개설 학과별로 다른
+코드로 싣는데(`공학작문및발표` 5행, `대학영어` 3행), 학생이 고르는 건 "무슨 과목을
+인정받았나"라서 어느 코드인지는 의미가 없다.
 
 성적 편집(연필 아이콘) 모드에서는 감춘다. 대체 등록은 즉시 저장이고 성적 편집은 초안 방식
 이라, 한 화면에 섞으면 무엇이 저장됐는지 알 수 없다.
@@ -62,11 +93,12 @@
 ## 코드 위치
 
 - 도메인 헬퍼: `backend/app/domains/academics/course_substitution.py`
-- API: `backend/app/api/portal_sync.py` (`set_course_substitution`, `_course_record_responses`)
+- API: `backend/app/api/portal_sync.py` (`set_course_substitutions`, `_course_record_responses`)
 - 추천 반영(시간표): `backend/app/domains/planning/timetable.py::_completed_course_norms`
   — 시간표 챗의 모든 "이미 이수" 검사가 이 한 지점을 지난다
 - 추천 반영(로드맵): `backend/app/domains/planning/roadmap_chat.py`
   — `_compute_critical_missing_required` / `_compute_missing_required_available` /
   `_compute_prereq_blocked`의 `completed_norms`, 그리고 `propose_change`의 중복 create 가드
 - 회귀 테스트: `backend/tests/test_course_substitution.py`
+- 탈퇴 시 삭제: `backend/app/api/profile.py::_ACCOUNT_DELETE_STEPS`
 - 프론트: `frontend/src/pages/InfoPage.tsx`, `frontend/src/api/studentInfo.ts`

@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
 from app.domains.academics.models import (
-    College, Department, GraduationRequirement, Major, School, StudentCourseRecord,
+    College, Department, GraduationRequirement, Major, School, StudentCourseRecord, StudentCourseSubstitution,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course, CourseOffering, CourseTime
@@ -36,6 +36,7 @@ _TABLES = [
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__,
+    StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
     TimetableChatSession.__table__, TimetableChatMessage.__table__,
     # 시간표 챗이 "사용자가 UI에서 직접 담아둔 강좌"를 읽는다 — 없으면 run_timetable_chat이
     # 테이블 부재로 죽는다.

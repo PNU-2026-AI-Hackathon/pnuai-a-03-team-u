@@ -10,7 +10,7 @@ from app.domains.academics.models import (
     Department,
     Major,
     School,
-    StudentCourseRecord,
+    StudentCourseRecord, StudentCourseSubstitution,
 )
 from app.domains.courses.models import Course, CourseOffering
 from app.domains.planning.models import CourseRoadmap, CourseRoadmapItem
@@ -27,6 +27,7 @@ class TimetableApplyApiTest(unittest.TestCase):
             CourseRoadmap.__table__, CourseRoadmapItem.__table__,
             # planned_grade를 이수 기록에서 역산하므로 이 테이블이 필요하다.
             StudentCourseRecord.__table__,
+            StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
         ])
 
     def setUp(self):

@@ -345,6 +345,12 @@ _ACCOUNT_DELETE_STEPS: list[tuple[str, str]] = [
      "WHERE session_id IN (SELECT id FROM timetable_chat_sessions WHERE user_id = :uid)"),
     ("timetable_chat_sessions",
      "DELETE FROM timetable_chat_sessions WHERE user_id = :uid"),
+    # 편입 대체 관계는 이수기록의 자식이라 이수기록보다 먼저 지운다. FK가 ON DELETE
+    # CASCADE지만 여기서도 명시적으로 지운다 — 삭제 결과 카운트에 남아야 "무엇이 지워졌는지"
+    # 감사할 수 있고, CASCADE가 빠진 옛 스키마에서도 안전하다.
+    ("student_course_substitutions",
+     "DELETE FROM student_course_substitutions "
+     "WHERE record_id IN (SELECT id FROM student_course_records WHERE user_id = :uid)"),
     # student_course_records는 user_academic_program_id도 참조하므로 program 삭제 전에.
     ("student_course_records", "DELETE FROM student_course_records WHERE user_id = :uid"),
     # Direct user_id 참조 테이블

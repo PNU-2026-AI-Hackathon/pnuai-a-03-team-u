@@ -10,7 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, TimestampMixin
 
@@ -108,21 +108,52 @@ class StudentCourseRecord(TimestampMixin, Base):
     match_status: Mapped[str] = mapped_column(String(20), default="unmatched")
     source: Mapped[str] = mapped_column(String(20), default="crawler")
 
-    # 편입생의 전적대 과목이 "PNU의 어느 과목을 대체했는지". 학생 본인만 아는 정보다.
-    #
-    # 편입 학점 인정은 학칙에 표로 정해진 게 아니라 학과가 개별 학생에게 "이건 인정,
-    # 저건 불인정"을 통보하는 방식이라, 데이터 어디에도 근거가 없다. 그래서 이름
-    # 유사도로 추정하지 않는다 — `데이터구조`와 `자료구조`가 아무리 비슷해 보여도
-    # 학교가 실제로 그렇게 인정했는지는 학생만 안다. 틀리게 추정하면 학생이 졸업
-    # 요건을 잘못 믿게 되므로, **학생이 화면에서 직접 고른 값만** 여기 들어간다.
-    #
-    # 학점은 건드리지 않는다. 이 행에는 전적대에서 인정받은 학점이 그대로 있고
-    # 졸업요건 엔진은 category별 합계만 보므로, 대체를 등록해도 학점 계산은 그대로다.
-    # 이 컬럼의 실제 효과는 추천에서 대체된 PNU 과목을 빼는 것이다
-    # (`app/domains/planning/timetable.py::_completed_course_norms`).
-    substitutes_course_id: Mapped[int | None] = mapped_column(
-        ForeignKey("courses.id"), nullable=True, index=True
+    # 편입생이 직접 등록한 대체 관계. 한 줄이 여러 PNU 과목/영역을 대체할 수 있어
+    # 별도 테이블로 둔다 — 전적대 `교양선택 15학점` 한 줄은 균형·창의 여러 세부영역에
+    # 걸쳐 인정받는 게 보통이고, 반대로 전적대 두 과목이 PNU 한 과목을 대체하기도 한다.
+    # 지연 로딩이다(selectin 아님). 이수기록은 졸업요건·시간표·로드맵 등 거의 모든
+    # 경로에서 통째로 읽는데, 그 대부분은 대체 관계를 보지 않는다 — 매번 조인을
+    # 딸려 보내면 쓰지도 않는 쿼리가 붙는다. 목록 응답은 관계 대신 명시적 조인으로
+    # 한 번에 모은다(`portal_sync._course_record_responses`).
+    substitutions: Mapped[list["StudentCourseSubstitution"]] = relationship(
+        back_populates="record", cascade="all, delete-orphan"
     )
+
+
+class StudentCourseSubstitution(TimestampMixin, Base):
+    """전적대 이수기록 한 줄이 대체한 PNU 과목(또는 교양 세부영역) 하나.
+
+    편입 학점 인정은 학칙에 표로 정해진 게 아니라 학과가 개별 학생에게 "이건 인정,
+    저건 불인정"을 통보하는 방식이라, 데이터 어디에도 근거가 없다. 그래서 이름
+    유사도로 추정하지 않는다 — `데이터구조`와 `자료구조`가 아무리 비슷해 보여도
+    학교가 실제로 그렇게 인정했는지는 학생만 안다. 틀리게 추정하면 학생이 졸업
+    요건을 잘못 믿게 되므로, **학생이 화면에서 직접 고른 값만** 여기 들어간다.
+
+    한 이수기록에 여러 행이 붙는다(N:M). 전적대 `교양선택 15학점` 한 줄은 개별
+    과목이 아니라 여러 **세부영역**을 채운 것으로 인정받고(`courses`의 `ZFz…`
+    placeholder 행이 그 영역이다), 반대로 전적대 두 과목이 PNU 한 과목을 대체한
+    경우도 각 이수기록이 같은 `course_id`를 가리키면 된다.
+
+    학점은 건드리지 않는다. 전적대에서 인정받은 학점은 이수기록 행에 그대로 있고
+    졸업요건 엔진은 category별 합계만 보므로, 대체를 등록해도 학점 계산은 그대로다.
+    실제 효과는 추천에서 대체된 PNU 과목을 빼는 것이다
+    (`app/domains/planning/timetable.py::_completed_course_norms`).
+    """
+
+    __tablename__ = "student_course_substitutions"
+    __table_args__ = (
+        # 같은 과목을 두 번 체크해도 한 행. 화면에서 전체 집합을 통째로 저장하므로
+        # 중복이 들어올 일은 없지만, 재시도/동시요청에 대한 안전장치로 둔다.
+        UniqueConstraint("record_id", "course_id", name="uq_student_course_substitution"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    record_id: Mapped[int] = mapped_column(
+        ForeignKey("student_course_records.id", ondelete="CASCADE"), index=True
+    )
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+
+    record: Mapped["StudentCourseRecord"] = relationship(back_populates="substitutions")
 
 
 class GraduationRequirement(TimestampMixin, Base):

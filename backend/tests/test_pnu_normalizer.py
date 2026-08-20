@@ -18,6 +18,7 @@ from app.domains.academics.models import (
     Major,
     School,
     StudentCourseRecord,
+    StudentCourseSubstitution,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course  # noqa: F401 — SCR.course_id FK 해석용
@@ -36,6 +37,7 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, Course.__table__, UserAcademicProgram.__table__,
     GraduationRequirement.__table__, StudentCourseRecord.__table__,
+    StudentCourseSubstitution.__table__,  # 이수기록을 읽는 경로가 대체 관계를 함께 조회한다
 ]
 
 # 성적표 한 학기 표의 실제 구조: 헤더(8열) + 과목 행(8열) + 학기 요약(2열).

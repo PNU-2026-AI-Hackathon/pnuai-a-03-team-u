@@ -5826,9 +5826,8 @@ body.theme-dark .semester-course-status.status-completed {
   cursor: default;
 }
 
-.course-substitution-picker {
-  display: grid;
-  gap: 6px;
+.course-substitution-picker input {
+  width: 100%;
 }
 
 .course-substitution-picker input {
@@ -10320,4 +10319,277 @@ body.theme-dark .auth-track-card {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+
+/* --- 전적대 대체 과목 선택 모달 -------------------------------------------
+   표 안에 띄우지 않는 이유: `.grade-table-wrap`이 `overflow-x: auto`라 안에서
+   펼치면 잘리거나 "입학 전 인정 학점" 카드가 통째로 밀리고, 고정 좌표로 띄우면
+   스크롤할 때 버튼과 어긋난다. 화면 중앙 모달은 위치 계산이 아예 없다. */
+.substitution-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(17, 24, 39, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.substitution-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(460px, 100%);
+  /* **높이를 고정한다.** max-height로 두면 검색 결과 수에 따라 모달이 커졌다
+     작아졌다 해서, 글자를 칠 때마다 화면이 출렁이고 버튼 위치도 계속 움직인다. */
+  height: min(620px, calc(100vh - 40px));
+  padding: 18px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+/* 남는 공간을 전부 차지하고 이 안에서만 스크롤한다. `min-height: 0`이 없으면
+   flex 자식의 기본 min-height:auto 때문에 내용만큼 늘어나 모달을 밀어낸다. */
+.substitution-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.substitution-modal-head,
+.substitution-modal input[type="search"],
+.substitution-modal-actions {
+  flex: none;
+}
+
+.substitution-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.substitution-modal-eyebrow {
+  margin: 0 0 2px;
+  color: #8a93a2;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.substitution-modal-head h4 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 900;
+  color: #1b2430;
+}
+
+.substitution-modal-sub {
+  margin: 4px 0 0;
+  color: #5f6c7d;
+  font-size: 12px;
+}
+
+.substitution-modal-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #5f6c7d;
+  cursor: pointer;
+}
+
+.substitution-modal-close:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.substitution-modal input[type="search"] {
+  width: 100%;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+/* 목록만 스크롤한다 — 모달 전체가 늘어나지 않게. */
+.substitution-modal .course-search-results {
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  box-shadow: none;
+}
+
+.substitution-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.substitution-modal-actions button {
+  padding: 7px 14px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #5f6c7d;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.substitution-modal-actions button:hover:not(:disabled) {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.substitution-modal-actions button.is-danger:hover:not(:disabled) {
+  border-color: #d9534f;
+  color: #d9534f;
+}
+
+/* 저장이 이 모달의 주 동작이다 — 체크만 하고 닫으면 아무것도 반영되지 않으므로
+   취소와 같은 무게로 두면 안 된다. */
+.substitution-modal-actions button.is-primary {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.substitution-modal-actions button.is-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  color: #fff;
+}
+
+/* 전공 목록도 다중 선택이라(전적대 한 과목 → PNU 여러 과목) 고른 항목이 눌린 채로
+   남아 있어야 한다. */
+.course-search-results button.is-selected {
+  background: #eaf2ff;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.course-search-results button.is-selected strong {
+  color: var(--blue);
+}
+
+body.theme-dark .course-search-results button.is-selected {
+  background: #1d3050;
+}
+
+.substitution-modal-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+body.theme-dark .substitution-modal {
+  background: #161b22;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+body.theme-dark .substitution-modal-body {
+  border-color: #0e1116;
+}
+
+body.theme-dark .substitution-modal-head h4 {
+  color: #e6edf3;
+}
+
+body.theme-dark .substitution-modal input[type="search"],
+body.theme-dark .substitution-modal-close,
+body.theme-dark .substitution-modal-actions button {
+  border-color: #0e1116;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+/* 다크에서도 저장은 주 동작으로 남는다 — 위 규칙이 배경을 덮어써서 취소와 구분이
+   사라진다. */
+body.theme-dark .substitution-modal-actions button.is-primary {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+/* --- 교양 세부영역 체크박스 (전적대 교양 학점 대체 지정) --------------------
+   전공은 "어느 과목을 인정받았나"라 단일 선택이지만, 교양은 `교양선택 15학점`
+   한 줄이 여러 세부영역에 걸치므로 다중 선택이어야 한다. */
+.substitution-area-groups {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.substitution-area-group {
+  margin: 0;
+  padding: 10px 12px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.substitution-area-group legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: #1b2430;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.substitution-area-group legend span {
+  color: #8a93a2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.substitution-area-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #33415c;
+  cursor: pointer;
+}
+
+.substitution-area-item:hover {
+  background: #f4f7fb;
+}
+
+.substitution-area-item input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.substitution-area-item input:disabled {
+  cursor: default;
+}
+
+body.theme-dark .substitution-area-group {
+  border-color: #0e1116;
+}
+
+body.theme-dark .substitution-area-group legend {
+  color: #e6edf3;
+}
+
+body.theme-dark .substitution-area-item {
+  color: #c9d1d9;
+}
+
+body.theme-dark .substitution-area-item:hover {
+  background: #0d1117;
 }

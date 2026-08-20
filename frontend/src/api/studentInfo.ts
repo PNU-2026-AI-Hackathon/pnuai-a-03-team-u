@@ -3,6 +3,13 @@ import { apiClient } from "./client";
 export const isMockStudentDataEnabled =
   import.meta.env.DEV && import.meta.env.VITE_USE_MOCK_STUDENT_DATA === "true";
 
+/** 전적대 이수기록이 대체한 PNU 과목 하나. 교양은 세부영역 placeholder가 온다. */
+export type SubstitutedCourse = {
+  course_id: number;
+  course_name: string;
+  category: string | null;
+};
+
 export type CourseRecord = {
   id: number;
   course_name: string;
@@ -16,10 +23,12 @@ export type CourseRecord = {
   /** 편입/조기이수로 "입학 전 인정"된 행인지. 서버가 판정해서 내려준다 —
    * 이 행에만 "어떤 PNU 과목을 대체했나요?" 를 띄운다. */
   is_transfer_credit?: boolean;
-  /** 학생이 직접 지정한 대체 대상 PNU 과목. 학교가 무엇을 인정했는지는 데이터에
-   * 없어서 시스템이 추측하지 않는다 — 지정 전에는 null이다. */
-  substitutes_course_id?: number | null;
-  substitutes_course_name?: string | null;
+  /** 학생이 직접 지정한 대체 대상 PNU 과목들. 학교가 무엇을 인정했는지는 데이터에
+   * 없어서 시스템이 추측하지 않는다 — 지정 전에는 빈 목록이다.
+   *
+   * 한 줄이 여러 개를 대체할 수 있다: 전적대 `교양선택 15학점` 한 줄은 개별 과목이
+   * 아니라 교양 세부영역 여러 개를 채운 것으로 인정받는다. */
+  substitutes?: SubstitutedCourse[];
 };
 
 export type PortalSyncResponse = {
@@ -190,14 +199,15 @@ export async function replaceCourseRecords(courses: CourseRecord[]) {
   return data;
 }
 
-/** 전적대 이수기록이 대체한 PNU 과목을 지정/해제한다(courseId=null이면 해제).
+/** 전적대 이수기록이 대체한 PNU 과목들을 지정한다. 부분 갱신이 아니라 **치환**이라,
+ * 빈 배열을 보내면 대체가 해제된다.
  *
  * 편입 학점 인정은 학과가 학생 개인에게 통보하는 것이라 데이터에 근거가 없다.
- * 그래서 자동 매핑 없이, 학생이 검색해서 고른 course_id만 서버에 보낸다. */
-export async function setCourseSubstitution(recordId: number, courseId: number | null) {
-  const { data } = await apiClient.patch<CourseRecord>(
-    `/me/course-records/${recordId}/substitution`,
-    { course_id: courseId },
+ * 그래서 자동 매핑 없이, 학생이 직접 고른 course_ids만 서버에 보낸다. */
+export async function setCourseSubstitutions(recordId: number, courseIds: number[]) {
+  const { data } = await apiClient.put<CourseRecord>(
+    `/me/course-records/${recordId}/substitutions`,
+    { course_ids: courseIds },
   );
   return data;
 }

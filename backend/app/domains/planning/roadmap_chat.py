@@ -33,7 +33,11 @@ from sqlalchemy.orm import Session
 
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
-from app.domains.academics.course_substitution import substituted_course_names
+from app.domains.academics.course_substitution import (
+    is_transfer_credit_record,
+    substituted_course_ids_for_user,
+    substituted_course_names,
+)
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from app.domains.academics.program_evaluator import evaluate_program
 from app.domains.academics.models import (
@@ -1816,11 +1820,15 @@ class _ToolContext:
                 # 편입생이 "이 PNU 과목은 전적대 과목으로 대체했다"고 직접 등록한 경우도
                 # 이미 이수한 것으로 본다. 성적표에는 전적대 과목명('데이터구조')만 있어서
                 # 이름 매칭으로는 안 잡힌다 (course_substitution 참고).
+                substituted_ids = substituted_course_ids_for_user(self.db, self.user.id)
                 match = next(
                     (
                         r for r in completed
                         if _norm(r.raw_course_name) == new_norm
-                        or r.substitutes_course_id == course_obj.id
+                        or (
+                            course_obj.id in substituted_ids
+                            and is_transfer_credit_record(r)
+                        )
                     ),
                     None,
                 )

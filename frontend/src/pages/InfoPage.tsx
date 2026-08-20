@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FormEvent } from "react";
 import { isAxiosError } from "axios";
 import { useNavigate } from "react-router-dom";
@@ -35,10 +36,10 @@ import {
   isMockStudentDataEnabled,
   replaceCourseRecords,
   saveGraduationOverride,
-  setCourseSubstitution,
+  setCourseSubstitutions,
   syncPortalData,
 } from "../api/studentInfo";
-import { searchCourses } from "../api/roadmaps";
+import { getMyCurriculum } from "../api/roadmaps";
 import type { CourseSearchResult } from "../api/roadmaps";
 import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
 import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
@@ -160,6 +161,47 @@ function formatTerm(year: string | null, semester: string | null) {
 }
 
 /** 편입/조기이수 인정 학점. 어느 학기에도 속하지 않는 lump-sum이라 따로 뺀다. */
+/** 대체 지정 목록에 띄울 교육과정 과목 한 줄. */
+type SubstitutionOption = {
+  id: number;
+  course_name: string;
+  /** 교양 세부영역 placeholder(`ZFz…`)를 가려내는 데 쓴다. 없으면 영역 판별이 전부
+   *  실패해 교양 체크박스가 통째로 안 뜬다(2026-08-20에 실제로 그랬다). */
+  course_code: string | null;
+  category: string | null;
+  credits: number | null;
+  /** 교육과정표상 권장 학년. `/me/curriculum`의 그룹 키("1"·"2"·"전학년") 그대로. */
+  grade: string;
+};
+
+/** 전적대 인정 대체 후보로 띄울 전공 학년. 편입은 1~2학년 과정을 마치고 오므로
+ *  인정 대상이 그 구간에 몰린다 — 3·4학년 전공까지 목록에 섞으면 실수로 고르기 쉽다.
+ *  (교양은 학년이 아니라 세부영역으로 이수하므로 이 필터를 적용하지 않는다.) */
+const TRANSFER_SUBSTITUTION_GRADES = new Set(["1", "2", "전학년"]);
+const LIBERAL_ARTS_CATEGORY_MARK = "교양";
+const MAJOR_CATEGORY_MARK = "전공";
+
+/** 교양 세부영역 placeholder의 교과목코드 접두사.
+ *
+ * 부산대는 균형·창의교양의 **영역 자체**를 `courses`에 과목처럼 한 행씩 넣어둔다
+ * (`ZFz000091 사상과역사` …). 실제 수강 과목이 아니라 "이 영역을 이수했다"를 가리키는
+ * 자리표시자다. 전적대 `교양선택 15학점`처럼 뭉쳐 들어온 기록은 개별 과목이 아니라
+ * **어느 영역을 채웠는지**로 대응하므로, 교양 기록에는 과목 목록 대신 영역 체크박스를 준다. */
+const LIBERAL_AREA_CODE_PREFIX = "ZFz";
+
+/** 교양 후보를 묶어 보여줄 순서. 규정 제9조 기준 균형 6영역 / 창의 3영역이고,
+ *  기초교양·효원핵심교양은 영역이 아니라 실제 교과목 목록이다. */
+const LIBERAL_AREA_GROUP_ORDER = ["효원균형교양", "효원창의교양", "기초교양", "효원핵심교양"];
+
+/** 규정 제9조상 **영역** 단위로 이수하는 교양 이수구분. 여기서는 개별 과목이 아니라
+ *  영역 placeholder(`ZFz…`)를 고른다. 기초교양·효원핵심교양은 과목 목록이라 제외. */
+const AREA_BASED_LIBERAL_CATEGORIES = new Set(["효원균형교양", "효원창의교양"]);
+
+/** 이 후보가 실제 과목이 아니라 교양 세부영역 placeholder인가. */
+function isArea(course: SubstitutionOption) {
+  return course.course_code?.startsWith(LIBERAL_AREA_CODE_PREFIX) ?? false;
+}
+
 const PRE_ADMISSION_SEMESTERS = new Set(["입학전성적", "편입인정"]);
 const PRE_ADMISSION_LABEL = "입학 전 인정 학점";
 
@@ -278,10 +320,20 @@ export function InfoPage() {
   // 편입 학점 인정은 학과가 학생에게 개별 통보하는 것이라 데이터에 근거가 없다.
   // 그래서 유사도 추천 없이 학생이 검색해서 고른 과목만 저장한다.
   const [substitutionTargetId, setSubstitutionTargetId] = useState<number | null>(null);
+  // 고른 것들을 모아 뒀다가 '저장'에서 한 번에 보낸다. 교양 한 줄은 여러 세부영역에
+  // 걸쳐 인정받으므로 체크할 때마다 저장하면 요청이 쏟아지고, 중간 상태가 서버에
+  // 남아 화면과 어긋난다.
+  const [substitutionDraft, setSubstitutionDraft] = useState<number[]>([]);
   const [substitutionQuery, setSubstitutionQuery] = useState("");
-  const [substitutionResults, setSubstitutionResults] = useState<CourseSearchResult[]>([]);
-  const [isSubstitutionSearching, setIsSubstitutionSearching] = useState(false);
+  // 고를 대상은 **학생 본인 교육과정**이다(`/me/curriculum` = 학과·전공·적용연도로 좁힌
+  // 과목 목록). 전교 과목을 문자열로 검색하게 하면 학과가 인정해 줄 리 없는 과목이나
+  // 동명이코드 과목을 집는다 — 편입 인정은 본인 교육과정 안에서만 의미가 있다.
+  const [curriculumCourses, setCurriculumCourses] = useState<SubstitutionOption[]>([]);
+  const [isCurriculumLoading, setIsCurriculumLoading] = useState(false);
   const [savingSubstitutionId, setSavingSubstitutionId] = useState<number | null>(null);
+  // 열려 있는 선택창의 바깥 클릭을 판정하려면 그 DOM을 알아야 한다.
+  const substitutionPopoverRef = useRef<HTMLDivElement | null>(null);
+
   const [substitutionError, setSubstitutionError] = useState("");
   const [graduationEditDraft, setGraduationEditDraft] = useState<GraduationProgram | null>(null);
   const [hasGraduationEdited, setHasGraduationEdited] = useState(false);
@@ -371,37 +423,148 @@ export function InfoPage() {
       });
   }, [isAuthenticated]);
 
-  // 대체 과목 검색(자동완성). 로드맵 화면의 과목 검색과 같은 디바운스 패턴이다.
+  // 대체 후보 = 본인 교육과정 과목. 한 번만 받아 캐시하고, 목록 안에서 이름으로
+  // 걸러 쓴다 — 64과목 정도라 클라이언트에서 거르는 게 매 입력마다 서버를 때리는
+  // 것보다 빠르고, 오프라인에서도 목록이 유지된다.
   useEffect(() => {
-    const query = substitutionQuery.trim();
-    if (substitutionTargetId === null || query.length < 2) {
-      setSubstitutionResults([]);
-      setIsSubstitutionSearching(false);
+    if (!isAuthenticated) {
+      setCurriculumCourses([]);
       return;
     }
-
     let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      setIsSubstitutionSearching(true);
-      searchCourses(query)
-        .then((results) => {
-          if (!cancelled) setSubstitutionResults(results);
-        })
-        .catch(() => {
-          if (!cancelled) setSubstitutionResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setIsSubstitutionSearching(false);
-        });
-    }, 250);
-
+    setIsCurriculumLoading(true);
+    getMyCurriculum()
+      .then((curriculum) => {
+        if (cancelled) return;
+        const seen = new Set<number>();
+        const seenNames = new Set<string>();
+        const options: SubstitutionOption[] = [];
+        for (const group of curriculum.groups ?? []) {
+          for (const course of group.courses ?? []) {
+            // 같은 과목이 여러 그룹에 나올 수 있다. 목록에서는 한 번만.
+            //
+            // id뿐 아니라 **이름으로도** 한 번만이다. 수강편람은 같은 교양 과목을
+            // 개설 학과별로 다른 코드로 싣는다(`공학작문및발표`가 5행, `대학영어`가
+            // 3행). 학생이 고르는 건 "무슨 과목을 인정받았나"라서 그중 어느 코드인지는
+            // 의미가 없고, 목록에 같은 이름이 다섯 번 뜨면 고를 수가 없다.
+            if (course.id === null || seen.has(course.id)) continue;
+            if (seenNames.has(course.course_name)) continue;
+            seen.add(course.id);
+            seenNames.add(course.course_name);
+            options.push({
+              id: course.id,
+              course_name: course.course_name,
+              course_code: course.course_code ?? null,
+              category: course.category ?? null,
+              credits: course.credits ?? null,
+              grade: group.grade,
+            });
+          }
+        }
+        options.sort((a, b) => a.course_name.localeCompare(b.course_name, "ko"));
+        setCurriculumCourses(options);
+      })
+      .catch(() => {
+        if (!cancelled) setCurriculumCourses([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsCurriculumLoading(false);
+      });
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
     };
-  }, [substitutionTargetId, substitutionQuery]);
+  }, [isAuthenticated]);
 
+  // 선택창 바깥을 클릭하거나 Esc를 누르면 닫는다. 팝오버는 표 위에 떠 있어서,
+  // 닫는 방법이 '취소' 버튼뿐이면 다른 과목 행을 누르려다 계속 걸린다.
+  useEffect(() => {
+    if (substitutionTargetId === null) return;
+
+    function handlePointerDown(event: MouseEvent | TouchEvent) {
+      const card = substitutionPopoverRef.current;
+      if (card && event.target instanceof Node && !card.contains(event.target)) {
+        closeSubstitutionPicker();
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeSubstitutionPicker();
+    }
+
+    // pointerdown(=mousedown)으로 잡는다. click으로 잡으면 목록 항목을 고르는 클릭이
+    // 먼저 닫기와 경쟁해서, 고른 순간 창이 닫히며 저장이 취소되는 경우가 생긴다.
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [substitutionTargetId]);
+
+  /** 선택창에 띄울 후보.
+   *
+   * 전공은 **1~2학년만** 남긴다 — 편입 인정은 저학년 과정에 몰리고, 3·4학년 전공까지
+   * 섞으면 실수로 고르기 쉽다. 교양은 학년이 아니라 세부영역 단위로 이수하므로
+   * 학년으로 거르지 않는다. 입력이 있으면 그 안에서 이름으로 한 번 더 좁힌다.
+   */
   const displayedCourses = isProfileEditing ? courseEditDraft : courses;
+
+  /** 지금 열린 선택창의 대상 기록. 교양이면 영역 체크박스 모드로 간다. */
+  const substitutionTarget = useMemo(
+    () => displayedCourses.find((c) => c.id === substitutionTargetId) ?? null,
+    [displayedCourses, substitutionTargetId],
+  );
+  /** 이 기록에 무엇을 고르게 할지. 이수구분이 섞이면 학생이 실수로 엉뚱한 걸 고른다 —
+   *  전적대 `전공선택`은 PNU 전공 과목을, `교양선택`은 교양(세부영역·교양과목)을
+   *  대체한 것이다. `일반선택`처럼 어느 쪽도 아닌 기록만 전체에서 고르게 둔다. */
+  const substitutionMode: "liberal" | "major" | "any" = useMemo(() => {
+    const category = substitutionTarget?.category ?? "";
+    if (category.includes(LIBERAL_ARTS_CATEGORY_MARK)) return "liberal";
+    if (category.includes(MAJOR_CATEGORY_MARK)) return "major";
+    return "any";
+  }, [substitutionTarget]);
+  const isLiberalArtsTarget = substitutionMode === "liberal";
+
+  const substitutionOptions = useMemo(() => {
+    const query = substitutionQuery.trim().toLowerCase();
+    return curriculumCourses.filter((course) => {
+      const category = course.category ?? "";
+      const isLiberal = category.includes(LIBERAL_ARTS_CATEGORY_MARK);
+      const isMajor = category.includes(MAJOR_CATEGORY_MARK);
+      // 전공 후보는 1~2학년만 남긴다 — 편입 인정은 저학년 과정에 몰리고, 3·4학년
+      // 전공까지 섞으면 실수로 고르기 쉽다. 교양은 학년이 아니라 세부영역 단위로
+      // 이수하므로 학년으로 거르지 않는다.
+      if (isMajor && !TRANSFER_SUBSTITUTION_GRADES.has(course.grade)) return false;
+      if (substitutionMode === "liberal" && !isLiberal) return false;
+      if (substitutionMode === "major" && !isMajor) return false;
+      // 균형·창의교양은 규정상 **영역** 단위로 이수한다(제9조: 균형 6영역 중 2영역,
+      // 창의 3영역 중 2영역). 그래서 이 두 구분에서는 개별 과목이 아니라 영역
+      // placeholder(`ZFz…`)만 고르게 한다 — 같은 영역의 실제 과목까지 늘어놓으면
+      // 학생이 영역을 고르는 건지 과목을 고르는 건지 알 수 없다.
+      // 기초교양·효원핵심교양은 영역 개념이 없고 과목 목록이라 그대로 둔다.
+      if (AREA_BASED_LIBERAL_CATEGORIES.has(category) !== isArea(course)) return false;
+      if (!query) return true;
+      return course.course_name.toLowerCase().includes(query);
+    });
+  }, [curriculumCourses, substitutionQuery, substitutionMode]);
+
+  /** 교양 후보를 이수구분별로 묶는다(균형 6영역 / 창의 3영역 / 기초·핵심 과목). */
+  const substitutionAreaGroups = useMemo(() => {
+    if (!isLiberalArtsTarget) return [];
+    const byCategory = new Map<string, SubstitutionOption[]>();
+    for (const option of substitutionOptions) {
+      const key = option.category ?? "기타";
+      const list = byCategory.get(key);
+      if (list) list.push(option);
+      else byCategory.set(key, [option]);
+    }
+    return [...byCategory.entries()].sort((a, b) => {
+      const ia = LIBERAL_AREA_GROUP_ORDER.indexOf(a[0]);
+      const ib = LIBERAL_AREA_GROUP_ORDER.indexOf(b[0]);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+  }, [isLiberalArtsTarget, substitutionOptions]);
   const displayedGraduation = isProfileEditing ? graduationEditDraft : graduation;
   const admissionType = user?.admission_type ?? "freshman";
   const gradeTerms = useMemo(() => groupCoursesByTerm(displayedCourses), [displayedCourses]);
@@ -597,27 +760,40 @@ export function InfoPage() {
 
   function openSubstitutionPicker(course: CourseRecord) {
     setSubstitutionTargetId(course.id);
+    // 이미 저장된 선택을 초안에 실어 준다. 하나 더 추가하려고 열었을 때 기존 체크가
+    // 풀려 있으면, 저장하는 순간 조용히 지워진다.
+    setSubstitutionDraft((course.substitutes ?? []).map((s) => s.course_id));
     setSubstitutionQuery("");
-    setSubstitutionResults([]);
     setSubstitutionError("");
   }
 
   function closeSubstitutionPicker() {
     setSubstitutionTargetId(null);
+    setSubstitutionDraft([]);
     setSubstitutionQuery("");
-    setSubstitutionResults([]);
   }
 
-  /** 대체 관계를 즉시 저장한다(courseId=null이면 해제).
+  /** 체크/해제는 초안만 바꾼다. 교양 한 줄은 여러 세부영역에 걸치므로 하나 고를
+   *  때마다 저장하면 요청이 쏟아지고, 실수로 켠 중간 상태까지 서버에 남는다. */
+  function toggleSubstitutionDraft(courseId: number) {
+    setSubstitutionError("");
+    setSubstitutionDraft((current) =>
+      current.includes(courseId)
+        ? current.filter((id) => id !== courseId)
+        : [...current, courseId],
+    );
+  }
+
+  /** 대체 관계를 서버에 저장한다. 부분 갱신이 아니라 **치환**이라, 빈 배열이면 해제다.
    *
    * "내 정보 편집"의 임시 초안(courseEditDraft)에 섞지 않고 바로 서버에 보낸다 —
    * 학과 통보를 받는 시점이 성적 편집과 무관하고, 언제든 고칠 수 있어야 하기 때문이다.
    * 대신 저장 후 목록 상태 두 벌을 함께 갱신해 화면이 어긋나지 않게 한다. */
-  async function applySubstitution(course: CourseRecord, courseId: number | null) {
+  async function applySubstitution(course: CourseRecord, courseIds: number[]) {
     setSavingSubstitutionId(course.id);
     setSubstitutionError("");
     try {
-      const updated = await setCourseSubstitution(course.id, courseId);
+      const updated = await setCourseSubstitutions(course.id, courseIds);
       const merge = (records: CourseRecord[]) =>
         records.map((record) => (record.id === updated.id ? { ...record, ...updated } : record));
       setCourses(merge);
@@ -1188,63 +1364,186 @@ export function InfoPage() {
                                   성적 초안과 섞이지 않도록 감춘다. */}
                               {course.is_transfer_credit && !isProfileEditing ? (
                                 <div className="course-substitution">
-                                  {course.substitutes_course_name ? (
+                                  {(course.substitutes ?? []).length > 0 ? (
                                     <p className="course-substitution-current">
                                       <Check size={13} aria-hidden="true" />
-                                      PNU <strong>{course.substitutes_course_name}</strong> 대체
+                                      PNU{" "}
+                                      <strong>
+                                        {(course.substitutes ?? []).map((s) => s.course_name).join(", ")}
+                                      </strong>{" "}
+                                      대체
                                     </p>
                                   ) : null}
-                                  {substitutionTargetId === course.id ? (
-                                    <div className="course-substitution-picker">
-                                      <input
-                                        value={substitutionQuery}
-                                        type="search"
-                                        autoComplete="off"
-                                        aria-label={`${course.course_name}이(가) 대체한 PNU 과목 검색`}
-                                        placeholder="PNU 과목명을 2글자 이상 입력"
-                                        onChange={(event) => setSubstitutionQuery(event.target.value)}
-                                      />
-                                      {isSubstitutionSearching ? (
-                                        <p className="course-search-status">
-                                          <LoaderCircle size={13} aria-hidden="true" /> 검색 중
-                                        </p>
-                                      ) : null}
-                                      {substitutionResults.length > 0 ? (
-                                        <div className="course-search-results">
-                                          {substitutionResults.map((result) => (
-                                            <button
-                                              type="button"
-                                              key={result.id}
-                                              disabled={savingSubstitutionId === course.id}
-                                              onClick={() => applySubstitution(course, result.id)}
-                                            >
-                                              <strong>{result.course_name}</strong>
-                                              <span>
-                                                {result.category ?? "이수구분 미정"} · {result.credits ?? 0}학점
-                                                {result.course_code ? ` · ${result.course_code}` : ""}
-                                              </span>
-                                            </button>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                      <div className="course-substitution-actions">
-                                        <button type="button" onClick={closeSubstitutionPicker}>취소</button>
-                                      </div>
-                                    </div>
-                                  ) : (
+                                  {substitutionTargetId === course.id
+                                    ? createPortal(
+                                        /* 표 안이 아니라 화면 중앙 모달로 띄운다.
+                                           표 래퍼가 `overflow-x: auto`라 안에 두면 잘리거나
+                                           카드가 밀리고, 고정 좌표로 띄우면 스크롤할 때
+                                           버튼과 어긋난다. 목록에서 하나 고르는 상호작용은
+                                           모달이 표준이고 위치 계산이 아예 없다. */
+                                        <div className="substitution-modal-overlay" role="presentation">
+                                          <div
+                                            className="substitution-modal"
+                                            role="dialog"
+                                            aria-modal="true"
+                                            aria-label={`${course.course_name}이(가) 대체한 과목 선택`}
+                                            ref={substitutionPopoverRef}
+                                          >
+                                            <header className="substitution-modal-head">
+                                              <div>
+                                                <p className="substitution-modal-eyebrow">전적대 인정 과목</p>
+                                                <h4>{course.course_name}</h4>
+                                                <p className="substitution-modal-sub">
+                                                  {course.credits === null ? "-" : formatCredit(course.credits)}학점 ·
+                                                  {" "}
+                                                  {substitutionMode === "liberal"
+                                                    ? "이 학점으로 채운 교양 영역·과목을 모두 고르세요"
+                                                    : substitutionMode === "major"
+                                                      ? "이 과목으로 인정받은 PNU 전공 과목을 모두 고르세요"
+                                                      : "이 학점으로 인정받은 PNU 과목을 모두 고르세요"}
+                                                </p>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                className="substitution-modal-close"
+                                                aria-label="닫기"
+                                                onClick={closeSubstitutionPicker}
+                                              >
+                                                <X size={16} aria-hidden="true" />
+                                              </button>
+                                            </header>
+                                            {/* 후보는 전교 검색이 아니라 **본인 교육과정**이다.
+                                                입력창은 긴 목록을 좁히는 용도일 뿐, 비워두면
+                                                전체가 그대로 보인다. */}
+                                            <input
+                                                value={substitutionQuery}
+                                                type="search"
+                                                autoComplete="off"
+                                                autoFocus
+                                                aria-label="교육과정 과목 좁히기"
+                                                placeholder="과목명으로 좁히기 (비워두면 전체)"
+                                                onChange={(event) => setSubstitutionQuery(event.target.value)}
+                                            />
+                                            {/* 목록만 스크롤하는 고정 높이 영역.
+                                                감싸지 않으면 검색으로 결과 수가 바뀔 때마다
+                                                모달 자체가 커졌다 작아졌다 한다. */}
+                                            <div className="substitution-modal-body">
+                                            {isCurriculumLoading ? (
+                                              <p className="course-search-status">
+                                                <LoaderCircle size={13} aria-hidden="true" /> 교육과정 불러오는 중
+                                              </p>
+                                            ) : null}
+                                            {!isCurriculumLoading && substitutionOptions.length === 0 ? (
+                                              <p className="course-search-status">
+                                                {curriculumCourses.length === 0
+                                                  ? "교육과정 과목을 불러오지 못했습니다."
+                                                  : "이름이 맞는 과목이 없습니다."}
+                                              </p>
+                                            ) : null}
+                                            {isLiberalArtsTarget && substitutionAreaGroups.length > 0 ? (
+                                              /* 교양은 과목이 아니라 **세부영역** 단위로 인정받는다.
+                                                 전적대 `교양선택 15학점` 한 줄이 여러 영역에 걸치므로
+                                                 체크박스로 여러 개를 고를 수 있어야 한다. */
+                                              <div className="substitution-area-groups">
+                                                {substitutionAreaGroups.map(([groupName, areas]) => (
+                                                  <fieldset key={groupName} className="substitution-area-group">
+                                                    <legend>
+                                                      {groupName}
+                                                      <span>
+                                                        {areas.length}개
+                                                        {AREA_BASED_LIBERAL_CATEGORIES.has(groupName)
+                                                          ? " 영역"
+                                                          : " 과목"}
+                                                      </span>
+                                                    </legend>
+                                                    {areas.map((area) => (
+                                                      <label key={area.id} className="substitution-area-item">
+                                                        <input
+                                                          type="checkbox"
+                                                          checked={substitutionDraft.includes(area.id)}
+                                                          disabled={savingSubstitutionId === course.id}
+                                                          onChange={() => toggleSubstitutionDraft(area.id)}
+                                                        />
+                                                        <span>{area.course_name}</span>
+                                                      </label>
+                                                    ))}
+                                                  </fieldset>
+                                                ))}
+                                              </div>
+                                            ) : null}
+                                            {!isLiberalArtsTarget && substitutionOptions.length > 0 ? (
+                                              <div className="course-search-results">
+                                                {substitutionOptions.map((option) => (
+                                                  <button
+                                                    type="button"
+                                                    key={option.id}
+                                                    // 전적대 한 과목이 PNU 여러 과목을 대체하기도 해서
+                                                    // 여기도 단일 선택이 아니라 토글이다.
+                                                    aria-pressed={substitutionDraft.includes(option.id)}
+                                                    className={
+                                                      substitutionDraft.includes(option.id) ? "is-selected" : undefined
+                                                    }
+                                                    disabled={savingSubstitutionId === course.id}
+                                                    onClick={() => toggleSubstitutionDraft(option.id)}
+                                                  >
+                                                    <strong>{option.course_name}</strong>
+                                                    <span>
+                                                      {option.category ?? "이수구분 미정"} · {option.credits ?? 0}학점
+                                                      {option.grade ? ` · ${option.grade === "전학년" ? "전학년" : `${option.grade}학년`}` : ""}
+                                                    </span>
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ) : null}
+                                            </div>
+                                            {substitutionError ? (
+                                              <p className="profile-edit-error" role="alert">{substitutionError}</p>
+                                            ) : null}
+                                            <div className="substitution-modal-actions">
+                                              {(course.substitutes ?? []).length > 0 ? (
+                                                <button
+                                                  type="button"
+                                                  className="is-danger"
+                                                  disabled={savingSubstitutionId === course.id}
+                                                  onClick={() => applySubstitution(course, [])}
+                                                >
+                                                  대체 해제
+                                                </button>
+                                              ) : null}
+                                              <button type="button" onClick={closeSubstitutionPicker}>취소</button>
+                                              {/* 고른 것을 한 번에 보낸다. 체크할 때마다 저장하면 요청이
+                                                  쏟아지고 실수로 켠 중간 상태까지 서버에 남는다. */}
+                                              <button
+                                                type="button"
+                                                className="is-primary"
+                                                disabled={savingSubstitutionId === course.id}
+                                                onClick={() => applySubstitution(course, substitutionDraft)}
+                                              >
+                                                {savingSubstitutionId === course.id
+                                                  ? "저장 중"
+                                                  : `저장 (${substitutionDraft.length}개)`}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>,
+                                        document.body,
+                                      )
+                                    : (
                                     <div className="course-substitution-actions">
                                       <button
                                         type="button"
                                         disabled={savingSubstitutionId === course.id}
                                         onClick={() => openSubstitutionPicker(course)}
                                       >
-                                        {course.substitutes_course_name ? "대체 과목 변경" : "어떤 과목을 대체했나요?"}
+                                        {(course.substitutes ?? []).length > 0
+                                          ? "대체 과목 변경"
+                                          : "어떤 과목을 대체했나요?"}
                                       </button>
-                                      {course.substitutes_course_id ? (
+                                      {(course.substitutes ?? []).length > 0 ? (
                                         <button
                                           type="button"
                                           disabled={savingSubstitutionId === course.id}
-                                          onClick={() => applySubstitution(course, null)}
+                                          onClick={() => applySubstitution(course, [])}
                                         >
                                           해제
                                         </button>
