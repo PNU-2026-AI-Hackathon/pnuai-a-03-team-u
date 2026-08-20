@@ -40,7 +40,6 @@ import {
   syncPortalData,
 } from "../api/studentInfo";
 import { getMyCurriculum } from "../api/roadmaps";
-import type { CourseSearchResult } from "../api/roadmaps";
 import { cancelTrack, enrollTrack, listAvailableTracks, listEnrolledTracks } from "../api/tracks";
 import type { AvailableTrack, EnrolledTrack } from "../api/tracks";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
@@ -115,13 +114,16 @@ const emptyCourseDraft = (): CourseDraft => ({
   grade: "A0",
 });
 
-function getErrorMessage(error: unknown) {
+function getErrorMessage(
+  error: unknown,
+  fallback = "교과 활동을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+) {
   if (isAxiosError(error)) {
     const detail = error.response?.data?.detail;
     if (typeof detail === "string") return detail;
     if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
   }
-  return "교과 활동을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+  return fallback;
 }
 
 function getProfileErrorMessage(error: unknown) {

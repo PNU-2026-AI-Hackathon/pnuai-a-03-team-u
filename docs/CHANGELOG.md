@@ -308,6 +308,12 @@
   영역명으로 덮인 행만 세는데 대체 지정은 category를 안 건드린다). **전공 과목 대체는
   정상 동작한다** — 이름이 실제 교과목과 일치해서 추천에서 빠진다. 배선은
   `BALANCED_LIBERAL_AREAS`를 세대별로 바꾸는 작업이 선행돼야 한다(별도 PR).
+- **[note] 프론트 타입체크를 잘못된 명령으로 하고 있었다.** `npx tsc --noEmit -p tsconfig.json`은
+  **0개 파일을 검사한다** — 이 레포의 `tsconfig.json`은 `files: []`에 references만 있는
+  solution-style 설정이라, 실제 소스는 `tsconfig.app.json`이 담당한다. 그래서 로컬에서
+  "타입체크 통과"라고 보고하는 동안 Netlify Deploy Preview는 `npm run build`(`tsc -b`)로
+  빌드하다 실패했다(안 쓰는 import 1건, 인자 개수 불일치 1건). 앞으로 프론트 검증은
+  `npm run build`로 한다.
 - **관련 문서**: `docs/backend/features/transfer-course-substitution.md`
 
 ## 2026-08-19 (d0won) — 실계정 전면 점검: 편입 판정·학년 파싱·별표2 접기 규칙
