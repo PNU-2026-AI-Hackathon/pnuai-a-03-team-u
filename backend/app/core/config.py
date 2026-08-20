@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     SMTP_FROM: str = "Plan U <onboarding@resend.dev>"
 
+    # Resend 한 줄 설정. 이것만 채우면 SMTP_HOST/USER/PASSWORD를 따로 안 써도 된다
+    # (`mailer.resolve_smtp()`가 Resend 기본값으로 채운다).
+    # SMTP_*를 직접 쓰면 그쪽이 우선이라, 다른 메일 서버를 쓰는 경우도 그대로 살아 있다.
+    #
+    # 키 하나만 두는 이유: SMTP_HOST만 켜고 SMTP_PASSWORD를 비워두면 메일도 안 가고
+    # 로그에 링크도 안 남는 반쪽 상태가 된다(2026-08-20 실측). 그 조합 자체를
+    # 만들 수 없게 하는 편이 낫다.
+    RESEND_API: str | None = None
+
     # 메일에 담을 재설정 화면 주소. 프론트 배포 주소로 덮어쓴다.
     PASSWORD_RESET_URL_BASE: str = "http://localhost:5173/reset-password"
     PASSWORD_RESET_TOKEN_TTL_MINUTES: int = 30

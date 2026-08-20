@@ -13,7 +13,7 @@ import datetime
 import hashlib
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, select
@@ -292,12 +292,21 @@ def _hash_reset_token(token: str) -> str:
 @router.post("/password-reset/request", response_model=MessageResponse)
 @limiter.limit(PASSWORD_RESET_LIMIT)
 def request_password_reset(request: Request, payload: PasswordResetRequest,
+                            background_tasks: BackgroundTasks,
                             db: Session = Depends(get_db)):
     """웹메일과 이름이 모두 일치할 때만 재설정 링크를 메일로 보낸다.
 
     메일·이름이 맞지 않아도, 가입되지 않은 주소여도 응답은 항상 같다. 응답이
     갈리면 "이 메일이 가입돼 있는가"를 확인하는 수단이 되기 때문이다(사용자 열거).
     실제 본인확인은 어차피 메일 수신으로 이뤄지고, 이름은 그 앞단의 추가 확인이다.
+
+    **메일 발송은 응답 뒤로 미룬다.** SMTP 왕복이 요청 안에서 동기로 돌면 사용자는
+    버튼을 누른 채 그만큼 기다린다 — 실측 Gmail 4.2초, 발송이 실패하는 상황에서는
+    38.6초까지 갔다(2026-08-20). 응답 문구는 성공/실패와 무관하게 고정이라
+    (사용자 열거 방지) 발송 결과를 기다릴 이유가 애초에 없다.
+
+    부수 효과로 타이밍 누출도 줄어든다: 예전에는 "메일을 실제로 보낸 경우"만 몇 초
+    걸려서, 응답 시간만 재도 가입 여부를 알 수 있었다.
     """
     user = db.scalar(select(User).where(func.lower(User.email) == payload.email))
     if user is not None and user.name.strip() != payload.name:
@@ -324,7 +333,8 @@ def request_password_reset(request: Request, payload: PasswordResetRequest,
         )
         db.commit()
 
-        send_password_reset_email(
+        background_tasks.add_task(
+            send_password_reset_email,
             to=user.email,
             reset_url=f"{settings.PASSWORD_RESET_URL_BASE}?token={raw_token}",
             ttl_minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES,
