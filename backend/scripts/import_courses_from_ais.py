@@ -13,6 +13,10 @@ category(교과목구분), course_name, course_code, credits.
 - year = 학년("1학년"→"1"), semester = 학기("1학기"→"1", "1,2학기"→"1,2") — Course 모델
   docstring대로 "참고값".
 - 멱등: (department_id, major_id, course_code) 기준 get-or-create, 재실행 시 갱신.
+- 적재 전 검사: 같은 단위·같은 개설 주체(교과목코드 앞 2글자)에 동명 과목이 있으면
+  과목명 접미사(I/II 등) 유실로 보고 **중단**한다. 2026-07-23에 시드 CSV를 손으로
+  고치다 `이산수학(I)/(II)`가 둘 다 `이산수학`이 된 사고 재발 방지
+  (find_suffix_dropped_collisions). 원본이 실제 동명이면 --allow-name-collisions.
 
 실행: python -m scripts.import_courses_from_ais --courses <csv> [--mapping <csv>] [--dry-run]
 """
@@ -52,16 +56,66 @@ def norm_semester(s: str) -> str | None:
     return stripped if re.fullmatch(r"[12](,[12])?", stripped) else (s.strip() or None)
 
 
+# 교과목코드 앞 2글자 = 개설 주체(학과/교양) 접두사. ZE/CB/DM처럼 주체가 다르면 같은
+# 과목명에 다른 코드가 붙는 게 정상이다(부산대 원본 데이터의 성질).
+_OWNER_PREFIX_LEN = 2
+
+
+def find_suffix_dropped_collisions(rows: list[dict]) -> list[str]:
+    """같은 단위·같은 개설 주체인데 과목명이 겹치는 행을 찾는다 = 접미사 유실 의심.
+
+    왜 이 검사가 있는지: 2026-07-23 PR #92에서 컴퓨터공학전공 커리큘럼 58행을
+    `seeds/ais_courses_2026.csv`에 **손으로 append**하면서 로마숫자 접미사가 4행 빠졌다
+    (`이산수학(I)`/`이산수학(II)` → 둘 다 `이산수학`, `일반물리학(I)`/`(II)` → 둘 다
+    `일반물리학`). 서로 다른 과목이 DB에서 같은 이름이 되면서
+    `timetable_chat._sibling_course_ids`가 (과목명·학과·전공·이수구분·학점)이 같은
+    일반물리학 두 행을 "같은 과목의 형제"로 묶어 (I)의 분반과 (II)의 분반을 합쳐버렸다.
+
+    구분 기준: 같은 `ais_dept_code` 안에서 같은 과목명에 코드가 갈리는데 **개설 주체
+    접두사까지 같으면** 접미사 유실이다. 접두사가 다르면(예: 약학과 401300의
+    `약리학(I)` DS2002822/PD2002822) 원본 데이터의 정상 중복이므로 통과시킨다.
+    """
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    for r in rows:
+        code = (r.get("course_code") or "").strip()
+        name = norm_name(r.get("course_name") or "")
+        dept = (r.get("ais_dept_code") or "").strip()
+        if not code or not name:
+            continue
+        groups[(dept, name, code[:_OWNER_PREFIX_LEN])].add(code)
+    return [
+        f"ais_dept_code={dept} '{name}' → {sorted(codes)} (개설 주체 {prefix} 동일)"
+        for (dept, name, prefix), codes in sorted(groups.items())
+        if len(codes) > 1
+    ]
+
+
 def load_unit_index(mapping_path: Path) -> dict[str, dict]:
     """ais_dept_code -> 매핑 행."""
     with mapping_path.open(encoding="utf-8-sig") as f:
         return {r["ais_dept_code"]: r for r in csv.DictReader(f) if r["ais_dept_code"]}
 
 
-def import_courses(courses_csv: Path, mapping_path: Path, dry_run: bool = False) -> None:
+def import_courses(
+    courses_csv: Path,
+    mapping_path: Path,
+    dry_run: bool = False,
+    allow_name_collisions: bool = False,
+) -> None:
     units = load_unit_index(mapping_path)
     with courses_csv.open(encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
+
+    collisions = find_suffix_dropped_collisions(rows)
+    if collisions and not allow_name_collisions:
+        print("❌ 같은 단위·같은 개설 주체인데 과목명이 겹친다 — 접미사(I/II 등) 유실 의심:")
+        for line in collisions:
+            print("   -", line)
+        print("   → AIS 원문에서 과목명을 다시 확인해 CSV를 고쳐라. 원본이 실제로 동명이면")
+        print("     --allow-name-collisions 로 통과시킬 수 있다.")
+        raise SystemExit(1)
 
     db = SessionLocal()
     created = updated = skipped_unit = dup_in_run = 0
@@ -167,5 +221,15 @@ if __name__ == "__main__":
     parser.add_argument("--courses", type=Path, default=DEFAULT_COURSES)
     parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--allow-name-collisions",
+        action="store_true",
+        help="같은 단위·같은 개설 주체에 동명 과목이 있어도 진행 (기본은 접미사 유실로 보고 중단).",
+    )
     args = parser.parse_args()
-    import_courses(args.courses, args.mapping, dry_run=args.dry_run)
+    import_courses(
+        args.courses,
+        args.mapping,
+        dry_run=args.dry_run,
+        allow_name_collisions=args.allow_name_collisions,
+    )
