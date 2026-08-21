@@ -277,6 +277,11 @@ def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)
     if user is None or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
 
+    # 보존기간 정책이 '장기 미접속'을 판단하는 유일한 근거다(P2). 실패한 로그인은
+    # 스탬프하지 않는다 — 남의 계정에 로그인 시도만 해도 파기가 미뤄지면 안 된다.
+    user.last_login_at = datetime.datetime.now(datetime.UTC)
+    db.commit()
+
     return TokenResponse(access_token=create_access_token(user.id, user.password_hash))
 
 
