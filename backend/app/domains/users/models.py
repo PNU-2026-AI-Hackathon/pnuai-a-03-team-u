@@ -38,6 +38,9 @@ class User(TimestampMixin, Base):
     advisor_name: Mapped[str | None] = mapped_column(String(100))
     # 학과 공통 졸업요건 원본은 건드리지 않고, 사용자가 직접 보정한 표시값만 보관한다.
     graduation_override: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 보존기간 정책(security-privacy-plan.md P2)의 '미접속' 판단 근거.
+    # updated_at은 프로필 수정에만 반응하고 로그인(조회)에는 안 움직여서 못 쓴다.
+    last_login_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
 
 
 class PasswordResetToken(TimestampMixin, Base):
