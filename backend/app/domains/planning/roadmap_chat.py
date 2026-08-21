@@ -60,7 +60,20 @@ from app.domains.users.models import User
 
 _DEFAULT_CURRICULUM_YEAR = 2026
 
-MAX_TOOL_ITERATIONS = 8
+# 한 턴에 허용할 LLM 왕복 횟수. finish_response가 나오면 즉시 루프를 빠져나가므로
+# 이 값은 **실제로 그만큼 일해야 하는 턴에만** 걸린다 — 평범한 "다음 학기 뭐 들을까"는
+# 예전대로 3~5회에 끝난다(2026-08-20 실측). 8이던 값을 12로 올린 이유는 "졸업까지
+# 남은 학기 전부" 요청 때문이다: 요건 조회 + 로드맵 조회 + 학기·이수구분별 search_courses
+# 여러 번 + propose_term_plan + (미배정분 보충 검색 + 2차 propose_term_plan) + finish
+# 까지 하면 8로는 마지막 보충 라운드가 잘린다.
+MAX_TOOL_ITERATIONS = 12
+
+# 미배정 학점이 남았다고 finish_response를 되돌리려면, 그 뒤에 최소 이만큼의 왕복이
+# 남아 있어야 한다(보충 search_courses + 2차 propose_term_plan + finish_response).
+# 예산이 모자란데도 되돌리면 finish_response를 아예 못 받고 폴백 요약으로 떨어진다 —
+# 실제로 그랬다(2026-08-20: 게이트를 넣자 12회를 다 쓰고 "죄송해요, 답변을 정리하지
+# 못했어요"가 나갔다. 제안은 19건이나 쌓여 있었는데도).
+_FINISH_GATE_RESERVE = 4
 
 # 균형교양 7개 세부영역. portal_sync._refine_liberal_area_categories가 One-Stop
 # 졸업예정정보 판정을 근거로 student_course_records.category를 상위값('교양선택')에서
@@ -69,7 +82,10 @@ MAX_TOOL_ITERATIONS = 8
 # 미이수로 오인할 수 있다.
 # 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
 # (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
-from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+from app.domains.academics.graduation_progress import (
+    BALANCED_LIBERAL_AREAS,
+    requirement_category_for_course,
+)
 from app.domains.academics.program_status import (
     ACTIVE_PROGRAM_STATUSES, is_active_program_status,
 )
@@ -167,6 +183,59 @@ def _is_before_current_term(planned_year: str | None, planned_semester: str | No
     cy, cs = _current_academic_term()
     return (py, ps) < (cy, cs)
 
+
+# 졸업까지 남은 학기를 세는 상한. 커리큘럼 학년이 4를 넘으면 project_curriculum_term이
+# (None, None)을 돌려줘서 자연히 멈추지만, 데이터가 이상할 때 무한 루프가 되지 않도록.
+_MAX_PLAN_HORIZON_TERMS = 8
+
+# 학기에 이만큼도 여유가 없으면 "더 채울 수 있다"고 보지 않는다. 부산대 최소 학점
+# 과목이 1학점이지만, 1~2학점 남았다고 다시 검색시키면 왕복만 늘고 결과가 안 는다.
+_MIN_USEFUL_TERM_ROOM = 3.0
+
+
+def _remaining_terms_until_graduation(db: Session, user_id: int) -> list[dict]:
+    """다음 배치 가능 학기부터 졸업 예정 학기까지의 정규 학기 목록.
+
+    "졸업까지 로드맵 짜줘"에 LLM이 다음 한 학기만 제안하고 끝내던 원인 중 하나가,
+    **남은 학기가 몇 개인지 알려주는 값이 어디에도 없었다는 것**이다(2026-08-20 실계정
+    관측: 3회 요청 전부 3학년 2학기만 제안, 4-1/4-2는 0건). 달력 학기 → 커리큘럼
+    학년/학기 환산은 `project_curriculum_term`이 이미 하고 있고, 4학년을 넘으면
+    (None, None)을 돌려준다 — 그 지점이 졸업 예정 시점이다.
+
+    편입생이면 첫 재학 학기가 3학년이라 자연히 남은 학기가 짧게 나온다(3-2 → 4-1 → 4-2).
+
+    **이수기록이 없으면 빈 목록을 돌려준다.** `project_curriculum_term`은 이수기록이
+    하나도 없을 때 매 호출마다 "이번이 첫 학기"(rank=1)로 답한다 — 학년이 전진하지
+    않으므로 `_MAX_PLAN_HORIZON_TERMS`가 잘라줄 때까지 **같은 학기가 8개** 쌓인다.
+    성적표 미업로드·포털 동기화 실패 사용자에게 "2030년 1학기(1학년)"를 계획하라고
+    시키는 꼴이라, 근거가 없으면 아무것도 주장하지 않는다.
+    """
+    from app.domains.planning.history import project_curriculum_term
+
+    cy, cs = _current_academic_term()
+    year, semester = _next_term(cy, cs)
+    out: list[dict] = []
+    seen: set[tuple[int, str | None]] = set()
+    for _ in range(_MAX_PLAN_HORIZON_TERMS):
+        grade, curriculum_semester = project_curriculum_term(
+            db, user_id, str(year), f"{semester}학기"
+        )
+        if grade is None:
+            break
+        if (grade, curriculum_semester) in seen:
+            # 커리큘럼 학년/학기가 전진하지 않는다 = 기준점이 없다는 뜻.
+            return []
+        seen.add((grade, curriculum_semester))
+        out.append({
+            "planned_year": str(year),
+            "planned_semester": f"{semester}학기",
+            "planned_grade": grade,
+            "curriculum_semester": curriculum_semester,
+        })
+        year, semester = _next_term(year, semester)
+    return out
+
+
 # PNU 학사 규정 기반 정규 학기 수강신청 학점 상한. 졸업기준학점(required_total_credits)만
 # 참고해서 판정한다 — 성적우수자 +3, 이월 +2, 학·석사 연계 +6 등 학생별 가변 요소는 로드맵
 # 계획 단계에서 확정할 수 없어 base cap만 강제한다(실제 신청 때 CAP 완화 여지가 있어도
@@ -213,7 +282,7 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
   바꿔서 다시 검색해라 — 첫 검색 결과가 애매하다고 "추천할 과목이 없다"고 답하지 마라.
 - **다음 학기 추천 시 `get_graduation_progress`에서 `remaining_credits > 0`인 모든
   이수구분에 대해 각각 `search_courses`를 호출해라.** 전공만 훑고 교양은 건너뛰지
-  마라. **효원핵심교양·기초교양 같은 학과 지정 교양(category="교양필수")도 졸업요건이라
+  마라. **효원핵심교양(category="교양필수")·기초교양(category="교양선택") 같은 교양도 졸업요건이라
   남은 학점 있으면 전공과 나란히 추천해라.**
 - **미이수 전공기초·전공필수는 finish_response의 첫 번째 추천 항목으로 무조건 배치해라.**
   대상은 `get_roadmap_items.missing_required_available`에 그대로 담겨 온다 — 도구가
@@ -235,6 +304,10 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
 - **성적표 표기와 교육과정 표기가 다르게 보이는 유사명 과목은 네가 임의로 "같은 과목"이라고 판정하지 마라.** 예를 들어 이수기록의 표기와 교육과정 표기가 한 글자만 다른 경우가 있는데, 부산대에서 실제로 같은 과목인지 확인할 방법이 우리 데이터엔 없다. 이런 경우 자동으로 제외/포함시키지 말고, finish_response에서 사용자에게 되물어서 답을 받은 뒤 다음 턴에 그 과목을 제외해라. 사용자가 "다르다/모르겠다"고 하면 그대로 후보에 유지해라 — 우리가 대신 판단하지 않는다.
 - 기존 항목의 학기/학년을 바꾸고 싶으면 propose_change(action="update", item_id=...)를,
   항목을 빼고 싶으면 propose_change(action="delete", item_id=...)를 써라.
+- **두 학기 이상을 한 번에 계획해야 하는 요청("졸업까지", "남은 학기 전부", "4학년
+  2학기까지")에는 `propose_change` 대신 `propose_term_plan`을 써라.** 과목마다
+  propose_change를 부르면 도구 호출 횟수가 모자라 뒤쪽 학기가 통째로 빠진다.
+  남은 학기 목록은 `get_roadmap_items`의 `remaining_terms`에 그대로 온다.
 - **너는 실제로 아무것도 저장하지 않는다.** propose_change는 "제안"만 만든다.
   finish_response 메시지 마지막에는 반드시 "이 변경을 반영할까요?"처럼 사용자 확인을
   구하는 문장을 넣고, 사용자가 승인해야만 실제로 반영된다는 걸 분명히 말해라.
@@ -359,6 +432,49 @@ _CONDITIONAL_RULES: dict[str, str] = {
   실제 관측: 한 과목만 옮겨달라는 요청에 같은 학기의 다른 과목까지 함께 옮겨서, 사용자가
   요청하지 않은 변경이 승인 대기에 올라갔다.""",
 
+    "full_horizon_request": """
+- **이번 요청은 "졸업까지 남은 학기 전부"다 — 한 학기만 하고 끝내지 마라**:
+  0. **목표는 "학기를 꽉 채우기"가 아니라 "졸업요건을 채우기"다.** 남은 이수구분을 다
+     채웠으면 거기서 멈춰라 — 학기에 여유 학점이 남아도, 어떤 학기가 통째로 비어도
+     졸업에 필요 없는 과목을 억지로 넣지 마라. 그 판단은 네가 하지 말고
+     `propose_term_plan` 응답의 `unmet_categories_after_plan`(비어 있으면 요건 충족)과
+     `next_action`을 따라라.
+  1. `get_roadmap_items` 응답의 `remaining_terms`가 다음 배치 가능 학기부터 졸업 예정
+     학기까지의 목록이다(각 항목에 달력 연도/학기, 커리큘럼 학년, 그 학기에 이미
+     계획된 학점, 남은 여유 학점이 들어 있다). **요건이 남아 있는 한** 그 목록의
+     학기를 순서대로 채워라.
+  2. `search_courses`를 **1학기용·2학기용으로 각각**, 남은 이수구분(전공기초/전공필수/
+     전공선택/교양필수 등)별로 호출해 후보 풀을 먼저 모아라. 한 과목을 두 학기에
+     겹쳐 배치하지 마라.
+  3. 후보가 모이면 **`propose_term_plan`을 호출해 남은 학기를 통째로 제안해라.**
+     과목마다 `propose_change`를 부르면 도구 반복 횟수가 모자라 중간에 끊긴다.
+  4. 응답의 `rejected`에 걸린 과목은 사유(학점 상한 초과/중복/이미 이수/계절수업 전용)
+     를 보고 학기를 바꿔 **한 번 더** `propose_term_plan`을 호출해라. 재시도는 한 번까지.
+  5. `finish_response`는 학기별로 나눠 써라 — 각 학기에 어떤 과목 몇 학점인지, 학기
+     합계가 얼마인지. **마지막 `propose_term_plan` 응답의 `plan_so_far`를 그대로 옮겨
+     적어라** (이번 턴에 제안된 전부가 학기별로 들어 있다). 마지막 호출의 `accepted`만
+     보고 쓰면 앞선 호출에서 성공한 학기를 "확정 없음"이라고 적게 된다.
+     **학기 제목의 학년은 네가 추측하지 말고 `term_totals_after`(또는 `remaining_terms`)의
+     `planned_grade`를 그대로 써라** — 예: planned_grade=3, planned_semester="2학기",
+     planned_year="2026" → "3학년 2학기(2026년 2학기)". 사용자가 "4학년 2학기까지"라고
+     말했다고 해서 첫 학기를 4학년이라고 부르지 마라(2026-08-20 실측: 3학년 2학기를
+     "4학년 2학기(2026년 2학기)"라고 적었다). 그리고 응답의 `requirement_coverage`를 근거로 이 계획을 다 이수하면 어느
+     이수구분이 채워지고 어디가 얼마나 남는지 밝혀라.
+  6. 배치 규칙은 평소와 같다: 1학기 전용 개설 과목은 1학기 슬롯, 2학기 전용은 2학기
+     슬롯, 계절수업 전용은 정규 학기에 넣지 마라.
+  7. 남은 이수구분을 다 채울 만큼 후보를 못 찾았으면 "몇 학점이 아직 미배정"인지
+     솔직히 적어라. 다 채운 척하지 마라. 반대로 **요건이 다 채워졌으면 그렇다고 밝히고,
+     남은 학기가 가벼운 이유(더 들을 필요가 없다)를 한 줄로 설명해라** — 빈 학기를
+     설명 없이 두면 학생은 계획이 덜 짜였다고 읽는다. 단 `requirement_coverage`에
+     잔여 학점이 `null`로만 나오면 학과 요건 기준이 DB에 없다는 뜻이니, 충족됐다고
+     말하지 말고 **확인할 수 없다고 그대로 적어라.**
+  8. **"지금 짜드릴까요?"라고 먼저 되묻지 마라.** 제안은 사용자가 승인해야만 저장되니
+     되묻는 건 한 턴을 통째로 버리는 것이다. 제안부터 만들고, 확인은 finish_response
+     마지막의 "이 변경을 반영할까요?" 한 문장으로 받아라.
+  9. 학기 합계 학점을 네가 더하지 마라. **마지막 `propose_term_plan` 응답의
+     `term_totals_after`**를 그대로 적어라 — 직접 더하다가 실제 배치와 다른 숫자를
+     답변에 쓴 적이 있다(2026-08-20: 실제 19학점인 학기를 "15학점"이라고 적었다).""",
+
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
   이미 이수한 세부영역과 미이수 세부영역이 프로필 블록에 노출돼 있다. **미이수 세부영역
@@ -439,6 +555,95 @@ def _looks_like_narrow_scope_request(message: str | None) -> bool:
         return False
     compact = message.replace(" ", "")
     return any(marker.replace(" ", "") in compact for marker in _NARROW_SCOPE_MARKERS)
+
+
+# "남은 학기 전부"를 가리키는 범위 표현. 이것만으로는 부족하다 — "졸업까지 뭐가
+# 남았는지 정리해줘"처럼 **조회**를 요청하는 문장에도 들어간다.
+_FULL_HORIZON_SCOPE_MARKERS = (
+    "졸업까지", "졸업 까지", "졸업할 때까지", "졸업 때까지", "졸업 전까지",
+    "졸업까지의", "졸업 로드맵", "졸업 시점까지",
+    "남은 학기 전부", "남은 학기 모두", "남은 학기 다", "남은 학기를 전부",
+    "남은 학기 계획", "남은 학기 싹", "앞으로 남은 학기", "남은 학기 동안",
+    "전체 로드맵", "전체 학기", "모든 학기",
+    "4학년 2학기까지", "4-2까지", "4학년까지",
+)
+
+# 이미 지난 일이나 현재 상태를 **묻는** 신호.
+# "졸업 로드맵 지금 어떻게 돼 있어?"에 3개 학기 제안이 쌓이면 안 된다.
+#
+# 단 아래 `_BUILD_VERB_MARKERS`가 같이 있으면 veto하지 않는다 — "졸업까지 짜서 알려줘"는
+# 조회가 아니라 계획 요청이고, 이걸 죽이면 이 기능이 고치려던 증상(다음 한 학기만
+# 제안하고 끝냄)으로 그대로 돌아간다.
+_QUERY_ONLY_MARKERS = (
+    "알려줘", "알려 줘", "알려주", "보여줘", "보여 줘", "보여주",
+    "정리해줘", "정리해 줘", "정리해주", "확인만", "확인해줘", "확인해 줘",
+    "어떻게 돼", "어떻게 됐", "어떻게 되어", "어떻게 되었",
+    "들었는지", "이수했는지", "남았는지", "세워져 있는지", "세워졌는지",
+)
+
+# "만들어 달라"가 명시적인 동사. 조회 표현과 같이 나와도 이쪽이 이긴다
+# ("졸업까지 로드맵 짜서 보여줘").
+# 어간(`채워`/`편성`/`설계`)이 아니라 **요청형**으로 둔다. 어간이면 수동·서술형에도
+# 걸려서 "졸업 로드맵 어떻게 채워져 있는지 보여줘"가 계획 요청으로 잡힌다 — veto를
+# 뚫는 예외라 오탐이 곧 "조회 요청에 학기 제안이 쌓인다"가 된다.
+_BUILD_VERB_MARKERS = (
+    "짜줘", "짜 줘", "짜주", "짜서", "짜봐", "짜자",
+    "편성해", "설계해", "배치해", "만들어",
+    "채워줘", "채워 줘", "채워라", "채워주", "채워서",
+    "계획해줘", "계획해 줘", "계획해주", "계획해라", "계획해서",
+    "계획 세워줘", "계획 세워 줘", "계획 세워서", "계획을 세워",
+)
+
+# 실제로 **계획을 만들어 달라**는 신호. 위 범위 표현과 같이 나와야 full-horizon 요청이다.
+_PLANNING_INTENT_MARKERS = (
+    "로드맵", "계획", "짜줘", "짜 줘", "짜주", "짜서", "짜봐", "짜자", "설계", "세워",
+    "배치", "편성", "채워", "채우", "수강계획", "커리큘럼 짜",
+    "들어야", "들으면", "뭘 들", "무엇을 들", "어떻게 들", "수강 순서",
+)
+
+
+def _looks_like_full_horizon_request(message: str | None) -> bool:
+    """"졸업까지 전부 짜줘"처럼 남은 학기 **전체 계획**을 요구한 요청인지.
+
+    `_looks_like_narrow_scope_request`와 짝이 되는 반대 방향 판정이다. 둘 다 학생 DB가
+    아니라 이번 턴 문장으로만 판정한다.
+
+    범위 표현과 계획 의도를 **둘 다** 요구한다. "졸업까지"만 보면 "졸업까지 뭐가
+    남았는지 정리해줘" 같은 단순 조회 요청까지 걸려서, 묻지도 않은 3개 학기 제안이
+    승인 대기에 쌓인다.
+
+    2026-08-20 실계정(편입 3학년, 남은 학기 3개) 관측: "졸업까지 로드맵 짜줘",
+    "남은 학기 전부 계획해줘", "4학년 2학기까지 어떻게 들어야 해?" 세 요청 모두
+    **다음 한 학기(3-2)만** 제안하고 "승인해주시면 4-1, 4-2도 이어서"로 끝냈다.
+    도구 반복 상한 문제가 아니었다 — 8회 중 3/5/4회만 쓰고 스스로 끝냈다.
+    """
+    if not message:
+        return False
+    compact = message.replace(" ", "")
+
+    if any(m.replace(" ", "") in compact for m in _QUERY_ONLY_MARKERS) and not any(
+        m.replace(" ", "") in compact for m in _BUILD_VERB_MARKERS
+    ):
+        return False
+
+    matched = [m.replace(" ", "") for m in _FULL_HORIZON_SCOPE_MARKERS
+               if m.replace(" ", "") in compact]
+    if not matched:
+        return False
+
+    # 계획 의도는 **범위 표현 바깥에서** 찾는다. `졸업 로드맵`·`전체 로드맵`·
+    # `남은 학기 계획`처럼 범위 표현 자체가 의도 단어(`로드맵`/`계획`)를 품고 있어서,
+    # 그냥 문장 전체에서 찾으면 "둘 다 있어야 한다"는 조건이 그 마커들에 대해
+    # 무의미해진다 — "졸업 로드맵 지금 어떻게 돼 있어?"가 계획 요청으로 잡혔다.
+    #
+    # 매칭된 마커를 **하나씩** 지워보고 그중 하나라도 의도가 남으면 참이다. 겹치는
+    # 마커를(`남은 학기 계획` ⊗ `앞으로 남은 학기`) 한꺼번에 지우면 그 사이의 의도
+    # 단어까지 사라져서, 결과가 마커 선언 순서에 좌우된다.
+    return any(
+        any(intent.replace(" ", "") in compact.replace(m, " ")
+            for intent in _PLANNING_INTENT_MARKERS)
+        for m in matched
+    )
 
 
 def _has_term_gap(db: Session, user: User) -> bool:
@@ -546,8 +751,12 @@ def _select_applicable_rules(db: Session, user: User, message: str | None = None
 
     # 6. 범위 한정 요청 — 유일하게 DB가 아니라 이번 턴 메시지로 판정한다.
     #    맨 끝에 붙여서 프롬프트 마지막 줄이 되게 한다 (recency).
+    #    full_horizon과 동시에 걸리면 좁은 쪽이 이긴다 — "그것만"이라고 못박은 요청에
+    #    남은 학기 전부를 채우는 건 명백한 범위 초과다.
     if _looks_like_narrow_scope_request(message):
         applicable.append("narrow_scope_request")
+    elif _looks_like_full_horizon_request(message):
+        applicable.append("full_horizon_request")
 
     return applicable
 
@@ -622,7 +831,10 @@ _TOOLS = [
                 "성적표 기반 이수기록(completed_courses), **critical_missing_required**"
                 "(학과 필수인데 미이수 + 개설 학기가 다음 학기와 어긋난 목록 = 졸업 위험), "
                 "**retake_candidates**(C+ 이하 성적 이수 과목 목록 = 재수강 권유 후보), "
-                "**prereq_blocked**(선수과목 미이수라 지금 담기 부적절한 학과 과목 목록)"
+                "**prereq_blocked**(선수과목 미이수라 지금 담기 부적절한 학과 과목 목록), "
+                "**remaining_terms**(다음 배치 가능 학기부터 졸업 예정 학기까지 남은 정규 학기 "
+                "목록 — 각 학기의 달력 연도/학기, 커리큘럼 학년, 이미 계획된 학점, 남은 여유 학점. "
+                "'졸업까지 계획해줘' 같은 요청은 이 목록의 학기를 전부 채워야 한다)"
                 "를 돌려준다. 새 항목 제안 전에 반드시 이걸 확인해라 — 특히 학점 상한 "
                 "초과, 이미 이수한 과목 중복, 졸업 위험 필수 미이수, 선수과목 부족."
             ),
@@ -668,7 +880,8 @@ _TOOLS = [
                         "type": "string",
                         "description": (
                             "이수구분 필터. 학생 자연어를 그대로 넘기면 백엔드가 매핑한다 "
-                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양+기초교양). "
+                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양, "
+                            "'교양선택' → 효원균형교양+효원창의교양+기초교양). "
                             "학생이 '균형교양만 더 채우고 싶다'처럼 세부 영역을 콕 집으면 '효원균형교양'으로, "
                             "그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게. "
                             "빈 결과 오면 응답의 `available_categories`를 보고 다른 값으로 재시도 — "
@@ -740,6 +953,79 @@ _TOOLS = [
                     },
                 },
                 "required": ["action", "reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_term_plan",
+            "description": (
+                "**여러 학기 분량의 수강 계획을 한 번에 제안한다.** '졸업까지 로드맵 짜줘', "
+                "'남은 학기 전부 계획해줘'처럼 두 학기 이상을 계획해야 하는 요청에는 "
+                "propose_change를 과목마다 부르지 말고 반드시 이 도구를 써라 — 과목별 호출은 "
+                "도구 반복 횟수를 다 써버려서 뒤쪽 학기가 통째로 빠진다. "
+                "검증은 propose_change와 완전히 동일하다(과거 학기·이수 완료·중복·선수과목 "
+                "학년 하한·계절수업 전용·학기당 학점 상한). 한 과목이 거절돼도 나머지는 그대로 "
+                "제안되고, 거절된 과목은 사유와 함께 rejected에 담겨 돌아온다. "
+                "학점 상한은 **이 호출 안에서 앞서 담긴 과목까지 누적해서** 검사하므로, "
+                "빈 학기에 과목을 몰아넣으면 상한 초과분이 rejected로 떨어진다. "
+                "응답의 `plan_so_far`가 이번 턴에 제안된 전부를 학기별로 모은 최종 상태다 — "
+                "여러 번 호출했으면 답변은 마지막 호출의 accepted가 아니라 이걸 보고 써라. "
+                "이미 제안한 과목을 다시 넘기면 실패가 아니라 already_in_plan으로 돌아온다. "
+                "주전공 이수구분별 requirement_coverage(이 제안을 다 이수하면 얼마가 남는지)도 "
+                "함께 온다. **`unmet_categories_after_plan`이 비어 있으면 졸업요건이 다 "
+                "채워졌다는 뜻이니 더 넣지 마라** — 학기에 여유 학점이 남아도, 어떤 학기가 "
+                "비어 있어도 졸업에 필요 없는 과목을 억지로 채울 이유가 없다. 다음에 무엇을 "
+                "할지는 `next_action`에 그대로 적혀 있다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "terms": {
+                        "type": "array",
+                        "description": (
+                            "학기별 계획. get_roadmap_items의 remaining_terms 순서대로 넣어라."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "planned_year": {
+                                    "type": "string",
+                                    "description": "달력 연도(예: '2027').",
+                                },
+                                "planned_semester": {
+                                    "type": "string",
+                                    "description": "'1학기' 또는 '2학기'.",
+                                },
+                                "planned_grade": {
+                                    "type": "integer",
+                                    "description": "커리큘럼 기준 학년(1~4). remaining_terms의 값을 그대로.",
+                                },
+                                "course_ids": {
+                                    "type": "array",
+                                    "items": {"type": "integer"},
+                                    "description": "이 학기에 넣을 과목 id 목록(search_courses로 확인한 값).",
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "이 학기 배치의 근거. 생략하면 공통 reason을 쓴다.",
+                                },
+                            },
+                            "required": ["planned_year", "planned_semester", "course_ids"],
+                        },
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "전체 계획의 근거(학기별 reason이 없을 때 쓰인다).",
+                    },
+                    "program_type": {
+                        "type": "string",
+                        "enum": ["primary", "minor", "dual", "interdisciplinary"],
+                        "description": "이 계획 항목들이 어느 프로그램용인지. 기본 NULL=주전공/미지정.",
+                    },
+                },
+                "required": ["terms"],
             },
         },
     },
@@ -1256,6 +1542,22 @@ class _ToolContext:
         self.user = user
         self.roadmap = roadmap
         self.pending_changes: list[PendingRoadmapChange] = []
+        # 졸업요건을 숫자로 알 수 있는 학생인가. `_requirement_coverage()`가 채운다.
+        # 요건 행이 없으면 "다 채웠다"고 말할 근거가 없다.
+        self.requirements_known = False
+        # 총 이수학점 기준 잔여(이번 턴 제안 반영 후). None이면 기준을 모른다는 뜻.
+        self.remaining_total_after_plan: float | None = None
+        # 턴 안에서 안 변하는 값들. 매 호출 재계산이 이수기록 전체 스캔·과목 조회로
+        # 이어져 도구 한 번에 수백 건의 SELECT가 나갔다.
+        self._remaining_terms_cache: list[dict] | None = None
+        self._course_credits_cache: dict[int, float] = {}
+        # propose_term_plan이 "아직 미배정 학점이 남았고 학기 여유도 있다"고 판정하면
+        # 그 요약이 여기 담긴다. run_roadmap_chat이 이 값을 보고 첫 finish_response를
+        # 한 번만 되돌린다 (아래 _finish_gate_blocked 참고).
+        self.plan_gap: dict | None = None
+        # propose_term_plan을 이 턴에 한 번이라도 불렀는지. "졸업까지" 요청인데 제안을
+        # 하나도 안 만들고 되묻기만 하고 끝내는 걸 막는 게이트가 이 값을 본다.
+        self.term_plan_called = False
 
     def get_graduation_progress(self) -> dict:
         # 부전공/복수전공/융합전공까지 모두 진도 계산해 LLM에 노출
@@ -1495,6 +1797,11 @@ class _ToolContext:
     def _planned_credits_by_term(self, exclude_item_id: int | None = None) -> dict[tuple[str | None, str | None], float]:
         """(planned_year, planned_semester)별 이미 계획된 학점 합계.
         exclude_item_id는 update 시 자기 자신을 빼서 재배치 여지를 만들 때 쓴다.
+
+        **이번 턴에 이미 제안(propose)된 미승인 변경도 함께 센다.** 예전에는 DB의
+        CourseRoadmapItem만 셌는데, 그러면 아직 아무것도 없는 미래 학기(예: 4학년 1학기)에
+        과목을 몇 개를 밀어넣든 합계가 계속 0이라 학기당 상한 가드가 한 번도 걸리지 않았다.
+        승인하면 그대로 저장되는 값이므로 계획 시점에 같이 세는 게 맞다.
         """
         items = self.db.scalars(
             select(CourseRoadmapItem).where(CourseRoadmapItem.roadmap_id == self.roadmap.id)
@@ -1505,6 +1812,77 @@ class _ToolContext:
                 continue
             key = (it.planned_year, it.planned_semester)
             out[key] = out.get(key, 0.0) + float(it.credits or 0)
+
+        # 같은 항목에 대한 변경은 **첫 건만** 반영한다. 델타 누적 방식이라 같은 item을
+        # 두 번 delete하면 학점이 두 번 빠져서, 21학점이 찬 학기에 6학점이 더 들어간다
+        # (실측). 중복 가드는 create에만 있어서 delete/update는 그대로 쌓인다.
+        seen_items: set[int] = set()
+        for ch in self.pending_changes:
+            if exclude_item_id is not None and ch.item_id == exclude_item_id:
+                continue
+            if ch.action != "create" and ch.item_id is not None:
+                if ch.item_id in seen_items:
+                    continue
+                seen_items.add(ch.item_id)
+            if ch.action == "create":
+                if ch.course_id is None:
+                    continue
+                # 과목 학점은 안 변하므로 턴 안에서 캐시한다. `db.get`이 이 세션 설정에서는
+                # identity map을 타지 않고 매번 SQL을 내서, 제안이 쌓일수록 이 루프가
+                # O(n²)로 커졌다(3학기×6과목 배치에서 SELECT courses가 308회).
+                if ch.course_id in self._course_credits_cache:
+                    credits = self._course_credits_cache[ch.course_id]
+                else:
+                    course = self.db.get(Course, ch.course_id)
+                    credits = (
+                        float(course.credits)
+                        if course is not None and course.credits is not None
+                        else 0.0
+                    )
+                    self._course_credits_cache[ch.course_id] = credits
+                key = (ch.planned_year, ch.planned_semester)
+                out[key] = out.get(key, 0.0) + credits
+            elif ch.item_id is not None:
+                item = self.db.get(CourseRoadmapItem, ch.item_id)
+                if item is None:
+                    continue
+                credits = float(item.credits or 0)
+                old_key = (item.planned_year, item.planned_semester)
+                if ch.action == "delete":
+                    out[old_key] = out.get(old_key, 0.0) - credits
+                elif ch.action == "update" and ch.planned_year:
+                    # 학기를 옮기는 update만 학점이 이동한다.
+                    new_key = (ch.planned_year, ch.planned_semester or item.planned_semester)
+                    if new_key != old_key:
+                        out[old_key] = out.get(old_key, 0.0) - credits
+                        out[new_key] = out.get(new_key, 0.0) + credits
+                # `planned_year` 없는 update(예: planned_grade만 교정)는 학기가 그대로다.
+                # 예전엔 여기서도 옛 학기 학점을 빼기만 하고 다시 더하지 않아서, 그런 제안
+                # 하나가 그 학기 학점을 통째로 증발시켰다 — 상한 가드가 오히려 느슨해졌다.
+        return out
+
+    def _remaining_terms(self) -> list[dict]:
+        """졸업까지 남은 학기 + 학기별 이미 계획된 학점/여유 학점.
+
+        학기 목록 자체(`_remaining_terms_until_graduation`)는 턴 안에서 안 변하는데
+        계산에 이수기록 전체 스캔이 학기 수만큼 들어간다. `get_roadmap_items`가 매 턴
+        부르고 `propose_term_plan` 하나 안에서도 두 번 더 부르므로 캐시한다.
+        계획 학점은 제안이 쌓이면서 바뀌므로 매번 다시 센다.
+        """
+        if self._remaining_terms_cache is None:
+            self._remaining_terms_cache = _remaining_terms_until_graduation(
+                self.db, self.user.id
+            )
+        cap = self._term_credit_cap()
+        planned = self._planned_credits_by_term()
+        out = []
+        for term in self._remaining_terms_cache:
+            used = planned.get((term["planned_year"], term["planned_semester"]), 0.0)
+            out.append({
+                **term,
+                "already_planned_credits": used,
+                "credits_left_in_term": max(cap - used, 0.0),
+            })
         return out
 
     def _critical_missing_required(self, next_planned_semester: str) -> list[dict]:
@@ -1579,6 +1957,10 @@ class _ToolContext:
             "current_curriculum_term": {"grade": cur_grade, "semester": cur_sem},
             "next_curriculum_term": {"grade": next_grade, "semester": next_sem},
             "term_credit_cap": credit_cap,
+            # 다음 배치 가능 학기 ~ 졸업 예정 학기. "졸업까지 계획해줘"에 이 목록의
+            # 학기를 전부 채워야 한다 (2026-08-20까지는 이 값이 없어서 LLM이 다음
+            # 한 학기만 제안하고 끝냈다).
+            "remaining_terms": self._remaining_terms(),
             "planned_credits_by_term": [
                 {"planned_year": y, "planned_semester": s, "credits": c}
                 for (y, s), c in sorted(planned.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
@@ -2018,6 +2400,368 @@ class _ToolContext:
         self.pending_changes.append(change)
         return {"change_id": change.id, "action": action}
 
+    def propose_term_plan(
+        self,
+        terms: list[dict] | None = None,
+        reason: str = "",
+        program_type: str | None = None,
+    ) -> dict:
+        """여러 학기 계획을 한 번의 도구 호출로 제안한다.
+
+        왜 별도 도구인가: "졸업까지 로드맵 짜줘"에 필요한 propose_change 호출 수는
+        (남은 학기 수 × 학기당 5~7과목)이라 15~20회다. MAX_TOOL_ITERATIONS가 8이라
+        구조적으로 불가능하고, 실제로 LLM은 시도조차 하지 않고 다음 한 학기만 제안한 뒤
+        "승인해주시면 이어서 하겠다"로 끝냈다(2026-08-20 실계정 3회 전부).
+        프롬프트로 "전부 계획해라"라고만 시키면 이번엔 반복 상한에 걸려 끊길 뿐이라,
+        도구 쪽에서 한 번에 받을 수 있게 만드는 게 맞다.
+
+        검증은 propose_change를 그대로 재사용한다 — 가드를 복제하면 한쪽만 고쳐지는
+        일이 반드시 생긴다. 한 과목이 거절돼도 나머지는 계속 제안하고, 거절 사유는
+        rejected에 담아 LLM이 다른 학기로 옮겨 재시도할 수 있게 한다.
+        """
+        if not terms:
+            return {"error": "terms가 비어 있습니다. 학기별 course_ids를 넣어 다시 호출하세요."}
+        if program_type is not None and program_type not in (
+            "primary", "minor", "dual", "interdisciplinary"
+        ):
+            return {"error": f"program_type은 primary/minor/dual/interdisciplinary 중 하나여야 합니다: {program_type}"}
+
+        self.term_plan_called = True
+        cap = self._term_credit_cap()
+        term_results: list[dict] = []
+        accepted_count = 0
+        rejected_count = 0
+
+        for term in terms:
+            if not isinstance(term, dict):
+                continue
+            planned_year = term.get("planned_year")
+            planned_semester = term.get("planned_semester")
+            planned_grade = term.get("planned_grade")
+            course_ids = term.get("course_ids") or []
+            term_reason = term.get("reason") or reason or "졸업까지 남은 학기 일괄 계획"
+
+            accepted: list[dict] = []
+            rejected: list[dict] = []
+            already: list[dict] = []
+            for course_id in course_ids:
+                course = self.db.get(Course, course_id) if course_id is not None else None
+                entry = {
+                    "course_id": course_id,
+                    "course_name": course.course_name if course is not None else None,
+                    "category": course.category if course is not None else None,
+                    "credits": float(course.credits) if course is not None and course.credits is not None else None,
+                }
+                # 이번 턴에 이미 제안한 과목을 다시 넘긴 경우는 **실패가 아니다**.
+                # propose_change는 중복 create를 error로 돌려주는데, 벌크 경로에서
+                # 그걸 rejected에 섞으면 LLM이 "다 반려됐다"고 읽고 앞서 성공한 제안까지
+                # 없던 일처럼 답변한다(2026-08-20 실측: 실제로 accepted된 4학년 1학기
+                # 3과목을 "확정 없음"이라고 답했다).
+                # 이번 턴 제안뿐 아니라 **이미 승인돼 저장된 로드맵 항목**도 마찬가지다.
+                # "1턴에 승인 → 2턴에 '졸업까지 마저 짜줘'"가 이 기능의 주 시나리오인데,
+                # 그때 DB 항목과의 중복은 여전히 rejected로 떨어져서 같은 오독이 났다.
+                if course_id is not None and (
+                    any(
+                        c.action == "create" and c.course_id == course_id
+                        for c in self.pending_changes
+                    )
+                    or self.db.scalar(
+                        select(CourseRoadmapItem.id).where(
+                            CourseRoadmapItem.roadmap_id == self.roadmap.id,
+                            CourseRoadmapItem.course_id == course_id,
+                        )
+                    )
+                    is not None
+                ):
+                    already.append({
+                        **entry,
+                        # 안내가 없으면 "다른 학기로 옮겨달라"는 요청이 조용한 no-op이
+                        # 된다 — 요청한 학기는 빈 채로 남는데 rejected도 아니라 LLM이
+                        # 뭘 해야 할지 모른다.
+                        "note": (
+                            "이미 로드맵에 있는 과목이라 새로 만들지 않았다. 학기를 옮기려면 "
+                            "propose_change(action='update', item_id=…)를 써라."
+                        ),
+                    })
+                    continue
+                result = self.propose_change(
+                    action="create",
+                    reason=term_reason,
+                    course_id=course_id,
+                    planned_year=planned_year,
+                    planned_semester=planned_semester,
+                    planned_grade=planned_grade,
+                    program_type=program_type,
+                )
+                if "error" in result:
+                    rejected.append({**entry, "error": result["error"]})
+                    rejected_count += 1
+                else:
+                    accepted.append({**entry, "change_id": result.get("change_id")})
+                    accepted_count += 1
+
+            planned_after = self._planned_credits_by_term().get(
+                (planned_year, planned_semester), 0.0
+            )
+            term_results.append({
+                "planned_year": planned_year,
+                "planned_semester": planned_semester,
+                "planned_grade": planned_grade,
+                "accepted": accepted,
+                "already_in_plan": already,
+                "rejected": rejected,
+                "term_credits_after": planned_after,
+                "term_credit_cap": cap,
+            })
+
+        # 계획이 덜 찼는지 도구가 직접 판정한다. 프롬프트로 "꽉 채워라"라고만 시켰을 때
+        # LLM은 전공필수만 넣고 전공선택 29학점을 남긴 채 "추가 탐색이 필요합니다"로
+        # 끝냈다(2026-08-20 실측). 남은 이수구분과 학기 여유 학점을 계산해서 돌려주면
+        # 다음 턴에 무엇을 얼마나 더 찾아야 하는지가 명시적 지시가 된다.
+        coverage = self._requirement_coverage()
+        unmet = [
+            {
+                "category_name": c["category_name"],
+                "remaining_credits": c["remaining_after_plan"],
+            }
+            for c in coverage
+            if c["remaining_after_plan"] is not None and c["remaining_after_plan"] > 0
+        ]
+        room = [
+            {
+                "planned_year": t["planned_year"],
+                "planned_semester": t["planned_semester"],
+                "credits_left_in_term": round(t["term_credit_cap"] - t["term_credits_after"], 1),
+            }
+            for t in term_results
+            if t["term_credit_cap"] - t["term_credits_after"] >= _MIN_USEFUL_TERM_ROOM
+        ]
+        total_room = sum(r["credits_left_in_term"] for r in room)
+        total_unmet = sum(u["remaining_credits"] for u in unmet)
+        # 총 이수학점이 남았으면 카테고리를 다 채웠어도 졸업요건 미충족이다.
+        total_short = self.remaining_total_after_plan or 0.0
+        # 요건을 숫자로 모르면(요건 행 없음) "채울 필요 없다"고 말할 근거도 없다.
+        # 그 경우엔 빈 학기가 남아 있는 한 계속 채우게 둔다 — 예전 동작이다.
+        still_to_fill = bool(unmet) or total_short > 0 or not self.requirements_known
+
+        if rejected_count:
+            next_action = (
+                "rejected 과목의 사유를 보고 배치 가능한 다른 학기로 옮겨 "
+                "propose_term_plan을 한 번 더 호출해라."
+            )
+        elif unmet and room:
+            next_action = (
+                f"아직 {total_unmet:g}학점이 미배정이고 학기 여유가 {total_room:g}학점 남았다. "
+                f"미배정 이수구분({', '.join(u['category_name'] for u in unmet)})으로 "
+                "search_courses를 여유 있는 학기별로 다시 호출해 후보를 더 모은 뒤, "
+                "**추가로 넣을 과목만** 담아 propose_term_plan을 한 번 더 호출해라. "
+                "이미 accepted된 과목은 다시 넣지 마라(중복으로 거절된다). "
+                "그러고도 남는 학점이 있으면 finish_response에서 몇 학점이 미배정인지 밝혀라."
+            )
+        elif unmet:
+            next_action = (
+                f"{total_unmet:g}학점이 미배정인데 남은 학기에 여유 학점이 없다. "
+                "더 넣지 말고, finish_response에서 졸업까지 학점이 모자란다는 사실과 "
+                "부족한 이수구분·학점을 그대로 알려라."
+            )
+        elif total_short > 0:
+            next_action = (
+                f"이수구분별 잔여는 없지만 졸업 총 이수학점이 {total_short:g}학점 남았다"
+                "(학과 요건의 이수구분 합보다 총요구학점이 큰 경우다 — 사범대 교직학점 등). "
+                "여유 있는 학기에 과목을 더 담아 propose_term_plan을 한 번 더 호출해라. "
+                "후보를 더 못 찾겠으면 몇 학점이 남는지 finish_response에서 밝혀라."
+            )
+        elif self.requirements_known:
+            next_action = (
+                "졸업요건이 모두 충족됐다(이수구분별 잔여 0 + 총 이수학점 충족). "
+                "**학기를 더 채우지 마라** — 남은 학기에 여유 학점이 있어도 졸업에 필요 "
+                "없는 과목을 억지로 넣을 이유가 없다. finish_response에서 학기별 계획을 "
+                "정리하고, 요건이 다 채워진다는 것과 각 학기가 몇 학점인지 알려라. "
+                "더 듣고 싶으면 말해달라고 덧붙여라."
+            )
+        else:
+            next_action = (
+                "이 학생의 졸업요건 기준을 숫자로 확인할 수 없다(학과 요건 행이 없거나 "
+                "활성 학적이 등록되지 않았다). 남은 학기가 비어 있으면 계속 채우되, "
+                "지금까지 제안한 계획을 finish_response에서 정리할 때 **요건 충족 여부는 "
+                "확인할 수 없다는 것을 그대로 밝혀라.** 채워졌다고 말하지 마라."
+            )
+
+        # 되돌림 게이트용 상태.
+        #
+        # **기준은 "학기가 꽉 찼는가"가 아니라 "졸업요건이 남았는가"다.** 요건을 다
+        # 채웠으면 남은 학기에 여유가 있어도, 심지어 한 학기가 통째로 비어 있어도
+        # 되돌리지 않는다 — 졸업에 필요 없는 과목을 억지로 채우게 만들 이유가 없다.
+        # (예전에는 `empty_terms`만으로도 발동해서, 요건이 다 충족된 학생에게도
+        #  "2027년 2학기가 비어 있으니 채워라"라고 밀어붙였다.)
+        #
+        # 빈 학기 목록은 그대로 들고 간다. 요건이 남아 있을 때 "N학점 미배정"보다
+        # "2027년 1학기가 비어 있다"가 훨씬 구체적인 지시라 후속 호출에서 실제로
+        # 채워지기 때문이다(실측에서 LLM이 `course_ids: []`인 빈 학기를 넣고 넘어간
+        # 적이 있다).
+        empty_terms = [
+            f"{t['planned_year']}년 {t['planned_semester']}({t['planned_grade']}학년)"
+            for t in self._remaining_terms()
+            if t["already_planned_credits"] <= 0
+        ]
+        self.plan_gap = (
+            {
+                "unmet_credits": round(total_unmet, 1),
+                "unmet_categories": [u["category_name"] for u in unmet],
+                "remaining_total_credits_after_plan": self.remaining_total_after_plan,
+                "terms_with_room": room,
+                "empty_terms": empty_terms,
+            }
+            if still_to_fill and (room or empty_terms)
+            else None
+        )
+
+        return {
+            "terms": term_results,
+            # 이번 턴에 제안된 **전부**를 학기별로 모은 최종 상태. terms의 accepted는
+            # 이번 호출분만 담기니, 여러 번 호출한 뒤 답변을 쓸 때는 이걸 그대로 옮겨라.
+            "plan_so_far": self._plan_so_far(),
+            # 남은 학기 **전부**의 최신 합계. terms에는 이번 호출에서 건드린 학기만 담기니,
+            # 2차 호출 뒤에 답변을 쓸 때는 이 값을 봐야 학기별 총 학점이 맞는다.
+            "term_totals_after": [
+                {
+                    "planned_year": t["planned_year"],
+                    "planned_semester": t["planned_semester"],
+                    "planned_grade": t["planned_grade"],
+                    "total_credits": t["already_planned_credits"],
+                }
+                for t in self._remaining_terms()
+            ],
+            "accepted_count": accepted_count,
+            "rejected_count": rejected_count,
+            "requirement_coverage": coverage,
+            "unmet_categories_after_plan": unmet,
+            # 이수구분별 잔여가 0이어도 총 이수학점이 남을 수 있다(요건 행의 이수구분
+            # 합 < 총요구학점인 학과). `unmet_categories_after_plan`만 보고 "다 채웠다"고
+            # 판단하지 마라. None이면 기준을 몰라서 계산 못 한 것이다.
+            "remaining_total_credits_after_plan": self.remaining_total_after_plan,
+            "terms_with_room": room,
+            "next_action": next_action,
+            "hint": (
+                "finish_response에는 accepted 과목만 적고, requirement_coverage의 "
+                "remaining_after_plan이 0이 아닌 이수구분은 아직 남았다고 밝혀라. "
+                "먼저 next_action을 따라라."
+            ),
+        }
+
+    def _plan_so_far(self) -> list[dict]:
+        """이번 턴에 제안된 create를 학기별로 모은 최종 상태.
+
+        propose_term_plan을 여러 번 부르면 각 호출의 `accepted`는 그 호출분만 담는다.
+        LLM이 마지막 호출 결과만 보고 답변을 쓰면 앞서 성공한 학기를 "확정 없음"이라고
+        적는다(2026-08-20 실측). 답변에 옮겨 적을 단일 출처를 준다.
+        """
+        by_term: dict[tuple[str | None, str | None], dict] = {}
+        for change in self.pending_changes:
+            if change.action != "create" or change.course_id is None:
+                continue
+            course = self.db.get(Course, change.course_id)
+            if course is None:
+                continue
+            key = (change.planned_year, change.planned_semester)
+            slot = by_term.setdefault(key, {
+                "planned_year": change.planned_year,
+                "planned_semester": change.planned_semester,
+                "planned_grade": change.planned_grade,
+                "courses": [],
+                "total_credits": 0.0,
+            })
+            credits = float(course.credits) if course.credits is not None else 0.0
+            slot["courses"].append({
+                "course_id": course.id,
+                "course_name": course.course_name,
+                "category": course.category,
+                "credits": credits,
+            })
+            slot["total_credits"] += credits
+        return [by_term[k] for k in sorted(by_term, key=lambda k: (k[0] or "", k[1] or ""))]
+
+    def _requirement_coverage(self) -> list[dict]:
+        """이번 턴에 제안한 과목들을 다 이수하면 주전공 이수구분별로 얼마가 남는지.
+
+        판정은 전부 규칙 기반이다 — LLM은 이 숫자를 받아 설명만 한다.
+        (compute_graduation_progress의 잔여 학점 - 이번 턴 제안 과목의 이수구분별 학점)
+        """
+        progresses = compute_graduation_progress(
+            self.db, self.user.id, program_types={"primary"}
+        )
+        if not progresses:
+            self.requirements_known = False
+            self.remaining_total_after_plan = None
+            return []
+        program = progresses[0]
+        # 학과 요건 행이 없으면(`requirement_found=False`) 잔여 학점이 전부 None이라
+        # "미충족 0"과 "판단 불가"가 구분되지 않는다. 그 둘을 섞으면 요건을 모르는
+        # 학생에게 "요건을 다 채웠다"고 말하게 된다.
+        # 총요구학점을 모르면 "모두 충족"을 주장할 수 없다 — 이수구분 잔여가 0이어도
+        # 총학점 축이 통째로 빠진 채 판정하게 된다(사범대처럼 그 축에만 남는 학점이 있다).
+        # 운영 DB의 primary 요건 126행은 전부 총요구학점이 있지만, 없는 행이 들어오면
+        # 조용히 "다 채웠다"가 되는 게 아니라 "확인할 수 없다"로 떨어져야 한다.
+        self.requirements_known = program.required_total_credits is not None
+        proposed: dict[str, float] = {}
+        proposed_total = 0.0
+        for ch in self.pending_changes:
+            if ch.action != "create" or ch.course_id is None:
+                continue
+            course = self.db.get(Course, ch.course_id)
+            if course is None:
+                continue
+            # 요건 라벨(성적표 어휘)과 `courses.category`(수강편람 어휘)가 교양에서
+            # 겹치지 않는다 — 정규화 없이 이름으로 맞추면 교양 과목을 아무리 계획해도
+            # 교양 잔여가 1학점도 안 줄어들어, "요건 충족" 상태에 영영 도달하지 못한다.
+            key = requirement_category_for_course(course.category) or "미분류"
+            credits = float(course.credits or 0)
+            proposed[key] = proposed.get(key, 0.0) + credits
+            proposed_total += credits
+
+        # 총 이수학점 요건. **카테고리 합만 보면 안 된다** — 운영 DB의 primary 요건
+        # 126행 중 17행(사범대 전체)이 카테고리 합 < 총요구학점이고, 그 차이 22학점이
+        # 교직이다. 카테고리를 다 채워도 총학점이 남는데 "다 충족됐다"고 말하게 된다
+        # (엔진은 같은 호출에서 satisfied=False라고 판정하고 있다).
+        remaining_total = (
+            float(program.remaining_total_credits)
+            if program.remaining_total_credits is not None
+            else None
+        )
+        self.remaining_total_after_plan = (
+            round(max(remaining_total - proposed_total, 0.0), 1)
+            if remaining_total is not None
+            else None
+        )
+
+        out = []
+        for category in program.categories:
+            remaining = (
+                float(category.remaining_credits)
+                if category.remaining_credits is not None
+                else None
+            )
+            planned = proposed.get(category.category_name, 0.0)
+            out.append({
+                "category_name": category.category_name,
+                "remaining_before_plan": remaining,
+                "planned_in_this_turn": planned,
+                "remaining_after_plan": (
+                    round(max(remaining - planned, 0.0), 1) if remaining is not None else None
+                ),
+            })
+        # 요건 카테고리에 없는데 제안된 이수구분(예: 학과 카탈로그 태그가 다른 경우)도 노출
+        known = {c.category_name for c in program.categories}
+        for key, planned in proposed.items():
+            if key not in known:
+                out.append({
+                    "category_name": key,
+                    "remaining_before_plan": None,
+                    "planned_in_this_turn": planned,
+                    "remaining_after_plan": None,
+                })
+        return out
+
     def dispatch(self, name: str, tool_input: dict) -> dict:
         handler = getattr(self, name, None)
         if handler is None:
@@ -2269,6 +3013,37 @@ def delete_chat_session(db: Session, roadmap: CourseRoadmap, session_id: int) ->
     return True
 
 
+def _fallback_summary(db: Session, pending: list[PendingRoadmapChange]) -> str:
+    """LLM이 finish_response도, 마무리 요약도 못 낸 턴의 최후 폴백.
+
+    쌓인 제안을 학기별로 나열하기만 한다 — 판정도 추천 문장도 없다.
+    """
+    if not pending:
+        return "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
+
+    by_term: dict[tuple[str | None, str | None], list[str]] = {}
+    for change in pending:
+        if change.action != "create" or change.course_id is None:
+            continue
+        course = db.get(Course, change.course_id)
+        if course is None:
+            continue
+        credits = f"{float(course.credits):g}학점" if course.credits is not None else "학점 미상"
+        by_term.setdefault((change.planned_year, change.planned_semester), []).append(
+            f"{course.course_name}({credits}, {course.category or '이수구분 미상'})"
+        )
+    if not by_term:
+        return "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
+
+    lines = ["답변 정리 중 문제가 있어 제안 내용만 그대로 보여드릴게요.", ""]
+    for (year, semester), names in sorted(by_term.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or "")):
+        lines.append(f"## {year}년 {semester}")
+        lines.extend(f"- {name}" for name in names)
+        lines.append("")
+    lines.append("이 변경을 반영할까요?")
+    return "\n".join(lines)
+
+
 def run_roadmap_chat(
     db: Session,
     user: User,
@@ -2368,6 +3143,10 @@ def run_roadmap_chat(
         finished = False
         iterations_used = 0
         non_finish_tool_calls = 0
+        # 미배정 학점을 남긴 채 끝내려는 finish_response를 되돌리는 건 턴당 한 번뿐이다.
+        finish_gate_used = False
+        # "졸업까지 남은 학기 전부" 요청으로 판정된 턴인지 (조건부 규칙 판정 결과 재사용).
+        expects_term_plan = "full_horizon_request" in applied_rules
         for _ in range(MAX_TOOL_ITERATIONS):
             iterations_used += 1
             ai_msg: AIMessage = llm_required.invoke(messages, config=trace.config)
@@ -2383,9 +3162,99 @@ def run_roadmap_chat(
                 name = tool_call["name"]
                 arguments = tool_call["args"] or {}
                 if name == "finish_response":
-                    final_text = arguments.get("message", "")
-                    result = {"delivered": True}
-                    finished = True
+                    gate_reason = None
+                    if (
+                        not finish_gate_used
+                        and iterations_used <= MAX_TOOL_ITERATIONS - _FINISH_GATE_RESERVE
+                    ):
+                        if (
+                            expects_term_plan
+                            and not ctx.term_plan_called
+                            # 남은 학기가 없으면 "remaining_terms에 있는 학기별로
+                            # 채워라"가 실행 불가능한 지시다. 성적표 미업로드 사용자는
+                            # 목록이 비므로(근거가 없으면 지어내지 않는다) 여기 걸린다.
+                            and ctx._remaining_terms()
+                        ):
+                            # "4학년 2학기까지 어떻게 들어야 해?"에 제안을 하나도 만들지
+                            # 않고 "바로 편성 들어갈까요?"라고 되묻고 끝낸 실측이 있다
+                            # (2026-08-20). 제안은 승인 전까지 저장되지 않으므로 미리
+                            # 되묻는 건 한 턴을 통째로 버리는 것이다.
+                            gate_reason = (
+                                "사용자는 남은 학기 전부를 계획해 달라고 했는데 이번 턴에 "
+                                "propose_term_plan을 한 번도 부르지 않았다. 먼저 하겠냐고 "
+                                "되묻지 마라 — 제안은 사용자가 승인해야만 저장되니 되묻는 건 "
+                                "한 턴을 버리는 것이다. get_roadmap_items의 remaining_terms에 "
+                                "있는 학기별로 search_courses로 후보를 모아 propose_term_plan을 "
+                                "호출한 뒤에 finish_response 해라."
+                            )
+                        elif expects_term_plan and ctx.plan_gap is not None:
+                            # propose_term_plan은 불렀는데 채울 수 있는 학기 여유를 남겨둔
+                            # 채 끝내려는 경우다. 도구 응답의 next_action으로 "한 번 더
+                            # 채워라"라고 지시해도 LLM은 그 지시를 사용자에게 **설명만 하고**
+                            # 끝냈다(2026-08-20 실측: 전공선택 23학점을 남긴 채 "다음 단계로
+                            # 더 채우는 플랜을 만들게요"로 종료). 그래서 프롬프트가 아니라
+                            # 루프에서 첫 종료를 되돌린다. 되돌림은 턴당 한 번뿐이다 —
+                            # 후보가 정말 없을 때 무한 루프가 되면 안 된다.
+                            #
+                            # `expects_term_plan`으로 가드한다. plan_gap의 empty_terms는
+                            # 사용자가 요청한 학기가 아니라 **남은 학기 전부**를 보므로,
+                            # 이 조건이 없으면 "다음 학기만 짜줘"에도 "나머지 학기도
+                            # 채워라"라고 되돌린다 — narrow_scope가 full_horizon을 이기게
+                            # 만든 프롬프트 쪽 결정이 여기서 뚫린다.
+                            gap = ctx.plan_gap
+                            if gap["empty_terms"]:
+                                gate_reason = (
+                                    f"{', '.join(gap['empty_terms'])}에 계획된 과목이 "
+                                    "하나도 없다. 사용자는 남은 학기 **전부**를 계획해 "
+                                    "달라고 했다. 그 학기의 개설 학기에 맞는 과목을 "
+                                    "search_courses로 찾아(1학기 슬롯이면 semester='1학기', "
+                                    "2학기 슬롯이면 '2학기') `course_ids`를 채운 뒤 "
+                                    "propose_term_plan을 한 번 더 호출해라. "
+                                    "`course_ids`가 빈 학기를 넣는 건 계획한 게 아니다. "
+                                    "그 다음에 finish_response 해라."
+                                )
+                            elif not gap["unmet_categories"]:
+                                # 이수구분 잔여는 0인데 게이트가 걸린 경우다. 총 이수학점이
+                                # 남았거나(요건 행의 이수구분 합 < 총요구학점) 요건 기준
+                                # 자체를 모른다. 아래 문구를 그대로 쓰면 "아직 0학점이
+                                # 미배정이다()"라는 자가당착 지시가 나간다.
+                                total_left = gap.get("remaining_total_credits_after_plan")
+                                gate_reason = (
+                                    (
+                                        f"이수구분별 잔여는 없지만 졸업 총 이수학점이 "
+                                        f"{total_left:g}학점 남았다."
+                                        if total_left
+                                        else "이 학생의 졸업요건 기준을 숫자로 확인할 수 없어 "
+                                        "무엇이 남았는지 계산하지 못했다."
+                                    )
+                                    + f" 여유 있는 학기: "
+                                    f"{json.dumps(gap['terms_with_room'], ensure_ascii=False)}. "
+                                    "지금 끝내지 말고 그 학기에 담을 과목을 search_courses로 "
+                                    "찾아 propose_term_plan을 한 번 더 호출해라. 그 다음에 "
+                                    "finish_response 해라. 후보를 더 못 찾겠으면 그대로 다시 "
+                                    "finish_response 하되, 요건 충족 여부에 대해 확인된 것만 "
+                                    "적어라."
+                                )
+                            else:
+                                gate_reason = (
+                                    f"아직 {gap['unmet_credits']:g}학점이 미배정이다"
+                                    f"({', '.join(gap['unmet_categories'])}). "
+                                    f"여유 있는 학기: "
+                                    f"{json.dumps(gap['terms_with_room'], ensure_ascii=False)}. "
+                                    "지금 끝내지 말고 그 이수구분으로 search_courses를 다시 "
+                                    "호출해 후보를 모은 뒤, **추가로 넣을 과목만** 담아 "
+                                    "propose_term_plan을 한 번 더 호출해라. 그 다음에 "
+                                    "finish_response 해라. 후보를 더 못 찾겠으면 그대로 다시 "
+                                    "finish_response 하되, 몇 학점이 미배정으로 남는지 "
+                                    "답변에 명시해라."
+                                )
+                    if gate_reason is not None:
+                        finish_gate_used = True
+                        result = {"delivered": False, "error": gate_reason}
+                    else:
+                        final_text = arguments.get("message", "")
+                        result = {"delivered": True}
+                        finished = True
                 else:
                     non_finish_tool_calls += 1
                     with trace.span(f"tool:{name}", as_type="tool", input=arguments) as tool_span:
@@ -2425,7 +3294,10 @@ def run_roadmap_chat(
             except Exception:  # noqa: BLE001 - 마무리 요약 실패는 폴백 문구로 넘어간다
                 final_text = ""
             if not final_text:
-                final_text = "죄송해요, 답변을 정리하지 못했어요. 다시 한 번 말씀해 주세요."
+                # LLM 요약까지 실패해도, 이번 턴에 실제로 쌓인 제안이 있으면 그것만은
+                # 사실 그대로 보여준다. 19건을 제안해놓고 "죄송해요"만 내보내면 사용자는
+                # 승인 대기에 뭐가 올라왔는지 알 수 없다.
+                final_text = _fallback_summary(db, ctx.pending_changes)
 
         # 페이즈 3: assistant 메시지 저장 (DB write + commit).
         with trace.span("persist_assistant_message"):

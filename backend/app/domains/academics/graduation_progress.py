@@ -52,6 +52,48 @@ BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
 # 이수기록 category 원값 → 요건 집계에 쓸 상위 이수구분.
 _CATEGORY_ROLLUP: dict[str, str] = {area: "교양선택" for area in BALANCED_LIBERAL_AREAS}
 
+# `courses.category`(수강편람 어휘) → `graduation_requirements` 라벨(성적표 어휘).
+#
+# 두 어휘가 교양에서 겹치지 않는다. 요건은 `교양필수`/`교양선택`인데 수강편람 과목은
+# `효원핵심교양`/`효원균형교양`/`효원창의교양`/`기초교양`으로 들어온다 — 운영 DB 기준
+# `교양필수`/`교양선택` category를 가진 courses 행은 **0건**이다. 정규화 없이 이름으로
+# 맞추면 교양 과목을 아무리 계획해도 교양 잔여가 1학점도 안 줄어든다.
+#
+# 대응 근거는 2026학년도 교양교육 전면 개편이다
+# (`docs/progress/liberal-arts-area-requirements.md` §3.3, 교양교육원 수강지도 지침 p.1/p.18):
+#   - 교양필수 10학점  → 효원핵심교양 10학점 (같은 과목 묶음)
+#   - 교양선택 12 + 기초교양 3 → 효원균형교양 6 + 기초교양 3 + 효원창의교양 6
+#
+# `교직과목`은 어느 요건 컬럼에도 대응이 없다(사범대 요건 행은 카테고리 합보다
+# 총요구학점이 22학점 크고, 그 차이가 교직이다). 여기 넣지 않고 미분류로 남긴다 —
+# 총 이수학점에는 잡히되 특정 이수구분을 채웠다고 주장하지 않는다.
+COURSE_CATEGORY_TO_REQUIREMENT: dict[str, str] = {
+    "효원핵심교양": "교양필수",
+    "효원균형교양": "교양선택",
+    "효원창의교양": "교양선택",
+    "기초교양": "교양선택",
+}
+
+
+def requirement_category_for_course(category: str | None) -> str | None:
+    """수강편람 과목의 이수구분을 졸업요건 라벨로 정규화한다.
+
+    대응이 없으면 원값을 그대로 돌려준다 — 모르는 값을 임의의 요건에 밀어 넣는 것보다
+    "이 이수구분은 요건에 매핑되지 않는다"가 드러나는 편이 안전하다.
+
+    ⚠️ 폴백으로 쓰는 `_CATEGORY_ROLLUP`(균형교양 세부영역 → 교양선택)은
+    `curriculum_retriever`의 역인덱싱 대상이 **아니다**. 지금은 무해하다 —
+    `courses.category`에 세부영역명(`사상과역사` 등)이 0건이고 그 값은
+    `student_course_records`에만 나타난다. 만약 수강편람에 세부영역명이 들어오기
+    시작하면 검색↔집계가 또 갈리므로, 그때는 `COURSE_CATEGORY_TO_REQUIREMENT`로 옮겨야
+    한다(두 벌을 손으로 유지하다 `기초교양`에서 실제로 어긋났던 전례가 있다).
+    """
+    if category is None:
+        return None
+    return COURSE_CATEGORY_TO_REQUIREMENT.get(
+        category, _CATEGORY_ROLLUP.get(category, category)
+    )
+
 
 @dataclass
 class CategoryProgress:

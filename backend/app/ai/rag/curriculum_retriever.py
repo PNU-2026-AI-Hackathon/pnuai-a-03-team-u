@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.ai.embeddings.openai_client import embed_text
 from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.models import RagChunk
+from app.domains.academics.graduation_progress import COURSE_CATEGORY_TO_REQUIREMENT
 from app.domains.academics.models import GraduationRequirement
 from app.domains.courses.models import Course
 
@@ -75,9 +76,24 @@ def _semester_for_display(value: str | None) -> str | None:
 # 졸업요건 표기(교양필수/교양선택)와 courses.category 원시값(효원핵심교양 등) 사이의
 # 매핑. LLM/사용자는 요건 표기로 필터하고, DB는 원시 카테고리로 저장돼 있어 exact match만
 # 하면 아무것도 안 잡히던 문제를 여기서 흡수한다. 판정 엔진의 CATEGORY_FIELDS와 정합.
+def _requirement_to_course_categories() -> dict[str, tuple[str, ...]]:
+    """요건 라벨 → 그 라벨로 집계되는 `courses.category` 값들.
+
+    `academics`의 `_COURSE_CATEGORY_TO_REQUIREMENT`를 **역인덱싱**한다. 두 벌을 손으로
+    유지하다 실제로 어긋났다 — 검색은 `기초교양`을 `교양필수`로 돌려주는데 집계는
+    `교양선택`으로 세서, LLM이 교양필수를 채우려고 검색 → 기초교양을 받아 제안 →
+    교양필수 잔여는 그대로 → 게이트가 다시 교양필수를 요구하는 루프가 났다.
+    (`기초교양`은 2021교육과정에서 "교양선택 이수학점에 포함", 2026에서 "효원균형·
+    창의교양 이수학점에 포함" — 양쪽 다 선택 버킷이다. 집계 쪽이 맞았다.)
+    """
+    out: dict[str, list[str]] = {}
+    for course_category, requirement in COURSE_CATEGORY_TO_REQUIREMENT.items():
+        out.setdefault(requirement, []).append(course_category)
+    return {k: tuple(v) for k, v in out.items()}
+
+
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
-    "교양필수": ("효원핵심교양", "기초교양"),
-    "교양선택": ("효원균형교양", "효원창의교양"),
+    **_requirement_to_course_categories(),
     # LLM이 종종 접두사("효원") 없는 축약형으로 필터를 부른다 — 2026-08-10 gpt-4o-mini가
     # `category="핵심교양"` 으로 8번 반복 호출하다 소진(빈 응답)한 사건. 실제 DB 값과의
     # 매칭 실패로 빈 결과가 나오면 LLM이 회복을 못 한다. 축약형도 alias로 흡수한다.
