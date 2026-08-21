@@ -327,6 +327,34 @@ class RagRetrieverTest(unittest.TestCase):
         names = [r["course_name"] for r in results]
         self.assertEqual(names.count("공학작문및발표"), 1)
 
+    def test_축약형_카테고리도_alias로_흡수한다(self):
+        """LLM이 접두사 없는 축약형으로 필터를 부르는 일이 실제로 있었다.
+
+        2026-08-10 gpt-4o-mini가 `category="핵심교양"`으로 8번 반복 호출하다 소진(빈 응답)한
+        사건. DB 실제 값과 매칭에 실패해 빈 결과가 나오면 LLM이 회복을 못 한다.
+
+        요건 라벨 alias를 `COURSE_CATEGORY_TO_REQUIREMENT` 역인덱싱으로 바꾸면서 이 축약형
+        세 줄이 조용히 사라져도 아무도 모르는 상태였다(뮤테이션으로 확인).
+        """
+        db = self.make_db()
+        db.add_all([
+            Course(id=1, course_name="핵심", department_id=None, category="효원핵심교양",
+                   credits=3.0, year="3", semester="2"),
+            Course(id=2, course_name="균형", department_id=None, category="효원균형교양",
+                   credits=3.0, year="전학년", semester="전학기"),
+            Course(id=3, course_name="창의", department_id=None, category="효원창의교양",
+                   credits=3.0, year="전학년", semester="전학기"),
+        ])
+        db.commit()
+
+        for shorthand, expected in [("핵심교양", {1}), ("균형교양", {2}), ("창의교양", {3})]:
+            with self.subTest(category=shorthand):
+                results = CurriculumRetriever(db).search(
+                    query="", department_id=10, major_id=None, curriculum_year=2026,
+                    filters={"category": shorthand},
+                )
+                self.assertEqual(expected, {r["course_id"] for r in results})
+
     def test_category_alias_교양필수_matches_효원핵심교양(self):
         """졸업요건 표기(교양필수)로 필터해도 DB 원시 카테고리(효원핵심교양)에 매칭돼야 한다.
         실제 사고: CB1000119 공학작문및발표를 category='교양필수'로 검색하면 0건이 나와

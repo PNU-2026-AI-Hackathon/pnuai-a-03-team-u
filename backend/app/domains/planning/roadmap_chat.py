@@ -282,7 +282,7 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
   바꿔서 다시 검색해라 — 첫 검색 결과가 애매하다고 "추천할 과목이 없다"고 답하지 마라.
 - **다음 학기 추천 시 `get_graduation_progress`에서 `remaining_credits > 0`인 모든
   이수구분에 대해 각각 `search_courses`를 호출해라.** 전공만 훑고 교양은 건너뛰지
-  마라. **효원핵심교양·기초교양 같은 학과 지정 교양(category="교양필수")도 졸업요건이라
+  마라. **효원핵심교양(category="교양필수")·기초교양(category="교양선택") 같은 교양도 졸업요건이라
   남은 학점 있으면 전공과 나란히 추천해라.**
 - **미이수 전공기초·전공필수는 finish_response의 첫 번째 추천 항목으로 무조건 배치해라.**
   대상은 `get_roadmap_items.missing_required_available`에 그대로 담겨 온다 — 도구가
@@ -880,7 +880,8 @@ _TOOLS = [
                         "type": "string",
                         "description": (
                             "이수구분 필터. 학생 자연어를 그대로 넘기면 백엔드가 매핑한다 "
-                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양+기초교양). "
+                            "(예: '핵심교양' → 효원핵심교양, '교양필수' → 효원핵심교양, "
+                            "'교양선택' → 효원균형교양+효원창의교양+기초교양). "
                             "학생이 '균형교양만 더 채우고 싶다'처럼 세부 영역을 콕 집으면 '효원균형교양'으로, "
                             "그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게. "
                             "빈 결과 오면 응답의 `available_categories`를 보고 다른 값으로 재시도 — "
@@ -2607,7 +2608,7 @@ class _ToolContext:
             {
                 "unmet_credits": round(total_unmet, 1),
                 "unmet_categories": [u["category_name"] for u in unmet],
-                "remaining_total_credits": self.remaining_total_after_plan,
+                "remaining_total_credits_after_plan": self.remaining_total_after_plan,
                 "terms_with_room": room,
                 "empty_terms": empty_terms,
             }
@@ -3217,7 +3218,7 @@ def run_roadmap_chat(
                                 # 남았거나(요건 행의 이수구분 합 < 총요구학점) 요건 기준
                                 # 자체를 모른다. 아래 문구를 그대로 쓰면 "아직 0학점이
                                 # 미배정이다()"라는 자가당착 지시가 나간다.
-                                total_left = gap.get("remaining_total_credits")
+                                total_left = gap.get("remaining_total_credits_after_plan")
                                 gate_reason = (
                                     (
                                         f"이수구분별 잔여는 없지만 졸업 총 이수학점이 "

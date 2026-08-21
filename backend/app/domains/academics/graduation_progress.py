@@ -80,6 +80,13 @@ def requirement_category_for_course(category: str | None) -> str | None:
 
     대응이 없으면 원값을 그대로 돌려준다 — 모르는 값을 임의의 요건에 밀어 넣는 것보다
     "이 이수구분은 요건에 매핑되지 않는다"가 드러나는 편이 안전하다.
+
+    ⚠️ 폴백으로 쓰는 `_CATEGORY_ROLLUP`(균형교양 세부영역 → 교양선택)은
+    `curriculum_retriever`의 역인덱싱 대상이 **아니다**. 지금은 무해하다 —
+    `courses.category`에 세부영역명(`사상과역사` 등)이 0건이고 그 값은
+    `student_course_records`에만 나타난다. 만약 수강편람에 세부영역명이 들어오기
+    시작하면 검색↔집계가 또 갈리므로, 그때는 `COURSE_CATEGORY_TO_REQUIREMENT`로 옮겨야
+    한다(두 벌을 손으로 유지하다 `기초교양`에서 실제로 어긋났던 전례가 있다).
     """
     if category is None:
         return None

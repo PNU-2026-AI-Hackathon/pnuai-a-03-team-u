@@ -2734,6 +2734,39 @@ class FinishGateBehaviourTest(unittest.TestCase):
         self.assertIn("총 이수학점", text)
         self.assertNotIn("0학점이 미배정", text)
 
+    def test_요건을_모를_때_되돌리는_문구도_0학점_미배정이_아니다(self):
+        """요건미상 경로도 `unmet_categories=[]`라 같은 자가당착에 걸린다.
+
+        "총학점만 남음" 경로만 고정하면 이쪽은 열려 있다.
+        """
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.query(GraduationRequirement).delete()  # 요건 기준을 모르는 상태
+        for i, (y, sem, g) in enumerate(
+                [("2026", "2학기", 3), ("2027", "1학기", 4), ("2027", "2학기", 4)]):
+            db.add(CourseRoadmapItem(
+                id=930 + i, roadmap_id=1, course_name=f"기존{i}", credits=3.0,
+                planned_year=y, planned_semester=sem, planned_grade=g, status="planned"))
+        db.add(Course(id=940, course_name="아무전선", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1,2"))
+        db.flush()
+
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "계획", "terms": [{
+                    "planned_year": "2026", "planned_semester": "2학기",
+                    "planned_grade": 3, "course_ids": [940]}]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "1차"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "2차"}, "id": "c3"}],
+        ]
+        result, llm = self.run_chat(db, user, roadmap, script, "졸업까지 로드맵 짜줘")
+
+        self.assertEqual(3, llm.calls_made)
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        text = " ".join(gate)
+        self.assertIn("확인할 수 없", text)
+        self.assertNotIn("0학점이 미배정", text)
+
     def test_좁은_요청에는_게이트가_걸리지_않는다(self):
         """"다음 학기만" 요청에 "나머지 학기도 채워라"라고 되돌리면 안 된다.
 
