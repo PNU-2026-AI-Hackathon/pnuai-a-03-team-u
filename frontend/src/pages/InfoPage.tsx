@@ -183,6 +183,29 @@ const TRANSFER_SUBSTITUTION_GRADES = new Set(["1", "2", "전학년"]);
 const LIBERAL_ARTS_CATEGORY_MARK = "교양";
 const MAJOR_CATEGORY_MARK = "전공";
 
+/** One-Stop 졸업예정정보에서 내려오는 효원균형교양 세부영역.
+ *
+ * 백엔드는 이 값을 `student_course_records.liberal_area` 전용 컬럼에 저장한다.
+ * 목록과 순서는 백엔드 `BALANCED_LIBERAL_AREAS`와 반드시 같이 유지해야 한다. */
+const COMPLETED_LIBERAL_AREAS = [
+  "사상과역사",
+  "사회와문화",
+  "문학과예술",
+  "과학과기술",
+  "건강과레포츠",
+  "외국어",
+  "융복합",
+] as const;
+
+function summarizeCompletedLiberalAreas(courses: CourseRecord[]) {
+  return COMPLETED_LIBERAL_AREAS.map((area) => {
+    const matched = courses.filter((course) => course.liberal_area === area || course.category === area);
+    const courseNames = [...new Set(matched.map((course) => course.course_name).filter(Boolean))];
+    const credits = matched.reduce((sum, course) => sum + (course.credits ?? 0), 0);
+    return { area, completed: matched.length > 0, courseNames, credits };
+  });
+}
+
 /** 교양 세부영역 placeholder의 교과목코드 접두사.
  *
  * 부산대는 균형·창의교양의 **영역 자체**를 `courses`에 과목처럼 한 행씩 넣어둔다
@@ -592,6 +615,11 @@ export function InfoPage() {
   const overallGpa = calculateGpa(displayedCourses);
   const overallMajorGpa = calculateGpa(displayedCourses, true);
   const graduationCategoryTotals = displayedGraduation ? getGraduationCategoryTotals(displayedGraduation) : null;
+  const liberalAreaStatuses = useMemo(
+    () => summarizeCompletedLiberalAreas(displayedCourses),
+    [displayedCourses],
+  );
+  const completedLiberalAreaCount = liberalAreaStatuses.filter((area) => area.completed).length;
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1255,6 +1283,34 @@ export function InfoPage() {
             ) : null}
             {graduationEditError ? <p className="profile-edit-error graduation-edit-error" role="alert">{graduationEditError}</p> : null}
             {displayedGraduation?.warnings.map((warning) => <p className="graduation-warning" key={warning}>{warning}</p>)}
+            {displayedGraduation ? (
+              <section className="liberal-area-summary" aria-labelledby="liberal-area-summary-title">
+                <div className="liberal-area-summary-head">
+                  <div>
+                    <p>교양 영역</p>
+                    <h4 id="liberal-area-summary-title">효원균형교양 이수 현황</h4>
+                  </div>
+                  <strong>{completedLiberalAreaCount}/{COMPLETED_LIBERAL_AREAS.length}개 영역 확인</strong>
+                </div>
+                <ul className="liberal-area-grid">
+                  {liberalAreaStatuses.map((status) => (
+                    <li className={status.completed ? "is-completed" : undefined} key={status.area}>
+                      <span className="liberal-area-check" aria-hidden="true">
+                        {status.completed ? <Check size={12} /> : null}
+                      </span>
+                      <span className="liberal-area-copy">
+                        <strong>{status.area}</strong>
+                        <small>
+                          {status.completed
+                            ? `${status.courseNames.join(", ")}${status.credits > 0 ? ` · ${formatCredit(status.credits)}학점` : ""}`
+                            : "이수 내역 없음"}
+                        </small>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
           </article>
 
           <article className="card info-section-card" id="grades">
@@ -1287,6 +1343,9 @@ export function InfoPage() {
                     <option value="전공선택">전공선택</option>
                     <option value="교양필수">교양필수</option>
                     <option value="교양선택">교양선택</option>
+                    <optgroup label="교양 세부영역">
+                      {COMPLETED_LIBERAL_AREAS.map((area) => <option value={area} key={area}>{area}</option>)}
+                    </optgroup>
                     <option value="일반선택">일반선택</option>
                   </select>
                 </label>

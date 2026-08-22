@@ -233,6 +233,9 @@ def map_grades(db: Session, user_id: int, grades_tables: list[list[list[str]]]) 
                 source="crawler",
             )
             record.category = normalized_category
+            # 같은 학생을 다시 동기화할 때 과거 졸업예정정보 판정이 남지 않게 먼저
+            # 비운다. portal_sync가 이번 크롤의 학교 공식 판정으로 다시 채운다.
+            record.liberal_area = None
             record.credits = _to_float(credits)
             record.grade = grade or None
             record.grade_point = _grade_to_point(grade)
