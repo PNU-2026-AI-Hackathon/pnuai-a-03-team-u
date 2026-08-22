@@ -29,13 +29,9 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
 
 # 효원균형교양 7개 세부영역.
 #
-# portal_sync._refine_liberal_area_categories가 One-Stop 졸업예정정보를 근거로
-# student_course_records.category를 '교양선택' → 세부영역명으로 덮어쓴다(로드맵 챗이
-# "너 사상과역사 아직 안 들었네" 같은 조언을 하려면 이 값이 필요하다).
-#
-# 그래서 집계할 때 이 값들을 다시 '교양선택'으로 롤업하지 않으면 **이수학점이 통째로
-# 사라진다** — 균형교양 18학점을 이수한 학생이 포털 동기화 후 "교양선택 0학점 이수,
-# 18학점 남음"으로 표시되는 실제 버그가 있었다(2026-08-13 발견).
+# portal_sync._refine_liberal_area_categories는 이제 One-Stop 졸업예정정보를 근거로
+# student_course_records.liberal_area에 세부영역명을 별도 저장한다. 아래 롤업은
+# 마이그레이션 전 데이터나 테스트처럼 category에 세부영역이 남은 경우의 호환 장치다.
 #
 # 여기(academics)에 두는 이유: 판정 엔진이 진짜 소비자이고, planning(로드맵 챗)이
 # 이걸 가져다 쓰는 방향이 모듈 경계상 맞다.

@@ -702,11 +702,13 @@ class StudentContextBlockTest(unittest.TestCase):
         db = self.make_db()
         db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
                     department_id=None, major_id=None, career_goal=None))
-        # 세부영역 이수 rows (portal_sync가 override 한 상태). 사상과역사 3학점 + 사회와문화 3학점.
+        # 세부영역 이수 rows (portal_sync가 전용 컬럼에 저장한 상태).
         db.add(StudentCourseRecord(user_id=1, raw_course_name="서양철학사",
-                                     category="사상과역사", credits=3, year="2025", semester="1"))
+                                     category="교양선택", liberal_area="사상과역사",
+                                     credits=3, year="2025", semester="1"))
         db.add(StudentCourseRecord(user_id=1, raw_course_name="현대사회의이해",
-                                     category="사회와문화", credits=3, year="2025", semester="2"))
+                                     category="교양선택", liberal_area="사회와문화",
+                                     credits=3, year="2025", semester="2"))
         # override 안 된 교양선택 (미이수 세부영역 판정 대상)
         db.add(StudentCourseRecord(user_id=1, raw_course_name="영화의이해",
                                      category="교양선택", credits=2, year="2025", semester="1"))

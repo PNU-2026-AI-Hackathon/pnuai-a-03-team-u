@@ -69,7 +69,7 @@ _TIMETABLE_CORE_PROMPT = """너는 부산대 학생의 이번 학기 시간표�
 **너는 시간표를 직접 만들지 않는다.** 시간이 겹치는 시간표를 내놓으면 수강신청이
 막힌다. 대신:
 1. `get_student_context`로 학생 수강기록·진로·학과·학점상한·**카테고리별 남은 학점
-   (`remaining_by_category`)** 을 먼저 본다.
+   (`remaining_by_category`)**·균형교양 이수/미이수 영역을 먼저 본다.
 2. **`remaining_by_category`가 비어있지 않으면 각 카테고리별로 `list_offered_courses`를
    반드시 호출해라.** 예: `remaining_by_category=[{전공필수: 12}, {교양필수: 3}]` 이면
    `list_offered_courses(category="전공필수")` 와 `list_offered_courses(category="교양필수")`
@@ -144,6 +144,9 @@ offering_id를 그대로 수강신청에 담으면 됩니다" 같은 문장은 �
 
 **우선순위**:
 - 이미 이수한 과목은 다시 추천 X (`completed_course_names`).
+- 교양선택 과목을 추천할 때는 `missing_liberal_areas`를 우선 채우고,
+  `completed_liberal_areas`에 있는 영역을 이미 충족한 것으로 취급해라. 영역 정보는
+  One-Stop의 학교 판정을 DB에 저장한 값이므로 과목명만 보고 영역을 추측하지 마라.
 - 학생이 "가볍게 듣고 싶어" 같은 학점/과목수 선호 말하면 그 방향으로 좁힌다.
 - 진로 관련 전공 과목을 우선. 부족한 학점은 관련 있는 교양으로 채운다.
 - 사용자가 로드맵을 언급하거나 "내 계획대로" 같은 표현을 쓰면 그때만 `get_roadmap_hint`.
@@ -281,6 +284,7 @@ _TOOLS = [
             "name": "get_student_context",
             "description": (
                 "학생의 학과·진로·이수기록·이번 학기 학점 상한과 함께 "
+                "**completed_liberal_areas / missing_liberal_areas**(균형교양 영역 현황), "
                 "**critical_missing_required**(이번 학기 개설 X 미이수 필수 = 지연 위험), "
                 "**retake_candidates**(C+ 이하 성적 이수 = 재수강 권유 후보), "
                 "**prereq_blocked**(선수과목 미이수라 담기 부적절한 학과 과목 목록)"
@@ -1182,7 +1186,10 @@ class _TimeTableToolContext:
         return payload
 
     def get_student_context(self) -> dict:
-        from app.domains.academics.graduation_progress import compute_graduation_progress
+        from app.domains.academics.graduation_progress import (
+            BALANCED_LIBERAL_AREAS,
+            compute_graduation_progress,
+        )
         from app.domains.planning.history import project_curriculum_term
 
         completed = _completed_course_norms(self.db, self.user.id)
@@ -1212,6 +1219,38 @@ class _TimeTableToolContext:
         except Exception:  # noqa: BLE001 - 판정 실패 시 시간표 챗 자체가 죽으면 안 됨
             pass
 
+        # One-Stop이 공식 판정한 균형교양 세부영역을 시간표 LLM에도 구조화해 전달한다.
+        # 새 DB는 category='교양선택', liberal_area='사상과역사'로 분리한다. 마이그레이션
+        # 전 임시 DB/테스트의 category=세부영역 값도 읽어 하위 호환한다.
+        records_by_liberal_area: dict[str, list[StudentCourseRecord]] = {}
+        liberal_area_set = set(BALANCED_LIBERAL_AREAS)
+        course_records = self.db.scalars(
+            select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
+        ).all()
+        for record in course_records:
+            area = record.liberal_area or (
+                record.category if record.category in liberal_area_set else None
+            )
+            if area in liberal_area_set:
+                records_by_liberal_area.setdefault(area, []).append(record)
+
+        completed_liberal_areas: list[dict] = []
+        missing_liberal_areas: list[str] = []
+        for area in BALANCED_LIBERAL_AREAS:
+            area_records = records_by_liberal_area.get(area, [])
+            if not area_records:
+                missing_liberal_areas.append(area)
+                continue
+            completed_liberal_areas.append({
+                "area": area,
+                "credits": sum(
+                    float(record.credits)
+                    for record in area_records
+                    if record.credits is not None
+                ),
+                "course_names": sorted({record.raw_course_name for record in area_records}),
+            })
+
         return {
             # user_id는 학번이 아니라 내부 PK다. 필드명을 "student_id"로 두면 LLM이
             # 실제 학번으로 오해해서 응답 문자열에 그대로 노출할 수 있어 이름을 바꿨다.
@@ -1227,6 +1266,10 @@ class _TimeTableToolContext:
             # 달력 학기로 필터해야 하고, 요건·학년 판단은 커리큘럼으로 해라.
             "target_curriculum_term": {"grade": target_grade, "semester": target_curr_sem},
             "completed_course_names": sorted(completed),
+            # 학교 판정 기반 균형교양 현황. 시간표 추천 시 이미 채운 영역을 반복 추천하지
+            # 않고 아직 비어 있는 영역을 우선하도록 시스템 프롬프트가 지시한다.
+            "completed_liberal_areas": completed_liberal_areas,
+            "missing_liberal_areas": missing_liberal_areas,
             # 카테고리별 부족분. 이 목록을 훑어 각 항목별로 list_offered_courses 호출해라.
             "remaining_by_category": remaining_by_category,
             # 이번 학기(target_term)에 개설 안 되는 미이수 필수 과목 목록. 비어있지

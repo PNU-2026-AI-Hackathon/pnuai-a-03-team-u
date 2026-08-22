@@ -119,6 +119,7 @@ class CourseRecordResponse(BaseModel):
     id: int
     course_name: str = Field(validation_alias="raw_course_name")
     category: str | None
+    liberal_area: str | None
     credits: float | None
     year: str | None
     semester: str | None
@@ -214,6 +215,7 @@ class CourseRecordInput(BaseModel):
     id: int | None = None
     course_name: str
     category: str | None = None
+    liberal_area: str | None = None
     credits: float | None = Field(default=None, ge=0)
     year: str | None = None
     semester: str | None = None
@@ -305,7 +307,7 @@ def sync_portal_data(
     )
     if liberal_area_updates:
         logging.getLogger(__name__).info(
-            "균형교양 세부영역 category 반영 (user_id=%s): %s개 record 업데이트",
+            "균형교양 세부영역 liberal_area 반영 (user_id=%s): %s개 record 업데이트",
             current_user.id, liberal_area_updates,
         )
     # 학교 공식 졸업 판정 스냅샷. 예전엔 이 페이지에서 표 0(학적신청)과 균형교양
@@ -424,15 +426,16 @@ def _refine_liberal_area_categories(
     requirement_items: list[dict],
 ) -> int:
     """One-Stop 졸업예정정보 general_education_area_completion 표에서 학생이 실제로 어느
-    세부영역(예: '사회와문화', '사상과역사')에 이수했는지 뽑아 student_course_records.category를
-    상위값('교양선택')에서 세부값으로 override 한다.
+    세부영역(예: '사회와문화', '사상과역사')에 이수했는지 뽑아
+    student_course_records.liberal_area에 저장한다. 상위 이수구분 category='교양선택'은
+    그대로 유지해 졸업요건 학점 집계와 세부영역 판정을 분리한다.
 
-    로드맵 챗이 균형교양 6개 세부영역별로 "너 사상과역사 3학점 이수했네" 같은 조언을
+    로드맵 챗이 균형교양 7개 세부영역별로 "너 사상과역사 3학점 이수했네" 같은 조언을
     하려면 이 세부값이 이수기록에 있어야 한다. 학교 공식 판정 결과를 근거로 채우므로
     학과 규칙 판별 로직 없이도 안전.
 
     - 매칭: 학생이수정보_교과목명을 student_course_records.raw_course_name과 정규화(공백 제거) 후 비교
-    - 이수여부='이수'인 rows만 반영. '미이수'는 원 category 유지.
+    - 이수여부='이수'인 rows만 반영. '미이수'는 liberal_area를 채우지 않는다.
     - '1영역 : 사상과역사' 형식에서 접두 '숫자영역 :' 제거해 순수 영역명만 저장.
     """
     area_rows = [
@@ -464,26 +467,22 @@ def _refine_liberal_area_categories(
         if not area_name:
             continue
 
-        # **판정 엔진이 아는 영역명일 때만 덮어쓴다.**
-        # 이 값은 졸업요건 집계에서 `_CATEGORY_ROLLUP`이 '교양선택'으로 되돌리는데, 그
-        # 롤업은 고정된 7개 이름 목록(BALANCED_LIBERAL_AREAS)으로 동작한다. One-Stop 원문이
-        # 조금만 달라도(예: '사상과 역사'처럼 공백 하나) 롤업이 못 알아보고 그 학점이
-        # 교양선택 집계에서 통째로 사라진다 — 2026-08-13에 고친 버그가 그대로 재발한다.
-        # 모르는 이름이면 덮어쓰지 않고 '교양선택'을 유지한다(집계는 정확, 세부영역 조언만 못함).
+        # **판정 엔진이 아는 영역명일 때만 저장한다.** 모르는 값을 추측해 넣으면 화면과
+        # LLM이 존재하지 않는 영역을 이수했다고 판단할 수 있다.
         normalized_area = _match_known_liberal_area(area_name)
         if normalized_area is None:
             unknown_areas.add(area_name)
             continue
 
         for rec in records_by_name.get(_norm(student_course), []):
-            if rec.category != normalized_area:
-                rec.category = normalized_area
+            if rec.liberal_area != normalized_area:
+                rec.liberal_area = normalized_area
                 updated += 1
 
     if unknown_areas:
         logging.getLogger(__name__).warning(
             "One-Stop 균형교양 영역명을 판정 엔진이 모른다 (user_id=%s): %s. "
-            "덮어쓰지 않고 '교양선택'을 유지했다 — BALANCED_LIBERAL_AREAS 갱신이 필요한지 확인할 것.",
+            "liberal_area에 저장하지 않았다 — BALANCED_LIBERAL_AREAS 갱신이 필요한지 확인할 것.",
             user_id, sorted(unknown_areas),
         )
     return updated
@@ -558,7 +557,17 @@ def replace_course_records(
             )
             db.add(record)
         record.raw_course_name = name
-        record.category = course.category.strip() if course.category else None
+        category = course.category.strip() if course.category else None
+        liberal_area = course.liberal_area.strip() if course.liberal_area else None
+        # 구버전 프론트나 수동 편집 화면이 세부영역을 category로 보내도 DB 경계에서
+        # 올바른 두 필드로 정규화한다.
+        if category in BALANCED_LIBERAL_AREAS:
+            liberal_area = category
+            category = "교양선택"
+        if liberal_area is not None and liberal_area not in BALANCED_LIBERAL_AREAS:
+            raise HTTPException(status_code=422, detail="알 수 없는 교양 세부영역입니다")
+        record.category = category
+        record.liberal_area = liberal_area
         record.credits = course.credits
         record.year = course.year.strip() if course.year else None
         record.semester = course.semester.strip() if course.semester else None

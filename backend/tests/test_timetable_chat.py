@@ -719,6 +719,50 @@ class StudentContextTest(unittest.TestCase):
         # roadmap 챗과 동일한 critical_missing_required 필드가 timetable에도 노출됨
         self.assertIn("critical_missing_required", result)
 
+    def test_get_student_context_includes_liberal_area_completion_from_db(self):
+        """시간표 LLM이 전용 liberal_area 컬럼의 이수/미이수 영역을 직접 받는다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add_all([
+            StudentCourseRecord(
+                user_id=user.id, raw_course_name="역사의이해", category="교양선택",
+                liberal_area="사상과역사", credits=3.0,
+            ),
+            StudentCourseRecord(
+                user_id=user.id, raw_course_name="세계문화", category="교양선택",
+                liberal_area="사회와문화", credits=3.0,
+            ),
+        ])
+        db.flush()
+
+        result = _TimeTableToolContext(
+            db, user, year="2026", semester="2학기"
+        ).get_student_context()
+
+        completed = {item["area"]: item for item in result["completed_liberal_areas"]}
+        self.assertEqual(3.0, completed["사상과역사"]["credits"])
+        self.assertEqual(["역사의이해"], completed["사상과역사"]["course_names"])
+        self.assertIn("사회와문화", completed)
+        self.assertNotIn("사상과역사", result["missing_liberal_areas"])
+        self.assertIn("과학과기술", result["missing_liberal_areas"])
+
+    def test_get_student_context_supports_legacy_liberal_area_category(self):
+        """마이그레이션 전 category에 남은 세부영역도 누락 없이 전달한다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="문학의세계", category="문학과예술", credits=3.0,
+        ))
+        db.flush()
+
+        result = _TimeTableToolContext(
+            db, user, year="2026", semester="2학기"
+        ).get_student_context()
+
+        completed_areas = {item["area"] for item in result["completed_liberal_areas"]}
+        self.assertIn("문학과예술", completed_areas)
+        self.assertNotIn("문학과예술", result["missing_liberal_areas"])
+
     def test_critical_missing_flags_required_not_open_this_semester(self):
         """target_term=2학기인데 필수과목이 1학기 전용 개설이고 미이수면 critical.
         roadmap 챗의 동일 헬퍼를 재사용하므로 로직 자체는 roadmap 테스트가 커버 —

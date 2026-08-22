@@ -14,6 +14,8 @@ export type CourseRecord = {
   id: number;
   course_name: string;
   category: string | null;
+  /** One-Stop 학교 판정에서 확인된 효원균형교양 세부영역. */
+  liberal_area?: string | null;
   credits: number | null;
   year: string | null;
   semester: string | null;
@@ -81,14 +83,15 @@ export type GraduationProgress = {
 };
 
 const mockCourses: CourseRecord[] = [
-  { id: 1, course_name: "데이터베이스", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
-  { id: 2, course_name: "자료구조", category: "전공필수", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
-  { id: 3, course_name: "선형대수", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "B+", match_status: "matched", source: "mock" },
-  { id: 4, course_name: "웹프로그래밍", category: "전공선택", credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
-  { id: 5, course_name: "교양 선택", category: "교양선택", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
-  { id: 6, course_name: "Python Programming", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
-  { id: 7, course_name: "확률및통계 II", category: "전공기초", credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
-  { id: 8, course_name: "인공지능과 디지털 사고", category: "교양필수", credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 1, course_name: "데이터베이스", category: "전공필수", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 2, course_name: "자료구조", category: "전공필수", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 3, course_name: "선형대수", category: "전공선택", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "B+", match_status: "matched", source: "mock" },
+  { id: 4, course_name: "웹프로그래밍", category: "전공선택", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 5, course_name: "역사의 이해", category: "교양선택", liberal_area: "사상과역사", credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 6, course_name: "Python Programming", category: "전공기초", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 7, course_name: "확률및통계 II", category: "전공기초", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 8, course_name: "인공지능과 디지털 사고", category: "교양필수", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
+  { id: 9, course_name: "현대사회와 문화", category: "교양선택", liberal_area: "사회와문화", credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
 ];
 
 const mockGraduationProgress: GraduationProgress = {
@@ -190,6 +193,7 @@ export async function replaceCourseRecords(courses: CourseRecord[]) {
       id: course.id > 0 ? course.id : undefined,
       course_name: course.course_name,
       category: course.category,
+      liberal_area: course.liberal_area,
       credits: course.credits,
       year: course.year,
       semester: course.semester,
