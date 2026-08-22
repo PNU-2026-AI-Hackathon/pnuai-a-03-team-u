@@ -27,7 +27,10 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
     "required_free_elective": "일반선택",
 }
 
-# 효원균형교양 7개 세부영역.
+# "교양선택" 세부영역 8개 — **2021교육과정(2022~2025학번) 구체계 영역명**이다.
+# "효원균형교양"이 아니다 — 그건 2026교육과정에서 새로 생긴 이름이고 영역 구성도 다르다
+# (docs/progress/liberal-arts-area-requirements.md §4.1/§7.2 조사 참고). 지금 재학생
+# 대다수(2026학번 신입생 제외)가 이 구체계를 쓰므로 여기 하드코딩된 값이 실질적으로 맞다.
 #
 # portal_sync._refine_liberal_area_categories가 One-Stop 졸업예정정보를 근거로
 # student_course_records.category를 '교양선택' → 세부영역명으로 덮어쓴다(로드맵 챗이
@@ -39,6 +42,11 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
 #
 # 여기(academics)에 두는 이유: 판정 엔진이 진짜 소비자이고, planning(로드맵 챗)이
 # 이걸 가져다 쓰는 방향이 모듈 경계상 맞다.
+#
+# ⚠️ 2026교육과정(효원균형교양/효원창의교양, 영역명도 다름 — 예: 외국어→세계와소통,
+# 융복합→융합과창의, 신설 인성과사회봉사)은 여기 없다. 세대별로 분기하는 게 맞고
+# (curriculum_year 기준), 영역 이수 규칙 자체도 학과·전공별로 달라 위 문서 §6대로
+# 별도 설계가 필요하다 — 지금 이 튜플에 2026 이름을 섞어 넣으면 안 된다.
 BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
     "사상과역사",
     "사회와문화",
@@ -47,6 +55,7 @@ BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
     "건강과레포츠",
     "외국어",
     "융복합",
+    "효원브릿지",  # 8영역. 2022학년도 신입생부터 적용(REG 부칙) — 이전엔 누락돼 있었다.
 )
 
 # 이수기록 category 원값 → 요건 집계에 쓸 상위 이수구분.

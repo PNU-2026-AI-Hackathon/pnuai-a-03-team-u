@@ -715,8 +715,8 @@ class StudentContextBlockTest(unittest.TestCase):
         # 이수 영역이 학점과 함께 나온다
         self.assertIn("사상과역사: 3학점 이수", block)
         self.assertIn("사회와문화: 3학점 이수", block)
-        # 미이수 영역 목록에 나머지 5개가 다 잡힌다
-        for area in ["문학과예술", "과학과기술", "건강과레포츠", "외국어", "융복합"]:
+        # 미이수 영역 목록에 나머지 6개가 다 잡힌다
+        for area in ["문학과예술", "과학과기술", "건강과레포츠", "외국어", "융복합", "효원브릿지"]:
             self.assertIn(area, block)
         # 이미 이수한 영역은 "미이수" 라벨 뒤에 딸린 목록에는 나오지 않는다
         # (전체 블록에는 "이수" 섹션에서 등장하므로, 문자열 위치로 확인)

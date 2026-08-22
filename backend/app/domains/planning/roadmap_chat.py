@@ -75,7 +75,8 @@ MAX_TOOL_ITERATIONS = 12
 # 못했어요"가 나갔다. 제안은 19건이나 쌓여 있었는데도).
 _FINISH_GATE_RESERVE = 4
 
-# 균형교양 7개 세부영역. portal_sync._refine_liberal_area_categories가 One-Stop
+# "교양선택" 세부영역 8개(2021교육과정 구체계 — graduation_progress.BALANCED_LIBERAL_AREAS
+# 참고). portal_sync._refine_liberal_area_categories가 One-Stop
 # 졸업예정정보 판정을 근거로 student_course_records.category를 상위값('교양선택')에서
 # 이 세부영역명으로 override 한다. 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
 # 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
@@ -2874,7 +2875,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
         # 상수 앞 3개를 하드코딩하던 옛 버전은 이미 이수한 영역을 예시로 드는 어색함이 있었다.
         missing_example = "'" + "/".join(missing_areas[:2]) + "'"
     else:
-        missing_block = "(없음 — 7개 세부영역 모두 최소 1과목 이수)"
+        missing_block = f"(없음 — {len(_BALANCED_LIBERAL_AREAS)}개 세부영역 모두 최소 1과목 이수)"
         missing_example = "'미이수 영역'"
 
     career = user.career_goal.strip() if user.career_goal else ""
@@ -2935,7 +2936,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
     같은 과목이라 단정하지 말고, 후보에 뜨면 사용자에게 "같은 과목인가요?"라고 되물어
     확인 후 다음 턴에 제외해라. 우리 데이터로 동치 여부를 확인할 방법이 없다.
 
-- **균형교양 세부영역 이수 현황(One-Stop 학교 판정 결과 기반, 7개 영역 중)**:
+- **균형교양 세부영역 이수 현황(One-Stop 학교 판정 결과 기반, {len(_BALANCED_LIBERAL_AREAS)}개 영역 중)**:
 {balanced_block}
   → 미이수 세부영역: {missing_block}
   → 균형교양은 총 학점만 채우는 게 아니라 **세부영역 골고루** 이수해야 졸업요건이 인정된다.
