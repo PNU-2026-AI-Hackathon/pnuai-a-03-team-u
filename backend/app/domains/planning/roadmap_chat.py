@@ -2889,8 +2889,15 @@ def _build_student_context_block(db: Session, user: User) -> str:
     for area in _BALANCED_LIBERAL_AREAS:
         completion = liberal_completions[area]
         if completion.completed:
-            if completion.direct_credits:
-                status = f"{completion.direct_credits:g}학점 이수"
+            # direct_credits(학점 합계)가 아니라 direct_records(직접 이수 근거 자체)로
+            # 갈라야 한다 — 직접 이수 레코드가 있어도 credits가 None/0(크롤링 파싱
+            # 공백, 0학점 필수 과목)이면 direct_credits가 falsy라 대체 인정이 없는데도
+            # "대체 인정"으로 잘못 표시되던 버그가 있었다.
+            if completion.direct_records:
+                if completion.direct_credits:
+                    status = f"{completion.direct_credits:g}학점 이수"
+                else:
+                    status = "이수 (학점 정보 없음)"
                 if completion.substituted_records:
                     status += " + 대체 인정"
             else:

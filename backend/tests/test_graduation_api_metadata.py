@@ -87,3 +87,41 @@ def test_non_primary_response_includes_names_and_track_marker():
     assert programs["dual"].is_ai_track is False
     assert programs["interdisciplinary"].major_name == "AI융합트랙명"
     assert programs["interdisciplinary"].is_ai_track is True
+
+
+def test_is_ai_track_matches_the_same_row_the_progress_computation_actually_used():
+    """같은 학과×전공×program_type에 curriculum_year가 다른 요건 행이 둘 있을 때
+    (실제로 존재하는 상황 — graduation_requirements에 유니크 제약이 없다),
+    is_ai_track은 학생의 curriculum_year와 정확히 일치하는(=_find_requirement가 실제로
+    고른) 행을 봐야 한다. AI트랙이 아닌 행을 이 학생이 쓰는데 다른 연도의 AI트랙 행이
+    먼저 insert돼 있으면, curriculum_year 필터 없는 조회는 그 AI트랙 행을 잘못 집는다."""
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=_TABLES)
+    db = sessionmaker(bind=engine)()
+    db.add_all([
+        School(id=1, name="부산대학교"),
+        College(id=1, school_id=1, name="단과대"),
+        Department(id=30, college_id=1, name="트랙학과"),
+        Major(id=31, department_id=30, name="AI융합트랙명"),
+        User(id=1, email="student@example.com", password_hash="x", name="학생",
+             department_id=30, major_id=31),
+    ])
+    db.flush()
+    db.add_all([
+        UserAcademicProgram(user_id=1, department_id=30, major_id=31,
+                            program_type="interdisciplinary", curriculum_year="2024"),
+        # 학생의 curriculum_year(2024)와 다른 2026행을 먼저 넣는다 — id 순서상 먼저
+        # 오면 curriculum_year 필터가 없는 조회에서 이게 잡힌다.
+        GraduationRequirement(department_id=30, major_id=31, program_type="interdisciplinary",
+                              curriculum_year="2026", required_total_credits=21,
+                              special_rules={"certification_type": "AI융합트랙"}),
+        GraduationRequirement(department_id=30, major_id=31, program_type="interdisciplinary",
+                              curriculum_year="2024", required_total_credits=21),
+    ])
+    db.commit()
+
+    response = _build_graduation_response(db, db.get(User, 1), include_non_primary=True)
+    program = next(p for p in response.programs if p.program_type == "interdisciplinary")
+
+    assert program.curriculum_year == "2024"
+    assert program.is_ai_track is False

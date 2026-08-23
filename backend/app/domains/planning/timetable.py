@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import time
 from typing import Any
@@ -235,13 +235,19 @@ def _term_credit_cap(db: Session, user: User) -> int:
     return 21 if req.required_total_credits >= 133 else 19
 
 
-def _completed_course_norms(db: Session, user_id: int) -> set[str]:
+def _completed_course_norms(
+    db: Session, user_id: int, *, records: Sequence[StudentCourseRecord] | None = None,
+) -> set[str]:
     """이수 기록 과목명을 정규화해 셋으로. 대체 후보에서 이수 완료 과목을 제외할 때 쓴다.
 
     편입생이 직접 등록한 대체 관계가 있으면 **대체된 PNU 과목명도 여기 들어간다.**
     전적대 `데이터구조`가 PNU `자료구조`를 대체했다고 학생이 지정했으면, 성적표에는
     `자료구조`가 없어도 다시 추천하면 안 되기 때문이다
     (근거는 `app.domains.academics.course_substitution` 참고).
+
+    `records`를 넘기면 그 목록을 그대로 쓴다 — 호출자가 이미 같은 user_id로
+    `StudentCourseRecord`를 조회해뒀다면(예: 균형교양 집계용) 같은 조회를 반복하지
+    않기 위함이다.
     """
     def _norm(n: str | None) -> str:
         if not n:
@@ -250,9 +256,10 @@ def _completed_course_norms(db: Session, user_id: int) -> set[str]:
         s = "".join(roman.get(ch, ch) for ch in n)
         return s.replace("(", "").replace(")", "").replace(" ", "").strip()
 
-    records = db.scalars(
-        select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
-    ).all()
+    if records is None:
+        records = db.scalars(
+            select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
+        ).all()
     names = [r.raw_course_name for r in records]
     names.extend(substituted_course_names(db, user_id))
     return {n for n in (_norm(name) for name in names) if n}

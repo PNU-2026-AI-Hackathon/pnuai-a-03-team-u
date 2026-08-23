@@ -186,6 +186,53 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
         self.assertEqual(len(reloaded), 2)
         self.assertEqual(next(record for record in reloaded if record.id == saved_id).grade, "A0")
 
+    def test_liberal_area_cleared_when_category_moves_off_general_elective(self):
+        """category가 교양선택에서 다른 값으로 바뀌면, payload가 이전 liberal_area를
+        그대로 들고 와도 서버가 강제로 지워야 한다. 안 그러면 liberal_area_completions()가
+        이미 다른 이수구분으로 옮겨간 과목을 계속 그 세부영역 이수로 잘못 집계한다."""
+        created = replace_course_records(
+            CourseRecordsReplaceRequest(
+                courses=[
+                    CourseRecordInput(
+                        course_name="철학의이해",
+                        category="교양선택",
+                        liberal_area="사상과역사",
+                        credits=3,
+                        year="2026",
+                        semester="1",
+                    )
+                ]
+            ),
+            current_user=self.user,
+            db=self.db,
+        )
+        saved_id = created[0].id
+        record = self.db.get(StudentCourseRecord, saved_id)
+        self.assertEqual("사상과역사", record.liberal_area)
+
+        # 프론트가 category만 바꿔 재제출하면서 liberal_area를 여전히 실어 보내는 상황을
+        # 재현한다 (기존 레코드를 불러와 category 필드만 고친 뒤 그대로 재전송하는 경우).
+        replace_course_records(
+            CourseRecordsReplaceRequest(
+                courses=[
+                    CourseRecordInput(
+                        id=saved_id,
+                        course_name="철학의이해",
+                        category="교양필수",
+                        liberal_area="사상과역사",
+                        credits=3,
+                        year="2026",
+                        semester="1",
+                    )
+                ]
+            ),
+            current_user=self.user,
+            db=self.db,
+        )
+        self.db.refresh(record)
+        self.assertEqual("교양필수", record.category)
+        self.assertIsNone(record.liberal_area)
+
     def test_profile_and_advisor_status_are_persisted(self):
         response = update_profile(
             ProfileUpdateRequest(

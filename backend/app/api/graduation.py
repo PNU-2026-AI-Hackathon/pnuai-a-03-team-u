@@ -18,12 +18,10 @@ from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.models import (
     Department,
-    GraduationRequirement,
     Major,
     StudentGraduationCategory,
     StudentGraduationRequirement,
 )
-from app.domains.academics.tracks import is_ai_track
 from app.domains.academics.graduation_progress import (
     CategoryProgress,
     ProgramProgress,
@@ -85,15 +83,6 @@ class ProgramProgressResponse(BaseModel):
             else None
         )
         major = db.get(Major, progress.major_id) if db and progress.major_id else None
-        track_requirement = None
-        if db and progress.program_type == "interdisciplinary":
-            track_requirement = db.scalars(
-                select(GraduationRequirement).where(
-                    GraduationRequirement.department_id == progress.department_id,
-                    GraduationRequirement.major_id == progress.major_id,
-                    GraduationRequirement.program_type == progress.program_type,
-                )
-            ).first()
         return cls(
             user_academic_program_id=progress.user_academic_program_id,
             program_type=progress.program_type,
@@ -101,7 +90,7 @@ class ProgramProgressResponse(BaseModel):
             department_name=department.name if department else None,
             major_id=progress.major_id,
             major_name=major.name if major else None,
-            is_ai_track=is_ai_track(track_requirement) if track_requirement else False,
+            is_ai_track=progress.is_ai_track,
             curriculum_year=progress.curriculum_year,
             requirement_found=progress.requirement_found,
             required_total_credits=progress.required_total_credits,
