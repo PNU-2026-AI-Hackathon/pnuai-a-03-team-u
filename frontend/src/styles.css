@@ -8406,6 +8406,8 @@ body.theme-dark .topnav .theme-mode-button {
   gap: clamp(20px, 1.6vw, 28px);
   width: 100%;
   margin: clamp(32px, 3vw, 48px) auto 0;
+  /* 반응형 기준은 브라우저 전체 폭이 아니라 사이드바를 제외한 실제 본문 폭이다. */
+  container-type: inline-size;
 }
 
 .timetable-head {
@@ -9499,13 +9501,21 @@ body.theme-dark .timetable-panel {
   background: #243346;
 }
 
-@media (max-width: 1400px) {
+/* 브라우저 폭이 넓어도 펼친 사이드바 때문에 실제 본문은 좁을 수 있다.
+   데스크톱에서는 세 카드를 한 줄에 유지하되, 본문 폭에 맞춰 최소 폭·간격·격자를 줄인다. */
+@container (max-width: 1240px) {
   .timetable-columns {
-    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.1fr);
+    grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.32fr) minmax(0, 0.9fr);
+    gap: 14px;
   }
 
-  .timetable-ai {
-    grid-column: 1 / -1;
+  .timetable-panel {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .timetable-grid {
+    grid-template-columns: 44px repeat(5, minmax(68px, 1fr));
   }
 }
 
