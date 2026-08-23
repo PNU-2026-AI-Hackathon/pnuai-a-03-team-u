@@ -14,6 +14,39 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-23 (blackest21) — 이슈 #202: liberal_area/is_ai_track 판정 버그 3건 수정
+
+PR #199 리뷰 중 발견해 이슈 #202로 남겨뒀던 4건 중 3건을 수정(4번째는 성능 이슈라
+아래 첫 항목에서 같이 처리).
+
+- **[fix] `portal_sync.replace_course_records`가 `category`를 교양선택 밖으로 바꿔도
+  이전 `liberal_area`가 안 지워지던 것.** category가 `교양선택`이 아니면 서버가
+  `liberal_area`를 강제로 `None`으로 만든다 — 프론트가 stale한 liberal_area를
+  payload에 그대로 실어 보내도(기존 레코드를 불러와 category만 고쳐 재제출하는 경우)
+  `liberal_area_completions()`가 이미 다른 이수구분으로 옮겨간 과목을 계속 그
+  세부영역 이수로 잘못 집계하지 않는다.
+- **[fix] `graduation.py`의 `is_ai_track`이 `curriculum_year` 필터 없이 `.first()`로
+  `GraduationRequirement`를 다시 조회하던 것.** 같은 학과×전공×program_type에
+  연도가 다른 요건 행이 여럿 있으면(유니크 제약 없음, 실제로 존재) 실제 진행도
+  계산(`_find_requirement`)에 쓰인 행과 다른 행을 집을 수 있었다. API 레이어에서
+  재조회하는 대신, `compute_graduation_progress`가 이미 고른 그 `requirement` 행으로
+  `ProgramProgress.is_ai_track`을 채워서 넘긴다 — 한 판정에 항상 같은 행을 쓰도록
+  강제.
+- **[fix] `roadmap_chat.py`가 직접 이수 학점이 0/None이면 "대체 인정"으로 잘못
+  표시하던 것.** `completion.direct_credits`(학점 합계)가 아니라
+  `completion.direct_records`(직접 이수 근거 자체)로 분기해야 하는데 학점 합계로
+  갈랐다 — 학점 정보가 비어 있는 직접 이수 레코드가 대체 인정 근거가 전혀 없는데도
+  "대체 인정 (영역별 학점 미배분)"으로 LLM 컨텍스트에 들어가고 있었다.
+- **[fix, 성능]** `timetable_chat.get_student_context`가 같은 user_id의
+  `student_course_records`를 두 번(`_completed_course_norms` 내부 + 균형교양 집계용)
+  조회하던 것. `_completed_course_norms`에 `records` 선택 인자를 추가해 한 번만
+  조회한 결과를 양쪽에 넘기도록 정리.
+- 회귀 테스트 4건 신규(`test_connected_profile_roadmap_api.py`,
+  `test_graduation_api_metadata.py`, `test_roadmap_chat.py`) — `is_ai_track` 케이스는
+  curriculum_year가 다른 중복 요건 행을 일부러 만들어서 옛 코드였다면 잘못된 행을
+  집었을 순서로 insert해 재현.
+- 검증: `pytest` 612 passed, 골든테스트 6/6, `python -m tests.eval.run_eval` 26/26.
+
 ## 2026-08-23 (blackest21) — 전공선택/전공필수/전공기초/일반선택 개설강좌 카탈로그 갭 106건 보정
 
 PR #199이 균형/창의교양 갭을 메운 것과 같은 문제가 전공 계열 4개 카테고리에도 있었다.

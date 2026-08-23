@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.academics.models import GraduationRequirement, StudentCourseRecord, UserAcademicProgram
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
+from app.domains.academics.tracks import is_ai_track as _is_ai_track
 
 # StudentCourseRecord.category(성적표 원문 정규화 값) -> GraduationRequirement의
 # 기준학점 컬럼 매핑. "심화전공"은 우리 카테고리 체계에 없어 전공선택에 흡수된다.
@@ -124,6 +125,11 @@ class ProgramProgress:
     satisfied: bool | None
     categories: list[CategoryProgress] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # `_find_requirement`가 실제로 고른 그 행 기준으로 판정한다 — API 레이어가
+    # department_id/major_id/program_type만으로 GraduationRequirement를 curriculum_year
+    # 필터 없이 다시 조회하면, 같은 조합에 연도가 다른 중복 행이 있을 때(간호학과 dual
+    # 2026이 2행인 사례처럼) 이 진행도 계산에 실제로 쓰인 행과 다른 행을 집을 수 있다.
+    is_ai_track: bool = False
 
 
 def _find_requirement(db: Session, program: UserAcademicProgram) -> GraduationRequirement | None:
@@ -332,6 +338,7 @@ def compute_graduation_progress(
                 major_id=program.major_id,
                 curriculum_year=program.curriculum_year,
                 requirement_found=True,
+                is_ai_track=_is_ai_track(requirement),
                 required_total_credits=required_total,
                 earned_total_credits=total_earned,
                 remaining_total_credits=remaining_total,

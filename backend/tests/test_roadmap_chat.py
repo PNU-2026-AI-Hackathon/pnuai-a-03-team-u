@@ -820,6 +820,22 @@ class StudentContextBlockTest(unittest.TestCase):
         missing_idx = block.index("미이수 세부영역")
         self.assertNotIn("사상과역사", block[missing_idx : missing_idx + 200])
 
+    def test_context_block_does_not_mislabel_zero_credit_direct_record_as_substitution(self):
+        """직접 이수 레코드(liberal_area 판정)가 있는데 credits가 None/0이면 학점 합계가
+        falsy가 돼도, 대체 인정 근거(StudentCourseSubstitution)가 전혀 없는데 "대체 인정"
+        으로 잘못 표시되면 안 된다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=None, major_id=None, career_goal=None))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="서양철학사",
+                                     category="교양선택", liberal_area="사상과역사",
+                                     credits=None, year="2025", semester="1"))
+        db.commit()
+        block = _build_student_context_block(db, db.get(User, 1))
+        self.assertIn("사상과역사: 이수 (학점 정보 없음)", block)
+        self.assertNotIn("사상과역사: 대체 인정", block)
+
 
 class CompletedCoursesGuardTest(unittest.TestCase):
     """이미 이수한 과목(student_course_records) 재추천 방지. 성적표 파싱 이수기록은

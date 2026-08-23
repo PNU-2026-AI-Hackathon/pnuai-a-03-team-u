@@ -566,6 +566,13 @@ def replace_course_records(
             category = "교양선택"
         if liberal_area is not None and liberal_area not in BALANCED_LIBERAL_AREAS:
             raise HTTPException(status_code=422, detail="알 수 없는 교양 세부영역입니다")
+        if category != "교양선택":
+            # liberal_area는 교양선택일 때만 의미가 있다. 프론트가 category를 다른 값으로
+            # 바꾸면서도 이전 liberal_area를 payload에 그대로 들고 오면(예: 기존 레코드를
+            # 불러와 category만 고친 뒤 재제출), 그 stale 값이 그대로 저장돼
+            # liberal_area_completions()가 이미 다른 이수구분으로 옮겨간 과목을 계속 그
+            # 세부영역 이수로 잘못 집계한다. 여기서 강제로 지운다.
+            liberal_area = None
         record.category = category
         record.liberal_area = liberal_area
         record.credits = course.credits

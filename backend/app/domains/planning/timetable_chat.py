@@ -1206,7 +1206,12 @@ class _TimeTableToolContext:
         )
         from app.domains.planning.history import project_curriculum_term
 
-        completed = _completed_course_norms(self.db, self.user.id)
+        # 균형교양 집계와 이수과목명 정규화가 둘 다 같은 user_id의 student_course_records를
+        # 필요로 해서, 한 번만 조회해 양쪽에 넘긴다(중복 쿼리 방지).
+        course_records = self.db.scalars(
+            select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
+        ).all()
+        completed = _completed_course_norms(self.db, self.user.id, records=course_records)
         cap = _term_credit_cap(self.db, self.user)
         # 엇학기 대응 — target_term은 달력이고, 커리큘럼 상으로는 다른 학년/학기일 수 있다.
         target_grade, target_curr_sem = project_curriculum_term(
@@ -1235,9 +1240,6 @@ class _TimeTableToolContext:
 
         # One-Stop이 공식 판정한 영역과 입학 전 인정 학점에 학생이 직접 지정한 영역
         # 대체를 합쳐 시간표 LLM에도 구조화해 전달한다.
-        course_records = self.db.scalars(
-            select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
-        ).all()
         liberal_completions = liberal_area_completions(
             self.db,
             self.user.id,
