@@ -2583,6 +2583,43 @@ class FullHorizonPlanningTest(unittest.TestCase):
         self.assertIn("narrow_scope_request", rules)
         self.assertNotIn("full_horizon_request", rules)
 
+    def test_unscoped_build_request_detects_missing_scope(self):
+        """"로드맵 짜줘"처럼 계획 의도는 있는데 다음 학기 하나인지 졸업까지인지
+        범위를 안 밝힌 요청만 걸려야 한다."""
+        from app.domains.planning.roadmap_chat import _looks_like_unscoped_build_request
+
+        for msg in [
+            "로드맵 짜줘",
+            "성장 로드맵 만들어줘",
+            "수강 계획 세워줘",
+            "커리큘럼 짜줘",
+        ]:
+            self.assertTrue(_looks_like_unscoped_build_request(msg), msg)
+
+        for msg in [
+            "졸업까지 로드맵 짜줘",  # full_horizon이 이겨야 함
+            "다음 학기 뭐 들을까",  # 이미 특정 학기를 짚음
+            "3학년 2학기 계획해줘",  # 이미 특정 학년/학기를 짚음
+            "데이터베이스만 옮겨줘",  # narrow_scope, 애초에 계획 의도가 없음
+            "로드맵 어떻게 돼 있어?",  # 조회일 뿐, build verb 없음
+            None,
+            "",
+        ]:
+            self.assertFalse(_looks_like_unscoped_build_request(msg), msg)
+
+    def test_unscoped_build_request_wired_into_system_prompt(self):
+        from app.domains.planning.roadmap_chat import _build_system_prompt
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+
+        _, rules = _build_system_prompt(db, ctx.user, "성장 로드맵 만들어줘")
+        self.assertIn("unscoped_build_request", rules)
+        self.assertNotIn("full_horizon_request", rules)
+
+        # 이미 범위를 짚은 요청엔 안 걸려야 한다.
+        _, rules2 = _build_system_prompt(db, ctx.user, "다음 학기 로드맵 짜줘")
+        self.assertNotIn("unscoped_build_request", rules2)
+
 
 class FullHorizonFinishGateTest(unittest.TestCase):
     """미배정 학점을 남긴 채 끝내려는 finish_response를 루프가 한 번 되돌린다.
