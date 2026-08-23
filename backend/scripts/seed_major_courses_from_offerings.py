@@ -15,15 +15,30 @@
 검토 CSV 임포터 `import_courses_from_reviewed_csv.py`와 같은 매칭 방식).
 
 **정확 일치하지 않는 행은 넣지 않고 스킵 목록에 담는다** — 억지로 짐작해서 잘못된
-department_id를 붙이면 그 과목이 엉뚱한 학과 검색 결과에 나타난다. 2026-08-23 확인
-결과 358건 중 106건만 정확 일치하고 나머지 252건은 세 부류로 갈린다:
-1. 학사과/현장실습지원센터/창업교육센터 등 행정·지원부서 개설(~150건) — department_id를
-   NULL로 둘지(교양처럼 전교생 대상 취급) 여부가 새 컨벤션 결정이라 이번엔 안 넣는다.
-2. 미래모빌리티전공/클린에너지전공 등 2026 신설 융합전공(~99건) — `departments`/
-   `majors`에 아직 없어 새 마스터 행 등록이 먼저 필요하다.
-3. 한의학과·법학과(38건) — 실존 학과지만 2026학번 기준 학부 모집 여부 확인이 안 됐다.
+department_id를 붙이면 그 과목이 엉뚱한 학과 검색 결과에 나타난다. 2026-08-23 1차
+확인 결과 358건 중 106건만 정확 일치하고 나머지 252건은 세 부류였다:
 
-이 세 부류는 `--skip-report`로 저장해서 다음 세션에 이어갈 수 있게 한다.
+1. **학사과/현장실습지원센터/창업교육센터 등 행정·지원부서 + 법학과 개설(133건,
+   전부 일반선택).** 처음엔 department_id를 NULL로 둘지가 새 컨벤션 결정이라
+   보류했는데, 재확인 결과 애초에 특정 학과 소속이 아니라 전교생 대상으로 열리는
+   과목들이다(창의적문제해결력/진로탐색과생애설계/장기현장실습/고급한국어 등 —
+   내용은 교양스러운데 PNU 원문 이수구분이 "교양선택"이 아니라 "일반선택"으로 돼
+   있을 뿐, 재분류하지 않고 원문 그대로 둔다). 법학과도 포함되는 이유:
+   `academic_programs_seed_2026_active_bachelor.csv`(152개 활성 학사과정 전체
+   목록) 대조 결과 학부 자체가 없다(로스쿨 체제 전환, 대학원 과정만 존재) — 그런데
+   이 18건이 전부 전공필수/선택이 아니라 일반선택이라, "법학과 전공생만 듣는 과목"이
+   아니라 개방형 교양성 과목(생활과 법률류)으로 보고 같이 채운다. →
+   **`INSTITUTION_WIDE_OFFERING_UNITS`로 department_id=NULL 채움 (2026-08-23 2차 반영).**
+2. 미래모빌리티전공/클린에너지전공 등 2026 신설 융합전공 + 글로벌스터디즈
+   프로그램(99건, 전공필수/선택/기초) — `departments`/`majors`는 물론
+   `_collection_targets_index.csv`(151개 공식 수집 대상)와
+   `academic_programs_2026_master`(2026 학과 마스터 전수)에도 이름 자체가 없다.
+   정식 학사 프로그램 등록이 먼저 필요해 이번에도 스킵.
+3. ~~한의학과·법학과(38건)~~ → **한의학과(20건)만 남음.** 법학과는 위 1번으로
+   이동. 한의학과는 152개 활성 학사과정 목록에 없음(한의학전문대학원/일반대학원
+   대학원 과정만 존재) — 확정된 공백, 액션 불필요.
+
+2·3번은 `--skip-report`로 저장해서 다음에 이어갈 수 있게 한다.
 
 실행:
     ./backend/.venv/bin/python -m scripts.seed_major_courses_from_offerings \
@@ -52,6 +67,17 @@ from app.domains.academics.models import Department, Major
 from app.domains.courses.models import Course
 
 TARGET_CATEGORIES = {"전공선택", "전공필수", "전공기초", "일반선택"}
+
+# 특정 학과 소속이 아니라 전교생 대상으로 일반선택 과목을 개설하는 행정·지원부서(+ 학부
+# 자체가 없는 법학과). 2026-08-23 확인: 이 17개 offering_department 값은 스킵 리포트에서
+# 카테고리가 전부 "일반선택"뿐이었다(전공필수/선택 섞인 게 하나도 없음). department_id를
+# NULL로 두면 균형/창의교양과 같은 방식으로 전교생 검색에 노출된다.
+INSTITUTION_WIDE_OFFERING_UNITS = frozenset({
+    "학사과", "현장실습지원센터", "언어교육원", "창업교육센터", "취업전략과",
+    "국제협력실", "교육인증원", "지역사회기여센터", "사회과학대학", "홍보실",
+    "학군단", "부산대언론사", "경제통상연구원", "AI융합교육원", "교수학습지원센터",
+    "여성연구소", "법학과",
+})
 
 
 def _clean(value: str | None) -> str | None:
@@ -130,14 +156,20 @@ def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
         if course_code in existing_codes:
             stats["skipped_existing"] += 1
             continue
-        dept_id, major_id, reason = resolve(dept_field)
-        if dept_id is None:
-            stats[f"skipped_{reason}"] += 1
-            skipped_rows.append({
-                "course_code": course_code, "course_name": course_name,
-                "category": category, "offering_department": dept_field, "reason": reason,
-            })
-            continue
+
+        institution_wide = category == "일반선택" and dept_field in INSTITUTION_WIDE_OFFERING_UNITS
+        if institution_wide:
+            dept_id, major_id = None, None
+        else:
+            dept_id, major_id, reason = resolve(dept_field)
+            if dept_id is None:
+                stats[f"skipped_{reason}"] += 1
+                skipped_rows.append({
+                    "course_code": course_code, "course_name": course_name,
+                    "category": category, "offering_department": dept_field, "reason": reason,
+                })
+                continue
+
         db.add(
             Course(
                 course_code=course_code,
@@ -150,7 +182,7 @@ def import_csv(csv_path: Path, db: Session, *, commit: bool) -> dict:
             )
         )
         existing_codes.add(course_code)
-        stats["created"] += 1
+        stats["created_institution_wide" if institution_wide else "created_department_matched"] += 1
         if len(created_samples) < 15:
             created_samples.append(f"{course_code}:{course_name}({category}/{dept_field})")
 
