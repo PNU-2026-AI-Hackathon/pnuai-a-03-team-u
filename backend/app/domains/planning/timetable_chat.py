@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
+from app.domains.academics.course_substitution import liberal_area_completions
 from app.domains.academics.models import StudentCourseRecord
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.courses.models import Course, CourseOffering, CourseTime
@@ -1219,36 +1220,31 @@ class _TimeTableToolContext:
         except Exception:  # noqa: BLE001 - 판정 실패 시 시간표 챗 자체가 죽으면 안 됨
             pass
 
-        # One-Stop이 공식 판정한 균형교양 세부영역을 시간표 LLM에도 구조화해 전달한다.
-        # 새 DB는 category='교양선택', liberal_area='사상과역사'로 분리한다. 마이그레이션
-        # 전 임시 DB/테스트의 category=세부영역 값도 읽어 하위 호환한다.
-        records_by_liberal_area: dict[str, list[StudentCourseRecord]] = {}
-        liberal_area_set = set(BALANCED_LIBERAL_AREAS)
+        # One-Stop이 공식 판정한 영역과 입학 전 인정 학점에 학생이 직접 지정한 영역
+        # 대체를 합쳐 시간표 LLM에도 구조화해 전달한다.
         course_records = self.db.scalars(
             select(StudentCourseRecord).where(StudentCourseRecord.user_id == self.user.id)
         ).all()
-        for record in course_records:
-            area = record.liberal_area or (
-                record.category if record.category in liberal_area_set else None
-            )
-            if area in liberal_area_set:
-                records_by_liberal_area.setdefault(area, []).append(record)
+        liberal_completions = liberal_area_completions(
+            self.db,
+            self.user.id,
+            BALANCED_LIBERAL_AREAS,
+            records=course_records,
+        )
 
         completed_liberal_areas: list[dict] = []
         missing_liberal_areas: list[str] = []
         for area in BALANCED_LIBERAL_AREAS:
-            area_records = records_by_liberal_area.get(area, [])
-            if not area_records:
+            completion = liberal_completions[area]
+            if not completion.completed:
                 missing_liberal_areas.append(area)
                 continue
             completed_liberal_areas.append({
                 "area": area,
-                "credits": sum(
-                    float(record.credits)
-                    for record in area_records
-                    if record.credits is not None
-                ),
-                "course_names": sorted({record.raw_course_name for record in area_records}),
+                # 묶음 입학 전 인정 학점은 영역별 배분을 알 수 없으므로 더하지 않는다.
+                "credits": completion.direct_credits,
+                "course_names": completion.course_names,
+                "recognized_by_substitution": bool(completion.substituted_records),
             })
 
         return {

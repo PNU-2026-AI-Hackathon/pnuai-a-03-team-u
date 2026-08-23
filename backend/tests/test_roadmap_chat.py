@@ -751,6 +751,35 @@ class StudentContextBlockTest(unittest.TestCase):
         block = _build_student_context_block(db, db.get(User, 1))
         self.assertIn("이수한 균형교양 세부영역 없음", block)
 
+    def test_context_block_includes_transfer_liberal_area_substitution(self):
+        """학생이 직접 지정한 입학 전 인정 영역도 미이수가 아니라 대체 인정이다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트"))
+        db.add(Course(
+            id=91,
+            course_code="ZFz000091",
+            course_name="사상과역사",
+            category="효원균형교양",
+            credits=3,
+        ))
+        db.add(StudentCourseRecord(
+            id=10,
+            user_id=1,
+            raw_course_name="교양선택",
+            category="교양선택",
+            credits=10,
+            semester="입학전성적",
+        ))
+        db.add(StudentCourseSubstitution(record_id=10, course_id=91))
+        db.commit()
+
+        block = _build_student_context_block(db, db.get(User, 1))
+
+        self.assertIn("사상과역사: 대체 인정", block)
+        missing_idx = block.index("미이수 세부영역")
+        self.assertNotIn("사상과역사", block[missing_idx : missing_idx + 200])
+
 
 class CompletedCoursesGuardTest(unittest.TestCase):
     """이미 이수한 과목(student_course_records) 재추천 방지. 성적표 파싱 이수기록은

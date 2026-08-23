@@ -90,6 +90,12 @@ const emptyActivityDraft: ActivityPayload = {
 const emptyCertificationDraft: CertificationPayload = { name: "", expires_at: null };
 const emptyLanguageDraft: LanguageScorePayload = { test_name: "", score: "", expires_at: null };
 
+const programTypeLabels: Record<string, string> = {
+  dual: "복수전공",
+  minor: "부전공",
+  interdisciplinary: "연계·융합전공",
+};
+
 type DeleteTarget = {
   kind: "activity" | "certification" | "language";
   id: number;
@@ -199,10 +205,29 @@ const COMPLETED_LIBERAL_AREAS = [
 
 function summarizeCompletedLiberalAreas(courses: CourseRecord[]) {
   return COMPLETED_LIBERAL_AREAS.map((area) => {
-    const matched = courses.filter((course) => course.liberal_area === area || course.category === area);
-    const courseNames = [...new Set(matched.map((course) => course.course_name).filter(Boolean))];
-    const credits = matched.reduce((sum, course) => sum + (course.credits ?? 0), 0);
-    return { area, completed: matched.length > 0, courseNames, credits };
+    const directMatches = courses.filter(
+      (course) => course.liberal_area === area || course.category === area,
+    );
+    const substitutionMatches = courses.filter((course) =>
+      (course.substitutes ?? []).some(
+        (substitute) => substitute.course_name.replaceAll(" ", "") === area.replaceAll(" ", ""),
+      ),
+    );
+    const courseNames = [
+      ...directMatches.map((course) => course.course_name),
+      ...substitutionMatches.map((course) => `${course.course_name} (대체 인정)`),
+    ];
+
+    // 입학 전 인정 학점 한 행이 여러 교양 영역을 대체할 수 있다. 그 행의 전체 학점을
+    // 각 영역에 반복해서 더하면 실제보다 크게 보이므로, 영역별 학점은 학교 판정으로
+    // 직접 연결된 이수기록만 합산하고 대체 지정은 완료 여부와 근거 이름에만 반영한다.
+    const credits = directMatches.reduce((sum, course) => sum + (course.credits ?? 0), 0);
+    return {
+      area,
+      completed: directMatches.length > 0 || substitutionMatches.length > 0,
+      courseNames: [...new Set(courseNames.filter(Boolean))],
+      credits,
+    };
   });
 }
 
@@ -330,6 +355,7 @@ export function InfoPage() {
   const [courses, setCourses] = useState<CourseRecord[]>(() => isMockStudentDataEnabled ? readStoredCourses() : []);
   const [studentRecord] = useState<Record<string, string>>(readStoredStudentRecord);
   const [graduation, setGraduation] = useState<GraduationProgram | null>(() => isMockStudentDataEnabled ? readGraduationOverride() : null);
+  const [additionalGraduationPrograms, setAdditionalGraduationPrograms] = useState<GraduationProgram[]>([]);
   const [profileOverrides, setProfileOverrides] = useState<ProfileOverrides | null>(() => isMockStudentDataEnabled ? readProfileOverrides() : null);
   const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [profileEditDraft, setProfileEditDraft] = useState<ProfileOverrides>({ name: "", major: "", academicYear: 1 });
@@ -405,16 +431,18 @@ export function InfoPage() {
     if (!isAuthenticated && !isMockStudentDataEnabled) return;
 
     setIsGraduationLoading(true);
-    Promise.all([getCourseRecords(), getGraduationProgress()])
+    Promise.all([getCourseRecords(), getGraduationProgress(true)])
       .then(([courseRecords, data]) => {
         const storedOverride = isMockStudentDataEnabled ? readGraduationOverride() : null;
         const fetchedGraduation = data.programs.find((program) => program.program_type === "primary") ?? data.programs[0] ?? null;
         setCourses(courseRecords);
         setGraduation(storedOverride ?? fetchedGraduation);
+        setAdditionalGraduationPrograms(data.programs.filter((program) => program.program_type !== "primary"));
       })
       .catch(() => {
         setCourses([]);
         setGraduation(null);
+        setAdditionalGraduationPrograms([]);
       })
       .finally(() => setIsGraduationLoading(false));
   }, [isAuthenticated]);
@@ -615,6 +643,10 @@ export function InfoPage() {
   const overallGpa = calculateGpa(displayedCourses);
   const overallMajorGpa = calculateGpa(displayedCourses, true);
   const graduationCategoryTotals = displayedGraduation ? getGraduationCategoryTotals(displayedGraduation) : null;
+  const nonTrackAdditionalPrograms = additionalGraduationPrograms.filter((program) => (
+    !program.is_ai_track
+  ));
+  const unselectedTracks = availableTracks.filter((track) => !track.is_enrolled);
   const liberalAreaStatuses = useMemo(
     () => summarizeCompletedLiberalAreas(displayedCourses),
     [displayedCourses],
@@ -1313,6 +1345,99 @@ export function InfoPage() {
             ) : null}
           </article>
 
+          {nonTrackAdditionalPrograms.length > 0 || enrolledTracks.length > 0 ? (
+            <article className="card info-section-card additional-program-card" id="additional-programs">
+              <div className="card-title profile-section-title">
+                <div>
+                  <p className="eyebrow">Additional Programs</p>
+                  <h3>추가 이수과정 현황</h3>
+                </div>
+              </div>
+              <p className="track-hint">
+                학생지원시스템에 등록된 부전공·복수전공과 직접 선택한 AI융합트랙의 이수 현황입니다.
+              </p>
+              <div className="additional-program-list">
+                {nonTrackAdditionalPrograms.map((program) => {
+                  const label = programTypeLabels[program.program_type] ?? "추가 전공";
+                  const name = program.major_name ?? program.department_name ?? label;
+                  const total = program.required_total_credits;
+                  const percentage = total && total > 0
+                    ? Math.min(100, (program.earned_total_credits / total) * 100)
+                    : 0;
+                  const visibleCategories = program.categories.filter((category) => (
+                    category.required_credits !== null && category.required_credits > 0
+                  ));
+                  return (
+                    <section className="additional-program-item" key={program.user_academic_program_id}>
+                      <div className="additional-program-head">
+                        <div>
+                          <span className="program-type-badge">{label}</span>
+                          <h4>{name}</h4>
+                        </div>
+                        <strong>
+                          {program.requirement_found && total !== null
+                            ? `${formatCredit(program.earned_total_credits)}/${formatCredit(total)}학점`
+                            : "기준 확인 필요"}
+                        </strong>
+                      </div>
+                      {program.requirement_found && total !== null ? (
+                        <>
+                          <div className="graduation-total-bar additional-program-progress" aria-label={`${name} 이수 진행률 ${Math.round(percentage)}%`}>
+                            <span style={{ width: `${percentage}%` }} />
+                          </div>
+                          <p className="additional-program-remaining">
+                            {program.satisfied
+                              ? "이수요건을 충족했습니다."
+                              : `${formatCredit(program.remaining_total_credits ?? 0)}학점 남음`}
+                          </p>
+                          {visibleCategories.length > 0 ? (
+                            <ul className="additional-program-categories">
+                              {visibleCategories.map((category) => (
+                                <li key={category.category_code}>
+                                  <span>{category.category_name}</span>
+                                  <strong>{formatCredit(category.earned_credits)}/{formatCredit(category.required_credits ?? 0)}</strong>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="graduation-warning">등록된 학과·전공의 기준학점 데이터가 없어 진행도를 계산할 수 없습니다.</p>
+                      )}
+                    </section>
+                  );
+                })}
+                {enrolledTracks.map((track) => {
+                  const percentage = track.total_credits > 0
+                    ? Math.min(100, (track.earned_credits / track.total_credits) * 100)
+                    : 0;
+                  return (
+                    <section className="additional-program-item" key={`track-${track.enrollment_id}`}>
+                      <div className="additional-program-head">
+                        <div>
+                          <span className="program-type-badge is-track">AI융합트랙</span>
+                          <h4>{track.track_name}</h4>
+                        </div>
+                        <strong>{formatCredit(track.earned_credits)}/{formatCredit(track.total_credits)}학점</strong>
+                      </div>
+                      <div className="graduation-total-bar additional-program-progress" aria-label={`${track.track_name} 이수 진행률 ${Math.round(percentage)}%`}>
+                        <span style={{ width: `${percentage}%` }} />
+                      </div>
+                      <div className="additional-program-foot">
+                        <p className="additional-program-remaining">
+                          {track.completed ? "이수 완료" : `${formatCredit(track.remaining_credits)}학점 남음`}
+                        </p>
+                        <button className="program-cancel-button" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving}>
+                          이수 체크 해제
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </article>
+          ) : null}
+
           <article className="card info-section-card" id="grades">
             <div className="card-title">
               <div>
@@ -1822,36 +1947,18 @@ export function InfoPage() {
             </div>
           </article>
 
-          {availableTracks.length > 0 || enrolledTracks.length > 0 ? (
+          {unselectedTracks.length > 0 ? (
             <article className="card info-section-card">
               <div className="card-title profile-section-title">
-                <div><p className="eyebrow">AI Track</p><h3>AI융합트랙</h3></div>
+                <div><p className="eyebrow">AI Track</p><h3>AI융합트랙 선택</h3></div>
               </div>
               <p className="track-hint">
                 졸업요건과 별개로, 이수하면 졸업증명서에 과정명이 표기되는 인증 과정입니다.
-                이수 중이라면 체크해 두세요 — 남은 학점을 자동으로 계산합니다.
+                이수 중인 트랙을 선택하면 추가 이수과정 카드에서 진행도를 확인할 수 있습니다.
               </p>
               {trackError ? <p className="sync-error" role="alert">{trackError}</p> : null}
               <div className="profile-record-list">
-                {enrolledTracks.map((track) => (
-                  <div className="profile-record-row track-row" key={`enrolled-${track.enrollment_id}`}>
-                    <div className="track-row-body">
-                      <strong>{track.track_name}</strong>
-                      <span>
-                        {track.completed
-                          ? "이수 완료 🎉"
-                          : `${formatCredit(track.earned_credits)}/${track.total_credits}학점 · ${formatCredit(track.remaining_credits)}학점 남음`}
-                      </span>
-                      <div className="graduation-total-bar track-progress" aria-label={`트랙 진행률 ${Math.round((track.earned_credits / track.total_credits) * 100)}%`}>
-                        <span style={{ width: `${Math.min(100, (track.earned_credits / track.total_credits) * 100)}%` }} />
-                      </div>
-                    </div>
-                    <div className="profile-record-actions">
-                      <button className="danger" type="button" onClick={() => void handleTrackCancel(track)} disabled={isTrackSaving} aria-label={`${track.track_name} 이수 체크 해제`} title="이수 체크 해제"><Trash2 size={15} aria-hidden="true" /></button>
-                    </div>
-                  </div>
-                ))}
-                {availableTracks.filter((track) => !track.is_enrolled).map((track) => (
+                {unselectedTracks.map((track) => (
                   <div className="profile-record-row" key={`available-${track.track_program_id}`}>
                     <div>
                       <strong>{track.track_name}</strong>
