@@ -14,6 +14,22 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — README 3.2 기능설명에 AI 에이전트 도구 호출 흐름도 추가
+
+3.2가 화면별 불릿 나열뿐이라 "AI가 실제로 어떻게 동작하는지"가 안 보인다는 지적.
+3.1(전체시스템 흐름도, 화면 단위 큰 흐름)과 겹치지 않게, 3.2엔 **에이전트가 실제로
+호출하는 도구 이름 그대로**를 넣은 mermaid flowchart를 추가했다(온보딩 → 규칙
+기반 졸업요건 판정(LLM 미개입) → 로드맵 에이전트 도구 호출 루프 → 사용자 승인
+→ 시간표 에이전트 도구 호출 루프 → 사용자 승인 → 최종 결과물). 도구 이름
+(`get_roadmap_items`/`get_graduation_progress`/`search_courses`/`propose_change`/
+`propose_term_plan`/`get_student_context`/`list_offered_courses`/
+`search_by_career`/`build_timetable`)은 `roadmap_chat.py`/`timetable_chat.py`의
+실제 `_TOOLS` 선언과 대조해 정확히 맞췄다 — 문서가 코드와 어긋나지 않게.
+
+단계별 역할 설명 + "이 흐름 전체가 결국 F-01/F-02/F-03을 어떻게 최종 산출물로
+합치는지" 종합 문단을 diagram 아래에 추가했다. 기존 화면별 불릿(회원가입/Home/
+내 정보/성장 로드맵/시간표 작성)은 "화면별 상세"로 소제목만 달아 그대로 유지.
+
 ## 2026-08-24 (blackest21) — 시간표 챗 골든 eval 확장 + prereq_blocked 강제 안 되던 버그 발견·수정
 
 "시간표 LLM 성능 개선"을 "특이/일반 케이스를 만들어서 응답 정확도·품질·속도를

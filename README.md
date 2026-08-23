@@ -154,6 +154,63 @@ flowchart TB
 #### 3.2. 기능설명
 > 📸 화면별 스크린샷은 추후 추가 예정.
 
+3.1이 화면 단위의 큰 흐름이라면, 아래는 그 흐름 안에서 **AI 에이전트가 실제로 어떤 도구를 몇 단계에 걸쳐 호출하는지**를 보여준다. Plan-U의 두 AI 기능(성장 로드맵 상담, 시간표 추천)은 LLM이 자유롭게 답을 지어내는 게 아니라, 정해진 도구(tool) 집합을 순서대로 호출하며 실제 DB 값을 확인한 뒤에만 답을 만든다 — 그리고 그 답은 하나도 자동으로 저장되지 않고, **사용자가 체크해서 승인한 것만** 반영된다.
+
+```mermaid
+flowchart TB
+    SIGNUP["① 회원가입<br/>부산대 웹메일 인증 · 학과/전공 선택"]
+    SYNC["② 학사 정보 동기화<br/>Playwright 크롤링 → 학적 · 이수내역 · 지도교수"]
+    RULE["③ 졸업요건 판정 — 규칙 기반 엔진(LLM 미개입)<br/>주전공 + 부전공/복수전공/SW·AI융합트랙<br/>영역별 충족·미충족 · 균형교양 세부영역까지 판정"]
+
+    subgraph RM["④ 성장 로드맵 — LLM 에이전트 도구 호출 루프"]
+        direction TB
+        RM1["get_roadmap_items<br/>남은 학기 · 이미 계획된 항목 조회"]
+        RM2["get_graduation_progress<br/>이수구분별 충족 현황 조회"]
+        RM3["search_courses<br/>학과·학기·이수구분별 개설 강좌 검색"]
+        RM4["propose_change / propose_term_plan<br/>학기별 변경(안) 제안"]
+        RM1 --> RM2 --> RM3 --> RM4
+    end
+
+    APPROVE1{{"⑤ 사용자 승인<br/>제안 중 체크한 항목만<br/>실제 로드맵에 반영"}}
+
+    subgraph TT["⑥ 시간표 추천 — LLM 에이전트 도구 호출 루프"]
+        direction TB
+        TT1["get_student_context<br/>남은 요건 · 진로 · 시간 제약 조회"]
+        TT2["list_offered_courses / search_by_career<br/>이번 학기 개설 강좌 검색"]
+        TT3["build_timetable<br/>규칙 엔진이 시간 충돌 없는 조합 직접 생성"]
+        TT1 --> TT2 --> TT3
+    end
+
+    APPROVE2{{"⑦ 사용자 승인<br/>체크한 분반만<br/>시간표에 반영"}}
+    RESULT(["최종 결과물<br/>졸업까지 남은 학기별 로드맵 + 다음 학기 확정 시간표"])
+
+    SIGNUP --> SYNC --> RULE --> RM
+    RM4 --> APPROVE1 --> TT
+    TT3 --> APPROVE2 --> RESULT
+
+    classDef rule fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef agent fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef human fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef result fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class SIGNUP,SYNC,RULE rule
+    class RM1,RM2,RM3,RM4,TT1,TT2,TT3 agent
+    class APPROVE1,APPROVE2 human
+    class RESULT result
+```
+
+**단계별 역할**
+1. **회원가입** — 부산대 웹메일 인증과 학과·전공 자동완성으로 이후 모든 판정의 기준이 되는 학적 정보를 정확히 확정한다.
+2. **학사 정보 동기화** — Playwright 크롤러가 학생지원시스템에서 학적·이수내역·지도교수 정보를 가져온다. 여기서 확보한 이수내역이 ③~⑥ 전 단계의 입력값이다.
+3. **졸업요건 판정** — **여기까지는 AI가 관여하지 않는다.** 학과별로 구조화한 규칙(택N/M, 최소 학점, 영역별 세부기준)과 이수내역을 결정론적으로 대조해 충족/미충족을 가른다. 정확성이 생명인 판정이라 LLM에 맡기지 않는다는 게 이 프로젝트의 핵심 원칙이다.
+4. **성장 로드맵** — LLM 에이전트가 `get_roadmap_items`로 남은 학기를, `get_graduation_progress`로 그중 무엇이 아직 부족한지 먼저 확인하고, `search_courses`로 실제 개설 근거가 있는 과목만 후보로 삼은 뒤에야 `propose_change`/`propose_term_plan`으로 변경안을 제안한다. 과목명을 지어내는 경로 자체가 없다.
+5. **사용자 승인** — 제안은 전부 임시 상태로 쌓인다. 사용자가 화면에서 체크한 항목만 실제 로드맵 데이터로 확정된다 — AI가 실수해도 되돌릴 수 있는 구조다.
+6. **시간표 추천** — 같은 원칙으로, `get_student_context`가 남은 요건·진로·시간 제약을 모으고 `list_offered_courses`/`search_by_career`가 이번 학기에 **실제로 열린** 강좌만 후보로 좁힌 뒤, 시간 충돌 없는 조합은 LLM이 아니라 규칙 엔진(`build_timetable`)이 직접 계산한다.
+7. **사용자 승인** — 로드맵과 마찬가지로 체크한 분반만 시간표에 반영된다.
+
+**결국 이 흐름 전체가 만드는 것**: ③의 규칙 기반 판정이 "지금 뭐가 부족한지"를 정확하게 확정하고, ④·⑥의 AI 에이전트가 그 부족분을 실제 개설 데이터 안에서만 채우는 방안을 찾아 제안하며, ⑤·⑦의 승인 구조가 그 제안을 학생이 최종 결정하게 만든다. 세 축이 합쳐진 결과가 F-01(졸업요건 자동 분석)·F-02(AI 수강 계획 추천)·F-03(AI 시간표 추천)이고, 학생이 실제로 손에 쥐는 최종 산출물은 "졸업까지 학기별로 무엇을 들어야 하는지"와 "그중 다음 학기에 시간 충돌 없이 확정할 수 있는 시간표"라는, 매 학기 반복해서 학과 페이지와 학생지원시스템을 오가며 손으로 대조하던 작업을 대신한 답이다.
+<br/>
+
+##### 화면별 상세
 ##### ` 회원가입 / 로그인 `
 - 부산대 웹메일(@pusan.ac.kr)로만 가입 — 부산대 구성원 확인
 - 신입학/편입학 구분 선택 — 편입생은 로드맵이 "입학 전 인정 학점 + 3·4학년"으로 구성됨
