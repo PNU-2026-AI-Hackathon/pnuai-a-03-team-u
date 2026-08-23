@@ -26,11 +26,15 @@ placeholder 행으로 넣어둔다). 반대로 전적대 두 과목이 PNU 한 �
   졸업요건 엔진(`graduation_progress`)은 `category`별 합계만 대조한다.
   대체 관계를 등록해도 합계가 달라지지 않는다 — 애초에 과목 단위 매칭이
   없는 엔진이라 졸업요건 판정 숫자는 이 기능과 무관하다.
-- **바뀌는 건 추천이다.** 대체된 PNU 과목명이 "이미 이수한 과목"에 들어가서
-  시간표/로드맵이 `자료구조`를 더는 추천하지 않는다.
+- **추천과 영역 완료 근거에는 반영된다.** 대체된 PNU 과목명은 "이미 이수한 과목"에
+  들어가고, `ZFz…` 교양영역 placeholder는 내 정보·로드맵·시간표의 이수영역 판단에
+  들어간다. 단, 묶음 인정 학점을 영역별 학점으로 임의 배분하지는 않는다.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,6 +42,96 @@ from sqlalchemy.orm import Session
 from app.domains.academics.models import StudentCourseRecord, StudentCourseSubstitution
 from app.domains.courses.models import Course
 from app.domains.users.admission import PRE_ADMISSION_SEMESTERS
+
+
+@dataclass
+class LiberalAreaCompletion:
+    """효원균형교양 한 영역의 직접 이수·대체 인정 근거.
+
+    ``direct_records``만 학점을 합산한다. 입학 전 인정 학점 한 행은 여러 영역을
+    대체할 수 있어서 그 행의 전체 학점을 영역마다 더하면 학점이 중복되기 때문이다.
+    """
+
+    direct_records: list[StudentCourseRecord] = field(default_factory=list)
+    substituted_records: list[StudentCourseRecord] = field(default_factory=list)
+
+    @property
+    def completed(self) -> bool:
+        return bool(self.direct_records or self.substituted_records)
+
+    @property
+    def direct_credits(self) -> float:
+        return sum(
+            float(record.credits)
+            for record in self.direct_records
+            if record.credits is not None
+        )
+
+    @property
+    def course_names(self) -> list[str]:
+        names = {
+            record.raw_course_name
+            for record in self.direct_records
+            if record.raw_course_name
+        }
+        names.update(
+            f"{record.raw_course_name} (대체 인정)"
+            for record in self.substituted_records
+            if record.raw_course_name
+        )
+        return sorted(names)
+
+
+def liberal_area_completions(
+    db: Session,
+    user_id: int,
+    area_names: Sequence[str],
+    *,
+    records: Sequence[StudentCourseRecord] | None = None,
+) -> dict[str, LiberalAreaCompletion]:
+    """학교 판정 영역과 학생이 직접 지정한 영역 대체를 하나의 결과로 합친다.
+
+    대체 대상은 ``ZFz…`` 교양영역 placeholder이면서 현재 판정 엔진이 아는 이름인
+    경우만 받는다. 일반 과목 대체나 옛 ``융합과 창의``처럼 현재 균형교양 목록에
+    없는 영역이 잘못 완료 처리되지 않게 하기 위함이다.
+    """
+    known_areas = tuple(area_names)
+    known_set = set(known_areas)
+    result = {area: LiberalAreaCompletion() for area in known_areas}
+    course_records = (
+        list(records)
+        if records is not None
+        else list(
+            db.scalars(
+                select(StudentCourseRecord).where(StudentCourseRecord.user_id == user_id)
+            ).all()
+        )
+    )
+
+    for record in course_records:
+        area = record.liberal_area or (record.category if record.category in known_set else None)
+        if area in known_set:
+            result[area].direct_records.append(record)
+
+    substitution_rows = db.execute(
+        select(StudentCourseRecord, Course.course_name)
+        .join(
+            StudentCourseSubstitution,
+            StudentCourseSubstitution.record_id == StudentCourseRecord.id,
+        )
+        .join(Course, Course.id == StudentCourseSubstitution.course_id)
+        .where(
+            StudentCourseRecord.user_id == user_id,
+            Course.course_code.like("ZFz%"),
+            Course.course_name.in_(known_areas),
+        )
+    ).all()
+    for record, area in substitution_rows:
+        completion = result[area]
+        if all(existing.id != record.id for existing in completion.substituted_records):
+            completion.substituted_records.append(record)
+
+    return result
 
 
 def is_transfer_credit_record(record: StudentCourseRecord) -> bool:
@@ -119,7 +213,7 @@ def substituted_course_names(db: Session, user_id: int) -> list[str]:
 
     교양 세부영역 placeholder(`ZFz…`)도 여기 섞여 나오지만 문제되지 않는다 —
     `사상과역사` 같은 영역명과 같은 이름의 실제 교과목이 없어서 추천에서 무엇도
-    가려지지 않는다. 영역 단위 요건 반영은 졸업요건 엔진 쪽 별도 과제다.
+    가려지지 않는다. 영역 완료 판단은 `liberal_area_completions`가 별도로 처리한다.
     """
     names = db.scalars(
         select(Course.course_name)

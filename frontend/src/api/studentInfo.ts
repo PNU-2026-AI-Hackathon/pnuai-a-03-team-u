@@ -67,6 +67,11 @@ export type GraduationCategory = {
 export type GraduationProgram = {
   user_academic_program_id: number;
   program_type: string;
+  department_id?: number | null;
+  department_name?: string | null;
+  major_id?: number | null;
+  major_name?: string | null;
+  is_ai_track?: boolean;
   curriculum_year: string | null;
   requirement_found: boolean;
   required_total_credits: number | null;
@@ -115,6 +120,25 @@ const mockGraduationProgress: GraduationProgress = {
       ],
       warnings: ["목업 데이터로 표시된 졸업요건입니다."],
     },
+    {
+      user_academic_program_id: 1,
+      program_type: "dual",
+      department_id: 20,
+      department_name: "정보컴퓨터공학부",
+      major_id: 21,
+      major_name: "인공지능전공",
+      curriculum_year: "2023",
+      requirement_found: true,
+      required_total_credits: 36,
+      earned_total_credits: 18,
+      remaining_total_credits: 18,
+      satisfied: false,
+      categories: [
+        { category_code: "major_required", category_name: "전공필수", required_credits: 12, earned_credits: 9, remaining_credits: 3, satisfied: false },
+        { category_code: "major_elective", category_name: "전공선택", required_credits: 24, earned_credits: 9, remaining_credits: 15, satisfied: false },
+      ],
+      warnings: ["목업 데이터로 표시된 복수전공 요건입니다."],
+    },
   ],
 };
 
@@ -149,12 +173,14 @@ export async function syncPortalData(loginId: string, password: string) {
   return data;
 }
 
-export async function getGraduationProgress() {
+export async function getGraduationProgress(includeNonPrimary = false) {
   if (isMockStudentDataEnabled) {
     return mockGraduationProgress;
   }
 
-  const { data } = await apiClient.get<GraduationProgress>("/me/graduation");
+  const { data } = await apiClient.get<GraduationProgress>("/me/graduation", {
+    params: includeNonPrimary ? { include_non_primary: true } : undefined,
+  });
   return data;
 }
 

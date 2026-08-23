@@ -17,9 +17,13 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.models import (
+    Department,
+    GraduationRequirement,
+    Major,
     StudentGraduationCategory,
     StudentGraduationRequirement,
 )
+from app.domains.academics.tracks import is_ai_track
 from app.domains.academics.graduation_progress import (
     CategoryProgress,
     ProgramProgress,
@@ -58,7 +62,10 @@ class ProgramProgressResponse(BaseModel):
     user_academic_program_id: int
     program_type: str
     department_id: int | None
+    department_name: str | None = None
     major_id: int | None
+    major_name: str | None = None
+    is_ai_track: bool = False
     curriculum_year: str | None
     requirement_found: bool
     required_total_credits: float | None
@@ -69,12 +76,32 @@ class ProgramProgressResponse(BaseModel):
     warnings: list[str]
 
     @classmethod
-    def from_progress(cls, progress: ProgramProgress) -> "ProgramProgressResponse":
+    def from_progress(
+        cls, progress: ProgramProgress, db: Session | None = None
+    ) -> "ProgramProgressResponse":
+        department = (
+            db.get(Department, progress.department_id)
+            if db and progress.department_id
+            else None
+        )
+        major = db.get(Major, progress.major_id) if db and progress.major_id else None
+        track_requirement = None
+        if db and progress.program_type == "interdisciplinary":
+            track_requirement = db.scalars(
+                select(GraduationRequirement).where(
+                    GraduationRequirement.department_id == progress.department_id,
+                    GraduationRequirement.major_id == progress.major_id,
+                    GraduationRequirement.program_type == progress.program_type,
+                )
+            ).first()
         return cls(
             user_academic_program_id=progress.user_academic_program_id,
             program_type=progress.program_type,
             department_id=progress.department_id,
+            department_name=department.name if department else None,
             major_id=progress.major_id,
+            major_name=major.name if major else None,
+            is_ai_track=is_ai_track(track_requirement) if track_requirement else False,
             curriculum_year=progress.curriculum_year,
             requirement_found=progress.requirement_found,
             required_total_credits=progress.required_total_credits,
@@ -152,7 +179,7 @@ def _build_graduation_response(
         user_id=current_user.id,
         programs=[
             _apply_user_override(
-                ProgramProgressResponse.from_progress(progress),
+                ProgramProgressResponse.from_progress(progress, db),
                 current_user.graduation_override,
             )
             for progress in progresses
