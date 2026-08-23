@@ -480,9 +480,12 @@ _CONDITIONAL_RULES: dict[str, str] = {
     "liberal_area_partial": """
 - **균형교양 세부영역별 판정**: get_graduation_progress의 '교양선택'에 남은 학점이 있고,
   이미 이수한 세부영역과 미이수 세부영역이 프로필 블록에 노출돼 있다. **미이수 세부영역
-  을 우선 채우는 방향**으로 search_courses 후보를 고르고 finish_response에서 그 근거
-  ("네가 아직 안 든 XX영역 보강용")를 밝혀라. 세부영역 정보가 프로필 블록에 없으면
-  (포털 미동기화) 그 사실을 알리고 우선 동기화 안내.""",
+  을 우선 채우는 방향**으로 후보를 고르고 finish_response에서 그 근거("네가 아직 안 든
+  XX영역 보강용")를 밝혀라. 후보를 뽑을 땐 `search_courses(liberal_area="XX영역")`로
+  직접 필터해라 — 과목명만 보고 영역을 추측하지 마라(추측 근거가 없다). 단
+  '외국어'/'융복합'은 이 필터로 안 잡히니 그 두 영역이 미이수라면 query/category로
+  따로 찾아라. 세부영역 정보가 프로필 블록에 없으면(포털 미동기화) 그 사실을 알리고
+  우선 동기화 안내.""",
 }
 
 
@@ -888,6 +891,17 @@ _TOOLS = [
                             "그냥 '교양선택 뭐 있냐'면 '교양선택'으로 넓게. "
                             "빈 결과 오면 응답의 `available_categories`를 보고 다른 값으로 재시도 — "
                             "같은 인수로 재호출하지 마라."
+                        ),
+                    },
+                    "liberal_area": {
+                        "type": "string",
+                        "description": (
+                            "균형교양 세부영역 필터. `get_student_context`의 `missing_liberal_areas` "
+                            "값을 그대로 넘겨라(예: '사상과역사') — 결과의 `general_education_area`가 "
+                            "그 값과 일치하는 과목만 온다. 이걸 쓰면 과목명만 보고 영역을 추측할 "
+                            "필요가 없다. **'외국어'/'융복합'은 이 필터로 안 잡힌다** — 원문에 영역 "
+                            "코드가 없는 과목들이라, 이 두 영역은 query에 과목명 키워드를 넣거나 "
+                            "category='교양선택'으로 훑어서 찾아야 한다(응답의 note가 안내한다)."
                         ),
                     },
                     "program_type": {
@@ -1992,6 +2006,7 @@ class _ToolContext:
         semester: str | None = None,
         grade: str | int | None = None,
         category: str | None = None,
+        liberal_area: str | None = None,
         program_type: str | None = None,
     ) -> dict:
         """과목 후보 검색.
@@ -2035,6 +2050,8 @@ class _ToolContext:
             filters["grade"] = grade
         if category:
             filters["category"] = category
+        if liberal_area:
+            filters["general_education_area"] = liberal_area
         results = retriever.search(
             query=query,
             department_id=search_dept_id,
@@ -2064,6 +2081,7 @@ class _ToolContext:
                     "course_id": c.id,
                     "course_name": c.course_name,
                     "category": c.category,
+                    "general_education_area": c.general_education_area,
                     "credits": float(c.credits) if c.credits is not None else None,
                     "grade": c.year,
                     "semester": c.semester,
@@ -2076,6 +2094,7 @@ class _ToolContext:
                     "course_id": r["course_id"],
                     "course_name": r["course_name"],
                     "category": r["category"],
+                    "general_education_area": r.get("general_education_area"),
                     "credits": r["credits"],
                     "grade": r["grade"],
                     "semester": r["semester"],
@@ -2099,6 +2118,11 @@ class _ToolContext:
             reason_parts = []
             if category and category not in cats:
                 reason_parts.append(f"category={category!r}는 이 스코프 개설 목록에 없음")
+            if liberal_area:
+                reason_parts.append(
+                    f"liberal_area={liberal_area!r}로 매치 없음 — '외국어'/'융복합'은 "
+                    "이 필터로 안 잡히니 category로 다시 찾아라"
+                )
             if query:
                 reason_parts.append(f"query={query!r}로 매치 없음")
             if grade:

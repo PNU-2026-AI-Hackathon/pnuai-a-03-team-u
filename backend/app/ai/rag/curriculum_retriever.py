@@ -21,6 +21,12 @@ class RagSearchFilters:
     grade: int | str | None = None
     semester: str | None = None
     category: str | None = None
+    # Onestop "세부구분(영역별)" 필터와 같은 값(courses.general_education_area).
+    # 균형교양 6영역 중 4개(사상과역사/사회와문화/문학과예술/과학과기술/건강과레포츠/
+    # 효원브릿지)와 2026 개편 영역명(세계와 소통/융합과 창의/인성과 사회봉사)만 채워져
+    # 있다 — "외국어"/"융복합"은 이 컬럼에 값이 없어(원문에 영역 코드 자체가 없음)
+    # 이 필터로는 안 잡힌다, category로 검색해야 한다.
+    general_education_area: str | None = None
     limit: int = 20
 
     @classmethod
@@ -30,6 +36,7 @@ class RagSearchFilters:
             grade=filters.get("grade"),
             semester=filters.get("semester"),
             category=filters.get("category"),
+            general_education_area=filters.get("general_education_area"),
             limit=int(filters.get("limit") or 20),
         )
 
@@ -240,6 +247,8 @@ class CurriculumRetriever:
                 conditions.append(Course.semester == normalized_semester)
         if parsed_filters.category:
             conditions.append(_category_condition(parsed_filters.category))
+        if parsed_filters.general_education_area:
+            conditions.append(Course.general_education_area == parsed_filters.general_education_area)
 
         courses = self.db.scalars(
             select(Course)
@@ -329,6 +338,7 @@ class CurriculumRetriever:
             "course_id": course.id,
             "course_name": course.course_name,
             "category": course.category,
+            "general_education_area": course.general_education_area,
             "credits": _number_to_float(course.credits),
             "grade": course.year,
             "semester": _semester_for_display(course.semester),

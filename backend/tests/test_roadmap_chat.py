@@ -188,6 +188,46 @@ class SearchCoursesBrowsingTest(unittest.TestCase):
         result = ctx.search_courses(query="", semester="2학기")
         self.assertEqual([], result["results"])
 
+    def test_liberal_area_filters_by_general_education_area_not_category(self):
+        """liberal_area는 courses.general_education_area 컬럼을 걸러야 한다 — category나
+        과목명이 아니라. 같은 교양선택 카테고리 안에서도 영역이 다르면 빠져야 하고,
+        결과에 general_education_area가 그대로 노출돼야 LLM이 과목명으로 영역을
+        추측하지 않아도 된다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add_all(
+            [
+                Course(id=1, course_name="철학의이해", department_id=10,
+                       category="효원균형교양", general_education_area="사상과역사",
+                       credits=3.0, year="전학년", semester="전학기"),
+                Course(id=2, course_name="사회문제탐구", department_id=10,
+                       category="효원균형교양", general_education_area="사회와문화",
+                       credits=3.0, year="전학년", semester="전학기"),
+            ]
+        )
+        db.commit()
+
+        result = ctx.search_courses(query="", liberal_area="사상과역사")
+        self.assertEqual([1], [r["course_id"] for r in result["results"]])
+        self.assertEqual("사상과역사", result["results"][0]["general_education_area"])
+
+    def test_liberal_area_no_match_hints_note(self):
+        """'외국어'/'융복합'처럼 general_education_area가 아예 없는 영역을 필터하면
+        빈 결과에 liberal_area 관련 안내가 붙어야 한다 — LLM이 같은 인수로 반복
+        호출하지 않도록."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(
+            Course(id=1, course_name="영어회화", department_id=10,
+                   category="효원균형교양", general_education_area=None,
+                   credits=3.0, year="전학년", semester="전학기"),
+        )
+        db.commit()
+
+        result = ctx.search_courses(query="", liberal_area="외국어")
+        self.assertEqual([], result["results"])
+        self.assertIn("liberal_area", result["note"])
+
 
 class ProposeChangePastTermGuardTest(unittest.TestCase):
     """이미 지난 학기로 새 항목을 만들려는 시도는 create에서 거부돼야 한다.
