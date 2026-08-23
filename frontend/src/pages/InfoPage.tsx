@@ -201,6 +201,7 @@ const COMPLETED_LIBERAL_AREAS = [
   "건강과레포츠",
   "외국어",
   "융복합",
+  "효원브릿지",
 ] as const;
 
 function summarizeCompletedLiberalAreas(courses: CourseRecord[]) {
