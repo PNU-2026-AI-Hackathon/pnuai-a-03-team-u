@@ -1,8 +1,8 @@
-"""챗 골든 데이터셋 — 26 케이스.
+"""챗 골든 데이터셋 — 27 케이스.
 
 각 케이스는 실제 관찰된 버그/설계 결정을 회귀 방지하는 assertion을 갖는다.
 
-**로드맵 챗 (21)**:
+**로드맵 챗 (22)**:
 - 01 정컴 신입 · 02 정컴 3학년(AI) · 03 경영 4학년(재무)
 - 04 전자공학 3학년(반도체) · 05 기계 2학년(자동차)
 - 06 SW연계전공 임베디드 (48학점) · 07 핀테크 융합전공 (42학점)
@@ -10,7 +10,7 @@
 - 10 엇학기 · 11 편입 · 12 전공기초 부족 · 13 1학기 전용 미수강
 - 14 진로-전공 mismatch · 16 AI융합트랙
 - 22 재수강 요청 · 23 선수과목 차단 · 24 학점 상한 swap
-- 25 계절수업 제외 · 26 요청 범위 준수
+- 25 계절수업 제외 · 26 요청 범위 준수 · 27 범위 미지정 로드맵 요청
 
 **시간표 챗 (5)**:
 - 17 정컴 3학년 · 18 시간 제약 · 19 엇학기 · 20 부전공 · 21 못 찾음
@@ -1581,6 +1581,50 @@ def case_scope_discipline() -> EvalCase:
     )
 
 
+def case_unscoped_roadmap_request() -> EvalCase:
+    """27: "성장 로드맵 만들어줘"처럼 범위(다음 학기 vs 졸업까지)를 안 밝힌 요청.
+
+    2026-08-23 추가. 다음 학기 하나만 제안하고 "승인해주시면 이어서"로 끝내던
+    문제(PR #194)를 반대쪽에서도 잘못 고치지 않기 위한 케이스 — 범위가 정해지지
+    않았는데 매번 다음 학기 하나만 조용히 골라 진행하면, 사실 졸업까지 전체를 원한
+    사용자는 매번 "이어서 해달라"고 다시 요청해야 한다. 범위 자체를 모를 때는
+    제안부터 만들지 말고 먼저 되물어야 한다(`unscoped_build_request` 규칙).
+    """
+    depts, majors = _cs_hierarchy()
+    persona = PersonaSpec(
+        id="unscoped-roadmap", label="정컴 신입 1학년 · 범위 미지정 로드맵 요청",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2026")],
+        requirements=[RequirementSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                                       program_type="primary", curriculum_year="2026",
+                                       required_total_credits=133,
+                                       required_major_foundation=15,
+                                       required_major_required=30,
+                                       required_major_elective=27)],
+        courses=_cs_catalog(),
+    )
+    return EvalCase(
+        slug="27-unscoped-roadmap-request", persona=persona, agent="roadmap",
+        prompt="성장 로드맵 만들어주세요.",
+        expectations=[
+            ExpectedBehavior("tool_not_called", "propose_change",
+                             reason="범위를 모르는 채로 바로 제안부터 만들면 안 된다"),
+            ExpectedBehavior("tool_not_called", "propose_term_plan",
+                             reason="범위를 모르는 채로 바로 전체 계획부터 만들면 안 된다"),
+            ExpectedBehavior(
+                "llm_judge",
+                "응답이 '졸업까지 전체 학기'로 계획할지 '다음 학기만' 계획할지 "
+                "사용자에게 명확히 되묻는가? (둘 중 하나를 이미 확정해서 계획을 "
+                "만들어버렸다면 No)",
+                reason="범위 미지정 요청은 바로 만들지 말고 먼저 범위를 확인해야 한다",
+            ),
+        ],
+    )
+
+
 ALL_CASES: list[EvalCase] = [
     # 로드맵 챗
     case_freshman_backend(),          # 01
@@ -1611,4 +1655,5 @@ ALL_CASES: list[EvalCase] = [
     case_credit_cap_swap(),           # 24
     case_seasonal_course_excluded(),  # 25
     case_scope_discipline(),          # 26
+    case_unscoped_roadmap_request(),  # 27
 ]

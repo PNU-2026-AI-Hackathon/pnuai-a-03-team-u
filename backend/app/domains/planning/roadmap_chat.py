@@ -434,6 +434,28 @@ _CONDITIONAL_RULES: dict[str, str] = {
   실제 관측: 한 과목만 옮겨달라는 요청에 같은 학기의 다른 과목까지 함께 옮겨서, 사용자가
   요청하지 않은 변경이 승인 대기에 올라갔다.""",
 
+    "unscoped_build_request": """
+- **[최우선·예외 규칙] 이번 요청은 범위(다음 학기 하나 vs 졸업까지 전체)를
+  안 밝혔다 — 이번 턴엔 `propose_change`도 `propose_term_plan`도 절대 호출하지 마라.**
+  "로드맵 짜줘"/"성장 로드맵 만들어줘"처럼 특정 학기를 짚지 않은 요청이다.
+  **다른 조건부 규칙(예: 졸업 위험 경고 `critical_missing`)이 동시에 적용돼도 이
+  규칙이 이긴다** — 위험 정보를 알게 됐다고 해서 그걸 근거로 학기를 채워 넣지
+  마라. 정보는 `finish_response` 텍스트로 요약만 하고 실제 배치는 하지 않는다.
+  1. `get_roadmap_items`/`get_graduation_progress`/`search_courses`로 상황을
+     파악하는 건 해도 된다 — 파악한 내용을 답변에 반영해야 하니까.
+  2. **하지만 이 턴에서 부를 수 있는 propose 계열 도구 호출 횟수는 0회다.**
+     `propose_change`나 `propose_term_plan`을 단 한 번이라도 호출하면 이 규칙을
+     어긴 것이다 — "일단 다음 학기만 하나 만들어서 보여주면서 물어봐야지"도
+     위반이다. 그런 식으로 하면 사용자가 "아니 전체로"라고 답했을 때 방금 만든
+     항목을 지우고 다시 만들어야 해서 되레 손해다.
+  3. `finish_response`에서: (a) 파악한 내용(예: 졸업 위험 경고가 있으면 그 사실)을
+     한두 문장으로 요약하고 (b) 범위를 명확한 질문으로 되물어라 — 예: "졸업까지
+     전체 학기를 한 번에 계획해드릴까요, 아니면 다음 학기만 먼저 보여드릴까요?"
+     사용자가 다음 턴에 범위를 답하면 그때 실제로 배치를 제안해라.
+  이 예외에서만 먼저 되묻는다(아래 `full_horizon_request` 규칙의 "먼저 되묻지
+  마라"는 사용자가 이미 "졸업까지"라고 범위를 못박은 경우에만 적용된다 — 지금은
+  범위 자체를 모르는 경우라 다르다).""",
+
     "full_horizon_request": """
 - **이번 요청은 "졸업까지 남은 학기 전부"다 — 한 학기만 하고 끝내지 마라**:
   0. **목표는 "학기를 꽉 채우기"가 아니라 "졸업요건을 채우기"다.** 남은 이수구분을 다
@@ -448,6 +470,13 @@ _CONDITIONAL_RULES: dict[str, str] = {
   2. `search_courses`를 **1학기용·2학기용으로 각각**, 남은 이수구분(전공기초/전공필수/
      전공선택/교양필수 등)별로 호출해 후보 풀을 먼저 모아라. 한 과목을 두 학기에
      겹쳐 배치하지 마라.
+     - **교양선택(균형교양) 미이수 세부영역을 먼 미래 학기(다음 배치 가능 학기가
+       아닌 그 이후)에 채울 때는 `search_courses(liberal_area=X)`로 지금 검색되는
+       후보 하나를 그대로 예시로 넣고, `reason`에 "OO영역 예시 — 균형/창의교양은
+       매 학기 실제 개설 과목이 바뀌므로 수강신청 시점에 다시 확인 필요"라고
+       명시해라.** 학생에게 중요한 건 정확한 과목명이 아니라 "이 학기엔 OO영역을
+       채워야 한다"는 사실이다 — 다음 배치 가능 학기(가장 가까운 학기)는 실제로
+       곧 수강신청할 과목이니 이 예외를 적용하지 말고 평소대로 확정적으로 추천해라.
   3. 후보가 모이면 **`propose_term_plan`을 호출해 남은 학기를 통째로 제안해라.**
      과목마다 `propose_change`를 부르면 도구 반복 횟수가 모자라 중간에 끊긴다.
   4. 응답의 `rejected`에 걸린 과목은 사유(학점 상한 초과/중복/이미 이수/계절수업 전용)
@@ -651,6 +680,43 @@ def _looks_like_full_horizon_request(message: str | None) -> bool:
     )
 
 
+# 이미 특정 학기를 짚은 요청("다음 학기"/"3학년 2학기")은 범위가 정해진 것으로 본다 —
+# _looks_like_unscoped_build_request가 이런 요청까지 "범위 미정"으로 잡아서 매번
+# 되물으면 오히려 사용자를 귀찮게 한다.
+_TERM_SCOPED_MARKERS = (
+    "다음 학기", "이번 학기", "이번학기", "다음학기", "당장", "지금 학기",
+    "1학년", "2학년", "3학년", "4학년", "1학기", "2학기",
+    "여름계절", "겨울계절", "이번 학년도", "내년",
+)
+
+
+def _looks_like_unscoped_build_request(message: str | None) -> bool:
+    """"로드맵 짜줘"/"성장 로드맵 만들어줘"처럼 계획을 만들어 달라는 의도는 있는데
+    범위(다음 학기 하나인지, 졸업까지 전체인지)를 안 밝힌 요청인지.
+
+    범위가 정해지지 않은 채로 그냥 다음 학기 하나만 골라 진행하면, 사실 전체
+    로드맵을 원했던 사용자에게는 매번 "승인해주시면 이어서 하겠다"는 미완성 답변만
+    돌아간다(2026-08-20 실계정 관측, PR #194). 반대로 매번 전체로 확장하면 다음
+    학기만 궁금했던 사용자에게 불필요한 제안이 쌓인다. 그래서 이 경우만 예외적으로
+    먼저 범위를 되묻는다 — `full_horizon_request` 규칙의 "먼저 되묻지 마라"와는
+    반대 방향인데, 그쪽은 범위가 이미 확정된 경우("졸업까지")라 되묻는 게 턴 낭비지만
+    지금은 범위 자체를 모르는 경우라 되묻는 게 맞다.
+    """
+    if not message:
+        return False
+    compact = message.replace(" ", "")
+    has_build_intent = any(
+        m.replace(" ", "") in compact for m in _BUILD_VERB_MARKERS
+    ) and any(m.replace(" ", "") in compact for m in _PLANNING_INTENT_MARKERS)
+    if not has_build_intent:
+        return False
+    if _looks_like_full_horizon_request(message) or _looks_like_narrow_scope_request(message):
+        return False
+    if any(m.replace(" ", "") in compact for m in _TERM_SCOPED_MARKERS):
+        return False
+    return True
+
+
 def _has_term_gap(db: Session, user: User) -> bool:
     """마지막 이수 학기와 현재 학기 사이에 공백이 있으면 True (= 엇학기).
 
@@ -762,6 +828,8 @@ def _select_applicable_rules(db: Session, user: User, message: str | None = None
         applicable.append("narrow_scope_request")
     elif _looks_like_full_horizon_request(message):
         applicable.append("full_horizon_request")
+    elif _looks_like_unscoped_build_request(message):
+        applicable.append("unscoped_build_request")
 
     return applicable
 
