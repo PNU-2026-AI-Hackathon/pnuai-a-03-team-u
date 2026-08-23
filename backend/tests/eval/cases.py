@@ -1,4 +1,4 @@
-"""챗 골든 데이터셋 — 27 케이스.
+"""챗 골든 데이터셋 — 29 케이스.
 
 각 케이스는 실제 관찰된 버그/설계 결정을 회귀 방지하는 assertion을 갖는다.
 
@@ -12,8 +12,9 @@
 - 22 재수강 요청 · 23 선수과목 차단 · 24 학점 상한 swap
 - 25 계절수업 제외 · 26 요청 범위 준수 · 27 범위 미지정 로드맵 요청
 
-**시간표 챗 (5)**:
+**시간표 챗 (7)**:
 - 17 정컴 3학년 · 18 시간 제약 · 19 엇학기 · 20 부전공 · 21 못 찾음
+- 28 선수과목 차단(시간표 버전) · 29 정확한 학점(credit_mode=exact)
 
 **assertion 고르는 법** (2026-08 실측 기반):
 - 데이터로 검증 가능하면 `custom` — 반환된 pending_changes/schedules를 직접 본다.
@@ -1625,6 +1626,155 @@ def case_unscoped_roadmap_request() -> EvalCase:
     )
 
 
+def _schedule_offering_ids(result) -> set[int]:
+    ids: set[int] = set()
+    for s in result.schedules:
+        ids.update(s.get("offering_ids") or [])
+    return ids
+
+
+def case_tt_prereq_blocked() -> EvalCase:
+    """28: 시간표 챗 버전 선수과목 차단. 로드맵 챗(23)과 같은 페르소나 패턴을
+    시간표 에이전트로 재현 — prereq_blocked가 로드맵/시간표 양쪽에서 똑같이
+    지켜지는지 별도로 확인한다(공유 헬퍼 `_compute_prereq_blocked`를 쓰지만,
+    실제로 반영하는 경로는 도구 스키마가 다른 별개 에이전트라 따로 검증 필요)."""
+    depts, majors = _cs_hierarchy()
+    catalog = [c for c in _cs_catalog() if c.course_name != "운영체제"] + [
+        CourseSpec(id=1020, course_name="운영체제", department_id=DEPT_CS, major_id=MAJOR_CS,
+                   category="전공선택", credits=3, year="3", semester="1",
+                   description="프로세스·메모리 관리를 다룬다. 선수과목: 자료구조"),
+    ]
+    offerings = [
+        OfferingSpec(id=7001, course_id=1020, year="2026", semester="2학기",
+                     times=[("월", "09:00", "10:30"), ("수", "09:00", "10:30")]),
+        OfferingSpec(id=7002, course_id=1023, year="2026", semester="2학기",  # 컴퓨터네트워크
+                     times=[("화", "13:00", "14:30"), ("목", "13:00", "14:30")]),
+    ]
+    persona = PersonaSpec(
+        id="tt-prereq-blocked", label="시간표: 자료구조 미이수 상태로 운영체제 요청",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="시스템 프로그래밍",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2025")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2025", required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+        )],
+        courses=catalog,
+        # 자료구조는 이수하지 않았다 — 그래서 운영체제가 prereq_blocked에 오른다.
+        records=[
+            RecordSpec(raw_course_name=n, category="전공기초", year=y, semester=sem,
+                       grade=g, grade_point=gp)
+            for (n, g, gp), (y, sem) in zip(
+                [("컴퓨터프로그래밍(I)", "B0", 3.0), ("컴퓨터프로그래밍(II)", "B+", 3.5)],
+                _terms_ending_at_last_completed(2),
+            )
+        ],
+        offerings=offerings,
+    )
+    return EvalCase(
+        slug="28-tt-prereq-blocked", persona=persona, agent="timetable",
+        prompt="이번 학기 시간표 짜주세요. 운영체제도 꼭 넣어주세요.",
+        timetable_year="2026", timetable_semester="2학기",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_student_context",
+                             reason="prereq_blocked는 이 도구 응답에만 있음"),
+            ExpectedBehavior(
+                "custom",
+                lambda r: (f"선수과목 미이수인 운영체제(offering 7001)가 조합에 포함됨: "
+                           f"{r.schedules}") if 7001 in _schedule_offering_ids(r) else None,
+                reason="prereq_blocked 과목의 offering은 build_timetable 후보에서 "
+                       "빠져야 한다 — 로드맵 챗의 create 금지와 동등한 시간표 챗 버전",
+            ),
+            ExpectedBehavior(
+                "llm_judge",
+                "운영체제를 바로 넣어주는 대신, 선수과목인 '자료구조'가 아직 미이수라는 점을 "
+                "이유로 들어 이번 학기엔 담을 수 없다고 안내했는가? 선수과목 얘기 없이 "
+                "그냥 운영체제를 시간표에 넣었으면 fail.",
+                reason="시간표에서 조용히 빠지기만 하고 이유를 설명 안 하면 사용자는 버그로 오인한다",
+            ),
+        ],
+    )
+
+
+def case_tt_exact_credits() -> EvalCase:
+    """29: '정확히 15학점만' — build_timetable(credit_mode='exact')이 실제로
+    쓰이고, 반환된 조합의 학점 합계가 정확히 목표와 일치하는지.
+
+    카탈로그가 전부 3학점이라 5과목 = 15학점으로 정확히 맞아떨어지게 설계했다 —
+    안 맞는 조합이 나오면 credit_mode를 안 썼거나(at_least로 더 채움) 엔진이
+    잘못 계산한 것이다."""
+    depts, majors = _cs_hierarchy()
+    # 서로 안 겹치는 5개 분반. 5×3=15로 정확히 채워지려면 이 5개가 전부 들어가야 한다.
+    offerings = [
+        OfferingSpec(id=8001, course_id=1020, year="2026", semester="1학기",  # 운영체제
+                     times=[("월", "09:00", "10:30")]),
+        OfferingSpec(id=8002, course_id=1021, year="2026", semester="1학기",  # 시스템프로그래밍
+                     times=[("월", "10:30", "12:00")]),
+        OfferingSpec(id=8003, course_id=1024, year="2026", semester="1학기",  # 인공지능
+                     times=[("화", "09:00", "10:30")]),
+        OfferingSpec(id=8004, course_id=1010, year="2026", semester="1학기",  # 자료구조
+                     times=[("화", "10:30", "12:00")]),
+        OfferingSpec(id=8005, course_id=1011, year="2026", semester="1학기",  # 알고리즘
+                     times=[("수", "09:00", "10:30")]),
+    ]
+    persona = PersonaSpec(
+        id="tt-exact-credits", label="시간표: 정확히 15학점만",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2024")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS,
+            program_type="primary", curriculum_year="2024",
+            required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+        )],
+        courses=_cs_catalog(), offerings=offerings,
+    )
+    return EvalCase(
+        slug="29-tt-exact-credits", persona=persona, agent="timetable",
+        timetable_year="2026", timetable_semester="1학기",
+        prompt="이번 학기 시간표 정확히 15학점만 짜주세요. 더도 덜도 말고요.",
+        expectations=[
+            ExpectedBehavior("tool_called", "build_timetable",
+                             reason="숫자를 콕 집었으니 credit_mode='exact'로 호출해야 함"),
+            ExpectedBehavior("schedules_count", (">=", 1),
+                             reason="5개 분반이 전혀 안 겹치니 조합이 반드시 나와야 함"),
+            ExpectedBehavior(
+                "custom",
+                lambda r: (
+                    None
+                    if any(
+                        c.get("name") == "build_timetable"
+                        and (c.get("args") or {}).get("credit_mode") == "exact"
+                        for c in r.tool_calls
+                    )
+                    else f"build_timetable 호출에 credit_mode='exact'가 없음: {r.tool_calls}"
+                ),
+                reason="'정확히 15학점'처럼 숫자를 콕 집으면 exact를 써야 한다는 "
+                       "도구 스키마 지침이 실제로 지켜지는지",
+            ),
+            ExpectedBehavior(
+                "custom",
+                lambda r: (
+                    None
+                    if not r.schedules
+                    or sum(
+                        3.0 for oid in (r.schedules[0].get("offering_ids") or [])
+                    ) == 15.0
+                    else f"첫 조합 학점 합계가 15가 아님: {r.schedules[0]}"
+                ),
+                reason="카탈로그가 전부 3학점이라 조합 학점 합계는 offering 개수*3 — "
+                       "정확히 15가 아니면 exact 모드가 목표를 못 맞춘 것",
+            ),
+        ],
+    )
+
+
 ALL_CASES: list[EvalCase] = [
     # 로드맵 챗
     case_freshman_backend(),          # 01
@@ -1656,4 +1806,6 @@ ALL_CASES: list[EvalCase] = [
     case_seasonal_course_excluded(),  # 25
     case_scope_discipline(),          # 26
     case_unscoped_roadmap_request(),  # 27
+    case_tt_prereq_blocked(),         # 28
+    case_tt_exact_credits(),          # 29
 ]

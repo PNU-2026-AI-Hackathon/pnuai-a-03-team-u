@@ -896,6 +896,37 @@ class StudentContextTest(unittest.TestCase):
         self.assertIn("운영체제", blocked)
         self.assertEqual(["자료구조"], blocked["운영체제"])
 
+    def test_build_timetable_excludes_prereq_blocked_offering(self):
+        """`build_timetable`이 prereq_blocked 과목의 offering을 후보에서 제외한다.
+
+        예전엔 시스템 프롬프트로만 "빼라"고 지시했는데, LLM이 그 offering_id를
+        그대로 넘기면 걸러낼 코드가 없어서 조합에 그대로 들어갔다(2026-08-23
+        live eval로 재현). 도구 레벨에서 강제 필터링하도록 고쳤다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(Course(
+            id=910, course_name="운영체제", department_id=100,
+            category="전공선택", credits=3.0, year="3", semester="2",
+            description="선수과목: 자료구조",
+        ))
+        db.add(CourseOffering(id=7001, course_id=910, year="2026", semester="2학기",
+                              section="001"))
+        db.add(CourseTime(offering_id=7001, day_of_week="월",
+                          start_time=datetime.time(9, 0), end_time=datetime.time(10, 30)))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.build_timetable(offering_ids=[7001])
+        self.assertFalse(result["ok"])
+        self.assertEqual("no_usable_offerings", result["reason"])
+        reasons = {d["offering_id"]: d["reason"] for d in result["dropped"]}
+        self.assertEqual("선수과목 미이수로 이번 학기 담기 부적절", reasons[7001])
+
+        # must_include로 강제해도 조용히 통과시키지 않고 명시적으로 거절해야 한다.
+        forced = ctx.build_timetable(offering_ids=[7001], must_include_offering_ids=[7001])
+        self.assertFalse(forced["ok"])
+        self.assertEqual("must_include_unavailable", forced["reason"])
+
 
 class RunTimetableChatIntegrationTest(unittest.TestCase):
     """LLM을 스크립트된 tool_calls로 mock해 전체 루프가 도구를 실제로 호출하고

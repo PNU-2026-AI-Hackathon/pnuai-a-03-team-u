@@ -14,6 +14,42 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — 시간표 챗 골든 eval 확장 + prereq_blocked 강제 안 되던 버그 발견·수정
+
+"시간표 LLM 성능 개선"을 "특이/일반 케이스를 만들어서 응답 정확도·품질·속도를
+종합 평가하는 골든 테스트를 갖추자"는 뜻으로 확인 — 5개뿐이던 시간표 eval을
+2개 늘리면서, 그 과정에서 실제 프로덕션 버그를 하나 발견해 고쳤다.
+
+- **[feat] 케이스 28(`tt-prereq-blocked`)** — 로드맵 챗(23번)과 같은 상황을
+  시간표 에이전트로 재현: 선수과목(자료구조) 미이수인데 그 과목(운영체제)을
+  시간표에 넣어달라는 요청.
+- **[fix, 실제 버그] `build_timetable`이 prereq_blocked 과목을 안 걸러냈다.**
+  케이스 28을 처음 `--live`로 돌리자 **정말로 선수과목 미이수 과목이 시간표
+  조합에 포함됐다** — `roadmap_chat.propose_change`는 이 목록을 코드 레벨에서
+  강제 차단하는데, `timetable_chat.build_timetable`은 시스템 프롬프트로만
+  "빼라"고 지시하고 코드로는 안 걸렀다(도구 자체 docstring의 "걸러내는 것들"
+  목록에도 아예 없었다 — 이미 이수한 과목·학점 상한·시간 제약은 걸러지는데
+  선수과목만 빠져 있었다). `_TimeTableToolContext._prereq_blocked_course_ids()`
+  신설, `build_timetable`의 usable 필터링 루프에 추가(이미 이수한 과목 필터
+  바로 옆). `must_include_offering_ids`로 강제해도 조용히 통과시키지 않고
+  `must_include_unavailable`로 명시 거절되는 것까지 확인.
+  단위 테스트(`test_build_timetable_excludes_prereq_blocked_offering`) +
+  `--live --case 28` 재확인 — 수정 전 offering이 조합에 포함됨을 직접 재현한
+  뒤, 수정 후 제외되고 자료구조 선수과목을 이유로 안내하는 응답까지 확인.
+- **[feat] 케이스 29(`tt-exact-credits`)** — "정확히 15학점만" 같은 콕 집은
+  숫자 요청에 `build_timetable(credit_mode="exact")`가 실제로 쓰이고, 반환된
+  조합의 학점 합계가 정확히 목표와 일치하는지. `--live`로 확인: exact 모드
+  사용 + 정확히 15학점 조합 확인.
+- 두 케이스 모두 dry-run(구조 검증)뿐 아니라 `--live`(실제 LLM 호출, 응답
+  속도·품질까지)로 검증 — dry-run은 도구 배선만 확인하고 실제 대화 행동은
+  검증 못 한다는 걸 이전 세션에서 이미 확인했었다.
+- 독립 리뷰가 수정 코드를 임시로 되돌려서 회귀 테스트가 실제로 FAIL하는지까지
+  확인한 뒤 원상복구 — 얕은 테스트가 아님을 재확인.
+- 검증: `pytest` 613 passed, 골든테스트 9/9, eval dry-run 29/29(main과 합쳐진
+  뒤 케이스 27이 로드맵 쪽 `unscoped-roadmap-request`와 겹쳐서 이 PR의 시간표
+  케이스는 28/29로 재조정했다), eval `--live --case 28`/`--case 29` 각각
+  PASS(수정 전후 대조 포함).
+
 ## 2026-08-23 (blackest21) — 성장 로드맵: 범위 미지정 요청은 먼저 되묻기 + 먼 미래 교양은 영역 예시로
 
 "성장 로드맵을 1~4학년 전체로 짜주는 방향으로 고쳐달라"는 요청 — 다만 사용자
