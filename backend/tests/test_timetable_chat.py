@@ -1164,6 +1164,44 @@ class OfferingLookupTest(unittest.TestCase):
         self.assertEqual([], attached["offered_sections"])
 
 
+class LiberalAreaFilterTest(unittest.TestCase):
+    """list_offered_courses(liberal_area=...)가 courses.general_education_area로
+    걸러야 한다. 이 필터가 없으면 LLM이 과목명만 보고 균형교양 세부영역을
+    추측해야 했다 — general_education_area가 결과에 노출되고 필터로도 쓰일 수
+    있어야 그 추측이 필요 없어진다."""
+
+    def test_filters_by_general_education_area(self):
+        db = _make_db()
+        user = _make_student(db, department_id=100)
+        db.add(Course(id=1, course_name="철학의이해", category="효원균형교양",
+                      general_education_area="사상과역사", credits=3.0,
+                      year="전학년", semester="전학기", department_id=None))
+        db.add(Course(id=2, course_name="사회문제탐구", category="효원균형교양",
+                      general_education_area="사회와문화", credits=3.0,
+                      year="전학년", semester="전학기", department_id=None))
+        db.add(CourseOffering(id=101, course_id=1, year="2026", semester="2학기", section="001"))
+        db.add(CourseOffering(id=102, course_id=2, year="2026", semester="2학기", section="001"))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.list_offered_courses(query="", liberal_area="사상과역사")
+        self.assertEqual([1], [r["course_id"] for r in result["results"]])
+        self.assertEqual("사상과역사", result["results"][0]["general_education_area"])
+
+    def test_no_match_hints_liberal_area_in_note(self):
+        db = _make_db()
+        user = _make_student(db, department_id=100)
+        db.add(Course(id=1, course_name="영어회화", category="효원균형교양",
+                      general_education_area=None, credits=3.0,
+                      year="전학년", semester="전학기", department_id=None))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.list_offered_courses(query="", liberal_area="외국어")
+        self.assertEqual([], result["results"])
+        self.assertIn("liberal_area", result["note"])
+
+
 class NotOfferedSeparationTest(unittest.TestCase):
     """미개설 과목이 `results`에 섞이지 않고 별도 필드로 나오는지.
 

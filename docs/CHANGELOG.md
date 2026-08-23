@@ -14,6 +14,41 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-23 (blackest21) — PR #199 후속: golden-eval-dry 회귀 수정 + general_education_area를 실제 추천 검색에 연결
+
+PR #199(교양선택 카탈로그 갭 보정)를 main에 맞춰 병합하다가 발견/처리한 것들.
+
+- **[fix] golden-eval-dry가 main에서 이미 26/26 전부 빨간불이었다.** PR #198이
+  `liberal_area_completions()`를 `_build_student_context_block`에 붙이면서
+  `student_course_substitutions` 조회가 무조건 걸리게 됐는데, `tests/eval/personas.py`의
+  SQLite 픽스처 테이블 목록(`_TABLES`)이 이 모델을 안 만들어서 "no such table"로 죽고
+  있었다. `test_roadmap_chat.py`의 `_ROADMAP_TEST_TABLES`에는 이미 있던 걸 personas.py에
+  반영 안 한 것 — 두 목록이 갈라져 있었다. `StudentCourseSubstitution.__table__` 추가로
+  해결, 26/26 재통과.
+- **[fix] `InfoPage.tsx`의 `COMPLETED_LIBERAL_AREAS`에 8번째 영역 "효원브릿지" 누락.**
+  PR #199에서 백엔드 `BALANCED_LIBERAL_AREAS`를 7→8개로 고쳤는데 프론트 쪽 병렬 목록은
+  안 따라갔다 — 독립 code-review에서 발견. 인접 주석이 "반드시 같이 유지" 라고 명시하고
+  있었다.
+- **[feat] `courses.general_education_area`(PR #198에서 신설, 데이터는 반영됐지만 아무
+  데도 안 쓰이고 있었다)를 로드맵·시간표 추천 검색에 실제로 연결.** `search_courses`
+  (roadmap_chat) / `list_offered_courses`(timetable_chat)에 `liberal_area` 파라미터
+  추가 — `missing_liberal_areas` 값을 그대로 넘기면 `CurriculumRetriever`가
+  `Course.general_education_area`로 필터링하고, 결과에도 이 필드를 노출한다. 그동안
+  시스템 프롬프트가 "과목명만 보고 영역을 추측하지 마라"고 지시하면서도 정작 그걸 확인할
+  방법을 안 줬던 모순을 해소했다. **한계**: `general_education_area`는 Onestop
+  "세부구분(영역별)" 원문 코드 9개(균형교양 중 사상과역사/사회와문화/문학과예술/
+  과학과기술/건강과레포츠/효원브릿지 + 2026 개편 3개)만 있고, "외국어"·"융복합"은
+  원문에 영역 코드 자체가 없어 이 필터로 못 잡는다 — 도구 설명과 빈 결과 note에 명시,
+  세대별/학과별 영역 규칙 정식 확장(PR #199 "안 고치고 남긴 것" #2)은 여전히 범위 밖.
+- 회귀 테스트: `test_roadmap_chat.py::SearchCoursesBrowsingTest`,
+  `test_timetable_chat.py::LiberalAreaFilterTest` 신규 4건.
+- 검증: `pytest` 609 passed, 골든테스트 6/6, `python -m tests.eval.run_eval` 26/26,
+  `frontend: npm run build` 성공.
+- PR #199 리뷰 중 발견했지만 이 PR 범위 밖인 이슈 2건(둘 다 PR #198/#200 코드)은
+  이슈 #202로 남김: `portal_sync.py`가 category 변경 시 이전 `liberal_area` 값을
+  안 지우는 것, `graduation.py`의 `is_ai_track` 조회가 `curriculum_year` 필터 없이
+  `.first()`를 쓰는 것.
+
 ## 2026-08-20 (d0won) — 교양 세부영역 이수구분이 학과 1행 때문에 뒤집히던 것
 
 `ZFz000098 효원브릿지`가 DB에 `효원핵심교양`으로 들어가 있었다. 규정상 `효원균형교양`이다.

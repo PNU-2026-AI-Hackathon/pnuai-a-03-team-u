@@ -19,6 +19,11 @@ class Course(TimestampMixin, Base):
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
     major_id: Mapped[int | None] = mapped_column(ForeignKey("majors.id"), nullable=True, index=True)
     category: Mapped[str | None] = mapped_column(String(50))
+    # 효원균형교양(6영역 중 2영역)·효원창의교양(3영역 중 2영역) 세부영역명(예: "사상과역사").
+    # 규정 제9조가 영역 단위로 이수를 요구하는데, category만으로는 어느 영역인지 알 수 없어
+    # 별도 컬럼으로 둔다. Onestop 수강편람 검색의 "세부구분(영역별)" 필터(공통코드 0001_AREA_GCD,
+    # ZFz코드=Z+해당 공통코드)로만 얻을 수 있고, 그 외 카테고리 과목은 항상 NULL이다.
+    general_education_area: Mapped[str | None] = mapped_column(String(50), nullable=True)
     credits: Mapped[float | None] = mapped_column()
     year: Mapped[str | None] = mapped_column(String(10))
     semester: Mapped[str | None] = mapped_column(String(20))

@@ -147,7 +147,10 @@ offering_id를 그대로 수강신청에 담으면 됩니다" 같은 문장은 �
 - 이미 이수한 과목은 다시 추천 X (`completed_course_names`).
 - 교양선택 과목을 추천할 때는 `missing_liberal_areas`를 우선 채우고,
   `completed_liberal_areas`에 있는 영역을 이미 충족한 것으로 취급해라. 영역 정보는
-  One-Stop의 학교 판정을 DB에 저장한 값이므로 과목명만 보고 영역을 추측하지 마라.
+  One-Stop의 학교 판정을 DB에 저장한 값이므로 과목명만 보고 영역을 추측하지 마라 —
+  `list_offered_courses(liberal_area="XX영역")`로 직접 필터해서 후보를 찾아라. 단
+  '외국어'/'융복합'은 이 필터로 안 잡히니 그 두 영역이 미이수면 query/category로
+  따로 찾는다.
 - 학생이 "가볍게 듣고 싶어" 같은 학점/과목수 선호 말하면 그 방향으로 좁힌다.
 - 진로 관련 전공 과목을 우선. 부족한 학점은 관련 있는 교양으로 채운다.
 - 사용자가 로드맵을 언급하거나 "내 계획대로" 같은 표현을 쓰면 그때만 `get_roadmap_hint`.
@@ -320,6 +323,16 @@ _TOOLS = [
                             "'교양선택' → 효원균형교양+효원창의교양+기초교양). "
                             "빈 결과가 오면 응답의 `available_categories`를 보고 다른 값으로 재시도해라 — "
                             "같은 인수로 재호출하지 마라."
+                        ),
+                    },
+                    "liberal_area": {
+                        "type": "string",
+                        "description": (
+                            "균형교양 세부영역 필터. `get_student_context`의 `missing_liberal_areas` "
+                            "값을 그대로 넘겨라(예: '사상과역사') — 결과의 `general_education_area`가 "
+                            "그 값과 일치하는 과목만 온다. 과목명만 보고 영역을 추측하지 말고 이 "
+                            "필터로 확인해라. **'외국어'/'융복합'은 이 필터로 안 잡힌다** — 그 두 "
+                            "영역은 query나 category로 따로 찾아라(응답 note가 안내한다)."
                         ),
                     },
                     "limit": {"type": "integer", "description": "결과 상한 (기본 10)"},
@@ -1360,6 +1373,7 @@ class _TimeTableToolContext:
 
     def list_offered_courses(
         self, query: str | None = None, category: str | None = None,
+        liberal_area: str | None = None,
         limit: int | None = None, program_type: str | None = None,
     ) -> dict:
         retriever = CurriculumRetriever(self.db)
@@ -1369,7 +1383,10 @@ class _TimeTableToolContext:
             department_id=scope_dept_id,
             major_id=scope_major_id,
             curriculum_year=2026,
-            filters={"semester": self.semester, "category": category},
+            filters={
+                "semester": self.semester, "category": category,
+                "general_education_area": liberal_area,
+            },
         )
         cap = max(1, min(limit or 10, 30))
         candidates = list(results[:cap])
@@ -1386,7 +1403,7 @@ class _TimeTableToolContext:
                 department_id=scope_dept_id,
                 major_id=scope_major_id,
                 curriculum_year=2026,
-                filters={"category": category},
+                filters={"category": category, "general_education_area": liberal_area},
             )
             for r in unfiltered[:cap]:
                 if r.get("course_id") not in seen_ids:
@@ -1436,6 +1453,11 @@ class _TimeTableToolContext:
             reason_parts = []
             if category and category not in cats:
                 reason_parts.append(f"category={category!r}는 이번 학기 개설 목록에 없음")
+            if liberal_area:
+                reason_parts.append(
+                    f"liberal_area={liberal_area!r}로 매치 없음 — '외국어'/'융복합'은 "
+                    "이 필터로 안 잡히니 category로 다시 찾아라"
+                )
             if query:
                 reason_parts.append(f"query={query!r}로 매치 없음")
             payload["note"] = (

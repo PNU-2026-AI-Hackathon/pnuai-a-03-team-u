@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.db import Base
 from app.domains.academics.models import (
     College, Department, GraduationRequirement, Major, ProgramCourse, School,
-    StudentCourseRecord, UserAcademicProgram,
+    StudentCourseRecord, StudentCourseSubstitution, UserAcademicProgram,
 )
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
@@ -45,6 +45,10 @@ _TABLES = [
     TimetableChatSession.__table__, TimetableChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseRecord.__table__, ProgramCourse.__table__,
+    # liberal_area_completions()가 course_substitution 조회를 무조건 한다
+    # (roadmap_chat._build_student_context_block, PR #198). 빠져 있으면 dry-run이
+    # "no such table: student_course_substitutions"로 26/26 전부 죽는다 — 실제로 그랬다.
+    StudentCourseSubstitution.__table__,
     # 시간표 챗이 "사용자가 UI에서 직접 담아둔 강좌"(course_plans)를 읽는다.
     CoursePlan.__table__, CoursePlanItem.__table__,
 ]
