@@ -41,7 +41,7 @@ def setup_hierarchy(db):
     db.add(college)
     db.commit()
 
-    for name in ("컴퓨터공학과", "수학과", "산업공학과"):
+    for name in ("컴퓨터공학과", "수학과", "산업공학과", "간호학과", "경영학과"):
         dept = Department(college_id=college.id, name=name)
         db.add(dept)
         db.commit()
@@ -51,6 +51,13 @@ def setup_hierarchy(db):
     db.add(major)
     db.commit()
     MAJOR_IDS["데이터사이언스전공"] = major.id
+
+    # TC07 — 산업공학과는 AI융합트랙 대상 14개 학과 중 하나다(정보컴퓨터공학부 같은
+    # SW 학과는 대상이 아니다). 실 Supabase 기준 실제 트랙 전공명·학점 구성 그대로.
+    ai_track_major = Major(department_id=DEPT_IDS["산업공학과"], name="산업AI(SW융합트랙)")
+    db.add(ai_track_major)
+    db.commit()
+    MAJOR_IDS["산업AI(SW융합트랙)"] = ai_track_major.id
 
 
 def setup_requirements(db):
@@ -117,6 +124,49 @@ def setup_requirements(db):
                 required_general_elective=None,
                 required_free_elective=None,
             ),
+            # TC07 — 산업공학과 AI융합트랙(interdisciplinary). 졸업요건이 아니라 인증
+            # 프로그램이라 flat 카테고리 컬럼(전공기초/필수/선택 등)은 안 쓰고 특성상
+            # required_total_credits(21)만 채워진다 — 실 데이터도 이 모양이다. 세부
+            # 학점 구성(전공 15 + AI공통 6)은 special_rules에만 있다(app/domains/
+            # academics/tracks.py가 이 special_rules로 트랙 여부를 판별한다).
+            GraduationRequirement(
+                department_id=DEPT_IDS["산업공학과"],
+                major_id=MAJOR_IDS["산업AI(SW융합트랙)"],
+                program_type="interdisciplinary",
+                curriculum_year="2026",
+                required_total_credits=21,
+                special_rules={
+                    "certification_type": "AI융합트랙",
+                    "not_graduation_requirement": True,
+                    "dept_credits": {"min": 15, "max": 15},
+                    "ai_common_credits": {"min": 6, "max": 6},
+                },
+            ),
+            # TC08 — 간호학과 주전공(비CS, 전공필수 비중이 아주 큰 실제 케이스). 컴공
+            # 위주였던 골든셋에 다른 학문 계열 전 카테고리 기준학점을 추가한다.
+            GraduationRequirement(
+                department_id=DEPT_IDS["간호학과"],
+                major_id=None,
+                program_type="primary",
+                curriculum_year="2026",
+                required_total_credits=134,
+                required_major_foundation=19,
+                required_major_required=77,
+                required_major_elective=8,
+                required_general_required=9,
+                required_general_elective=21,
+                required_free_elective=None,
+            ),
+            # TC09 — 경영학과 부전공(minor). 골든셋에 지금까지 minor 시나리오가 아예
+            # 없었다(복수전공만 있었음). 실 데이터에서도 minor 요건 행 다수가 카테고리
+            # 세분 없이 총학점만 있다 — 그 실제 모양 그대로 재현한다.
+            GraduationRequirement(
+                department_id=DEPT_IDS["경영학과"],
+                major_id=None,
+                program_type="minor",
+                curriculum_year="2026",
+                required_total_credits=21,
+            ),
         ]
     )
     db.commit()
@@ -137,6 +187,12 @@ def _check_program_result(scenario_id, program_type, res, expected, failures):
         failures.append(
             f"{program_type}: 총계 satisfied 불일치 "
             f"(Expected: {expected['satisfied']}, Actual: {res.satisfied})"
+        )
+
+    if "is_ai_track" in expected and res.is_ai_track != expected["is_ai_track"]:
+        failures.append(
+            f"{program_type}: is_ai_track 불일치 "
+            f"(Expected: {expected['is_ai_track']}, Actual: {res.is_ai_track})"
         )
 
     categories_by_name = {cat.category_name: cat for cat in res.categories}
