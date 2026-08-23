@@ -14,6 +14,30 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-23 (blackest21) — 전공선택/전공필수/전공기초/일반선택 개설강좌 카탈로그 갭 106건 보정
+
+PR #199이 균형/창의교양 갭을 메운 것과 같은 문제가 전공 계열 4개 카테고리에도 있었다.
+`import_course_offerings.py`는 `course_code`가 `courses`에 이미 있어야만 적재하는데,
+2026-2학기 수강편람 CSV 기준 전공필수 64·전공선택 151·전공기초 10·일반선택 133 =
+**358개 course_code**가 `courses`에 없어서 스킵되고 있었다(실 Supabase로 직접 확인).
+
+- **[feat]** `scripts/seed_major_courses_from_offerings.py` 신설. 교양과 달리 이 4개
+  카테고리는 기존 행에 `department_id IS NULL`이 0건이라(비워두면 모든 학과 검색에
+  섞여 나온다), CSV의 `offering_department`가 `departments`/`majors` 이름과 **정확히
+  일치**하는 것만 채운다 — 어긋나면 짐작하지 않고 스킵.
+- **358건 중 106건만 정확 일치, 나머지 252건은 세 부류로 갈려서 이번엔 안 채움**
+  (`raw_data/reports/major_course_gap_skipped_2026-08-23.csv`에 사유별 목록 저장, gitignore
+  대상이라 로컬 전용):
+  1. 학사과/현장실습지원센터/창업교육센터 등 행정·지원부서 개설(~150건) — NULL
+     department_id로 교양처럼 취급할지가 새 컨벤션 결정이라 보류.
+  2. 미래모빌리티전공/클린에너지전공/이차전지융합전공 등 2026 신설 융합전공(~99건) —
+     `departments`/`majors`에 아직 마스터 행이 없어 신규 등록이 먼저 필요.
+  3. 한의학과(20)·법학과(18) — 실존 학과지만 2026학번 기준 학부 모집 여부 확인 안 됨.
+- **106건 반영**: 로컬 검증(dry-run 결과가 수기 계산과 정확히 일치 확인) 후 Supabase에
+  `--commit`, 이어서 `import_course_offerings.py`(기존 스크립트, 안 바꿈) 재실행으로
+  `course_offerings` 112건 신규(분반 포함)/3864건 갱신. `courses` 총계 6711 → 6817.
+- 검증: `pytest` 609 passed(무영향 확인, 데이터 스크립트라 앱 코드 변경 없음).
+
 ## 2026-08-23 (blackest21) — PR #199 후속: golden-eval-dry 회귀 수정 + general_education_area를 실제 추천 검색에 연결
 
 PR #199(교양선택 카탈로그 갭 보정)를 main에 맞춰 병합하다가 발견/처리한 것들.
