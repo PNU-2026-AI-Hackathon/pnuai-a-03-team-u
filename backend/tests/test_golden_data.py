@@ -25,6 +25,15 @@
 - category_required_credits: {category_name: 기대하는 required_credits 값} — 특정
   기준학점 행이 선택됐는지(예: major_id 우선순위) 직접 검증할 때만 사용.
 - warning_contains: warnings 리스트 중 하나가 이 문자열을 포함해야 함.
+- is_ai_track: ProgramProgress.is_ai_track과 대조 — AI융합트랙(program_type=
+  'interdisciplinary' + special_rules.certification_type='AI융합트랙') 판정이
+  실제로 이 진행도 계산에 쓰인 요건 행 기준으로 나오는지 검증한다.
+
+TC01~TC06은 컴퓨터공학과 위주였다. TC07~TC09가 다양성을 보강한다: TC07은 AI융합트랙
+대상 14개 학과 중 하나(산업공학과)의 interdisciplinary 트랙 판정, TC08은 비CS
+학과(간호학과)의 전 카테고리 기준학점 대조, TC09는 골든셋에 없던 부전공(minor)
+시나리오다. 셋 다 실 Supabase의 실제 department/major/학점 구성을 그대로 썼다
+(2026-08-23 조회 기준).
 """
 
 GOLDEN_SCENARIOS = [
@@ -173,6 +182,85 @@ GOLDEN_SCENARIOS = [
             },
             # primary/dual의 earned_total_credits가 정확히 같아야 함(공유 풀 검증).
             "shared_earned_total_credits": True,
+        },
+    },
+    {
+        "scenario_id": "TC07_AI_TRACK_INTERDISCIPLINARY",
+        "description": (
+            "AI융합트랙 대상 14개 학과 중 하나(산업공학과, 비SW 학과)가 실제 트랙 "
+            "요건(21학점, special_rules.certification_type=AI융합트랙)을 채우면 "
+            "is_ai_track=True로 판정돼야 함"
+        ),
+        "programs": [
+            {
+                "type": "interdisciplinary",
+                "department": "산업공학과",
+                "major": "산업AI(SW융합트랙)",
+                "curriculum_year": "2026",
+            },
+        ],
+        # 트랙은 flat 카테고리 컬럼을 안 쓰고 총학점(21)만 본다 — 학과전공 15 + AI융합
+        # 공통교과목(전부 일반선택) 6이라는 실제 구성 그대로 채운다.
+        "courses": [
+            {"category": "전공선택", "credits": 15.0},
+            {"category": "일반선택", "credits": 6.0},
+        ],
+        "expected": {
+            "interdisciplinary": {
+                "requirement_found": True,
+                "satisfied": True,
+                "is_ai_track": True,
+            },
+        },
+    },
+    {
+        "scenario_id": "TC08_NON_CS_PRIMARY_FULL_BREAKDOWN",
+        "description": (
+            "간호학과(비CS, 전공필수 비중이 아주 큰 실제 커리큘럼) 주전공 — 컴공 "
+            "위주였던 골든셋에 다른 학문 계열의 전 카테고리 기준학점 대조를 추가"
+        ),
+        "programs": [
+            {"type": "primary", "department": "간호학과", "major": None, "curriculum_year": "2026"},
+        ],
+        "courses": [
+            {"category": "전공기초", "credits": 19.0},
+            {"category": "전공필수", "credits": 77.0},
+            {"category": "전공선택", "credits": 8.0},
+            {"category": "교양필수", "credits": 9.0},
+            {"category": "교양선택", "credits": 21.0},
+        ],
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "satisfied": True,
+                "categories": {
+                    "전공기초": True,
+                    "전공필수": True,
+                    "전공선택": True,
+                    "교양필수": True,
+                    "교양선택": True,
+                },
+            },
+        },
+    },
+    {
+        "scenario_id": "TC09_MINOR_PROGRAM",
+        "description": (
+            "경영학과 부전공(minor) — 골든셋에 지금까지 복수전공만 있고 부전공이 "
+            "아예 없었다. 실 데이터에서도 minor 요건 행 다수가 카테고리 세분 없이 "
+            "총학점만 있는 실제 모양 그대로 재현"
+        ),
+        "programs": [
+            {"type": "minor", "department": "경영학과", "major": None, "curriculum_year": "2026"},
+        ],
+        "courses": [
+            {"category": "전공선택", "credits": 21.0},
+        ],
+        "expected": {
+            "minor": {
+                "requirement_found": True,
+                "satisfied": True,
+            },
         },
     },
 ]
