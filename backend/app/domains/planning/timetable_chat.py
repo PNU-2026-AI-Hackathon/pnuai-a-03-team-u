@@ -1063,6 +1063,7 @@ class _TimeTableToolContext:
         # schedules로 끝내려 할 때 "엔진은 만들 수 있었다"는 근거로 되돌리는 데 쓴다.
         self.built_combos: list[list[int]] = []
         self._completed_norms_cache: set[str] | None = None
+        self._prereq_blocked_cache: set[int] | None = None
         # build_timetable 재시도 억제용 — 후보를 바꿔도 최대 학점이 안 늘면 그만 시도하게 한다.
         self._build_calls = 0
         self._best_built_credits = 0.0
@@ -1554,6 +1555,21 @@ class _TimeTableToolContext:
             self._completed_norms_cache = _completed_course_norms(self.db, self.user.id)
         return self._completed_norms_cache
 
+    def _prereq_blocked_course_ids(self) -> set[int]:
+        """`prereq_blocked` 과목의 course_id 집합.
+
+        기존엔 시스템 프롬프트로만 "이 목록은 후보에서 빼라"고 지시했는데, LLM이
+        지시를 어기고 그대로 build_timetable에 넘기면 걸러낼 코드가 없어서 그대로
+        시간표에 들어갔다(2026-08-23 live eval로 재현 — 선수과목 미이수 과목이
+        조합에 포함됨). roadmap_chat.propose_change가 이미 이 목록을 코드 레벨에서
+        강제 차단하는 것과 대칭을 맞춘다.
+        """
+        if self._prereq_blocked_cache is None:
+            self._prereq_blocked_cache = {
+                b["course_id"] for b in _compute_prereq_blocked(self.db, self.user, roadmap_id=None)
+            }
+        return self._prereq_blocked_cache
+
     def locked_sections(self) -> list[_SectionInfo]:
         """사용자가 시간표 UI에서 이미 담아둔 분반들.
 
@@ -1692,6 +1708,7 @@ class _TimeTableToolContext:
           - 같은 과목의 여러 분반 → 과목당 하나만 선택
           - 사용자 요일·시간대 제약 위반 분반
           - 이미 이수한 과목
+          - 선수과목 미이수(`prereq_blocked`)인 과목
           - 학점 상한 초과
 
         `credit_mode`:
@@ -1779,6 +1796,10 @@ class _TimeTableToolContext:
             if s.course_name and _normalize_course_name(s.course_name) in completed:
                 dropped.append({"offering_id": s.offering_id, "course_name": s.course_name,
                                 "reason": "이미 이수한 과목"})
+                continue
+            if s.course_id in self._prereq_blocked_course_ids():
+                dropped.append({"offering_id": s.offering_id, "course_name": s.course_name,
+                                "reason": "선수과목 미이수로 이번 학기 담기 부적절"})
                 continue
             conflict = next(
                 (locked_section for locked_section in locked
