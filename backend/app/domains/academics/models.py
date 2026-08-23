@@ -98,6 +98,10 @@ class StudentCourseRecord(TimestampMixin, Base):
     raw_course_code: Mapped[str | None] = mapped_column(String(50))
     raw_course_name: Mapped[str] = mapped_column(String(255))
     category: Mapped[str | None] = mapped_column(String(50))
+    # One-Stop 졸업예정정보의 균형교양 세부영역 학교 판정.
+    # category(교양선택)는 졸업요건 학점 집계용 상위 이수구분이고, 이 값은
+    # 사상과역사/사회와문화 같은 세부영역이라 의미가 다르므로 별도 보존한다.
+    liberal_area: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     credits: Mapped[float | None] = mapped_column(Numeric(4, 1))
     year: Mapped[str | None] = mapped_column(String(10))
     semester: Mapped[str | None] = mapped_column(String(20))

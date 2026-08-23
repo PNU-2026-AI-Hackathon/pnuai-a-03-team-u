@@ -702,11 +702,13 @@ class StudentContextBlockTest(unittest.TestCase):
         db = self.make_db()
         db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
                     department_id=None, major_id=None, career_goal=None))
-        # 세부영역 이수 rows (portal_sync가 override 한 상태). 사상과역사 3학점 + 사회와문화 3학점.
+        # 세부영역 이수 rows (portal_sync가 전용 컬럼에 저장한 상태).
         db.add(StudentCourseRecord(user_id=1, raw_course_name="서양철학사",
-                                     category="사상과역사", credits=3, year="2025", semester="1"))
+                                     category="교양선택", liberal_area="사상과역사",
+                                     credits=3, year="2025", semester="1"))
         db.add(StudentCourseRecord(user_id=1, raw_course_name="현대사회의이해",
-                                     category="사회와문화", credits=3, year="2025", semester="2"))
+                                     category="교양선택", liberal_area="사회와문화",
+                                     credits=3, year="2025", semester="2"))
         # override 안 된 교양선택 (미이수 세부영역 판정 대상)
         db.add(StudentCourseRecord(user_id=1, raw_course_name="영화의이해",
                                      category="교양선택", credits=2, year="2025", semester="1"))
@@ -748,6 +750,35 @@ class StudentContextBlockTest(unittest.TestCase):
         db.commit()
         block = _build_student_context_block(db, db.get(User, 1))
         self.assertIn("이수한 균형교양 세부영역 없음", block)
+
+    def test_context_block_includes_transfer_liberal_area_substitution(self):
+        """학생이 직접 지정한 입학 전 인정 영역도 미이수가 아니라 대체 인정이다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트"))
+        db.add(Course(
+            id=91,
+            course_code="ZFz000091",
+            course_name="사상과역사",
+            category="효원균형교양",
+            credits=3,
+        ))
+        db.add(StudentCourseRecord(
+            id=10,
+            user_id=1,
+            raw_course_name="교양선택",
+            category="교양선택",
+            credits=10,
+            semester="입학전성적",
+        ))
+        db.add(StudentCourseSubstitution(record_id=10, course_id=91))
+        db.commit()
+
+        block = _build_student_context_block(db, db.get(User, 1))
+
+        self.assertIn("사상과역사: 대체 인정", block)
+        missing_idx = block.index("미이수 세부영역")
+        self.assertNotIn("사상과역사", block[missing_idx : missing_idx + 200])
 
 
 class CompletedCoursesGuardTest(unittest.TestCase):

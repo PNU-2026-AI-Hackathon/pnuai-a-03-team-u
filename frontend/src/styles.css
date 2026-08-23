@@ -5594,6 +5594,117 @@ body.theme-dark .semester-course-status.status-completed {
   color: #a86716;
 }
 
+/* 졸업요건 카드에 붙는 균형교양 세부영역 요약. 별도 카드처럼 떠 보이지 않도록
+   부모 카드의 좌우·아래 padding을 되감아 한 덩어리로 연결한다. */
+.liberal-area-summary {
+  margin: 18px -28px -20px;
+  padding: 14px 28px 18px;
+  border-top: 1px solid var(--gray-line);
+  border-radius: 0 0 20px 20px;
+  background: var(--gray-soft);
+}
+
+.liberal-area-summary-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.liberal-area-summary-head p,
+.liberal-area-summary-head h4 {
+  margin: 0;
+}
+
+.liberal-area-summary-head p {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.liberal-area-summary-head h4 {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.liberal-area-summary-head > strong {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.liberal-area-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.liberal-area-grid li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--gray-line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.liberal-area-grid li.is-completed {
+  border-color: color-mix(in srgb, var(--green) 42%, var(--gray-line));
+  background: var(--green-soft);
+}
+
+.liberal-area-check {
+  display: grid;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--gray-line);
+  border-radius: 50%;
+  color: #fff;
+  place-items: center;
+}
+
+.is-completed .liberal-area-check {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.liberal-area-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.liberal-area-copy strong,
+.liberal-area-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.liberal-area-copy strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.liberal-area-copy small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .grade-term-list section,
 .evidence-list article {
   padding: 14px;
@@ -6557,6 +6668,10 @@ body.theme-dark .evidence-list strong {
   .course-editor .course-name-field {
     grid-column: span 2;
   }
+
+  .liberal-area-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -6630,6 +6745,21 @@ body.theme-dark .evidence-list strong {
   .info-section-card,
   .ai-roadmap-panel {
     padding: 18px;
+  }
+
+  .liberal-area-summary {
+    margin: 18px -18px -18px;
+    padding: 14px 18px 18px;
+  }
+
+  .liberal-area-summary-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .liberal-area-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .graduation-list strong {
@@ -8276,6 +8406,8 @@ body.theme-dark .topnav .theme-mode-button {
   gap: clamp(20px, 1.6vw, 28px);
   width: 100%;
   margin: clamp(32px, 3vw, 48px) auto 0;
+  /* 반응형 기준은 브라우저 전체 폭이 아니라 사이드바를 제외한 실제 본문 폭이다. */
+  container-type: inline-size;
 }
 
 .timetable-head {
@@ -9369,13 +9501,21 @@ body.theme-dark .timetable-panel {
   background: #243346;
 }
 
-@media (max-width: 1400px) {
+/* 브라우저 폭이 넓어도 펼친 사이드바 때문에 실제 본문은 좁을 수 있다.
+   데스크톱에서는 세 카드를 한 줄에 유지하되, 본문 폭에 맞춰 최소 폭·간격·격자를 줄인다. */
+@container (max-width: 1240px) {
   .timetable-columns {
-    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.1fr);
+    grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.32fr) minmax(0, 0.9fr);
+    gap: 14px;
   }
 
-  .timetable-ai {
-    grid-column: 1 / -1;
+  .timetable-panel {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .timetable-grid {
+    grid-template-columns: 44px repeat(5, minmax(68px, 1fr));
   }
 }
 
@@ -9921,6 +10061,113 @@ body.theme-dark .roadmap-head-stats span {
 .track-row-body .track-progress {
   margin-top: 2px;
   max-width: 320px;
+}
+
+.additional-program-list {
+  display: grid;
+  gap: 14px;
+}
+
+.additional-program-item {
+  padding: 16px;
+  border: 1px solid var(--gray-line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.additional-program-head,
+.additional-program-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.additional-program-head > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.additional-program-head h4 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.additional-program-head > strong {
+  color: var(--blue);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.program-type-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue-deep);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.program-type-badge.is-track {
+  background: #eee9ff;
+  color: #6650b8;
+}
+
+.additional-program-progress {
+  height: 7px;
+  margin: 13px 0 7px;
+}
+
+.additional-program-remaining {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.additional-program-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.additional-program-categories li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--gray-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.additional-program-categories strong {
+  color: var(--ink);
+}
+
+.program-cancel-button {
+  border: 0;
+  background: transparent;
+  color: #bf3f50;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.program-cancel-button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .graduation-title-tools {

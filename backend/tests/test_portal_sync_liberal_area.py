@@ -100,7 +100,8 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
 
         self.assertEqual(1, n)
         rec = db.query(StudentCourseRecord).one()
-        self.assertEqual("사상과역사", rec.category)   # 세부영역 조언용으로 저장되고
+        self.assertEqual("교양선택", rec.category)     # 상위 이수구분은 유지되고
+        self.assertEqual("사상과역사", rec.liberal_area)  # 세부영역은 전용 컬럼에 저장된다
         self.assertEqual(3, int(self._general_elective(db).earned_credits))  # 집계는 그대로
 
     def test_spaced_area_name_is_normalized_not_written_raw(self):
@@ -109,7 +110,9 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
         _refine_liberal_area_categories(db, 1, [_area_row("역사의이해", "1영역 : 사상과 역사")])
         db.commit()
 
-        self.assertEqual("사상과역사", db.query(StudentCourseRecord).one().category)
+        rec = db.query(StudentCourseRecord).one()
+        self.assertEqual("교양선택", rec.category)
+        self.assertEqual("사상과역사", rec.liberal_area)
         self.assertEqual(3, int(self._general_elective(db).earned_credits))
 
     def test_unknown_area_keeps_original_category(self):
@@ -120,6 +123,7 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
 
         self.assertEqual(0, n)
         self.assertEqual("교양선택", db.query(StudentCourseRecord).one().category)
+        self.assertIsNone(db.query(StudentCourseRecord).one().liberal_area)
         self.assertEqual(3, int(self._general_elective(db).earned_credits))
 
     def test_not_completed_rows_are_ignored(self):
@@ -129,6 +133,7 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
         )
         self.assertEqual(0, n)
         self.assertEqual("교양선택", db.query(StudentCourseRecord).one().category)
+        self.assertIsNone(db.query(StudentCourseRecord).one().liberal_area)
 
     def test_multiple_areas_all_roll_up_to_general_elective(self):
         db = self.make_db([("역사의이해", "교양선택"), ("사회학입문", "교양선택"),

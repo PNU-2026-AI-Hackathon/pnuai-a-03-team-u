@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.course_substitution import (
+    liberal_area_completions,
     substituted_course_names,
     substituting_record,
 )
@@ -77,8 +78,8 @@ _FINISH_GATE_RESERVE = 4
 
 # "교양선택" 세부영역 8개(2021교육과정 구체계 — graduation_progress.BALANCED_LIBERAL_AREAS
 # 참고). portal_sync._refine_liberal_area_categories가 One-Stop
-# 졸업예정정보 판정을 근거로 student_course_records.category를 상위값('교양선택')에서
-# 이 세부영역명으로 override 한다. 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
+# 졸업예정정보 판정을 근거로 student_course_records.liberal_area에 저장한다.
+# 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
 # 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
 # 미이수로 오인할 수 있다.
 # 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
@@ -2841,7 +2842,10 @@ def _build_student_context_block(db: Session, user: User) -> str:
     ).all()
     completed_by_cat: dict[str | None, list[StudentCourseRecord]] = {}
     for r in completed:
-        completed_by_cat.setdefault(r.category, []).append(r)
+        # 새 스키마는 category='교양선택', liberal_area='사상과역사'처럼 분리한다.
+        # 마이그레이션 전 데이터를 읽는 테스트/임시 DB도 안전하도록 옛 category 값은
+        # requirement_category_for_course로 계속 롤업한다.
+        completed_by_cat.setdefault(requirement_category_for_course(r.category), []).append(r)
     completed_lines: list[str] = []
     for cat in ["전공기초", "전공필수", "전공선택", "교양필수", "교양선택", "일반선택"]:
         recs = completed_by_cat.get(cat)
@@ -2851,18 +2855,25 @@ def _build_student_context_block(db: Session, user: User) -> str:
     if not completed_lines:
         completed_lines.append("  - (성적표 이수기록 없음 — 신입 또는 미동기화)")
 
-    # 균형교양 세부영역별 이수/미이수 요약. portal_sync가 One-Stop 판정으로 category를
-    # 세부영역명으로 override 한 rows만 집계된다 — 미이수 rows는 여전히 '교양선택'이라
-    # 여기서는 안 잡히고, 아래 "미이수 영역" 목록에 자동으로 남는다.
+    # 균형교양 세부영역별 이수/미이수 요약. One-Stop 학교 판정뿐 아니라 학생이
+    # 입학 전 인정 학점에 직접 지정한 영역 대체도 같은 완료 근거로 집계한다.
+    liberal_completions = liberal_area_completions(
+        db, user.id, _BALANCED_LIBERAL_AREAS, records=completed
+    )
     balanced_lines: list[str] = []
     missing_areas: list[str] = []
     for area in _BALANCED_LIBERAL_AREAS:
-        recs = completed_by_cat.get(area)
-        if recs:
-            total_credits = sum(float(r.credits) for r in recs if r.credits is not None)
-            names = sorted({r.raw_course_name for r in recs})
-            credit_str = f"{total_credits:g}학점" if total_credits else "학점 미상"
-            balanced_lines.append(f"  - {area}: {credit_str} 이수 ({', '.join(names)})")
+        completion = liberal_completions[area]
+        if completion.completed:
+            if completion.direct_credits:
+                status = f"{completion.direct_credits:g}학점 이수"
+                if completion.substituted_records:
+                    status += " + 대체 인정"
+            else:
+                status = "대체 인정 (영역별 학점 미배분)"
+            balanced_lines.append(
+                f"  - {area}: {status} ({', '.join(completion.course_names)})"
+            )
         else:
             missing_areas.append(area)
     if balanced_lines:

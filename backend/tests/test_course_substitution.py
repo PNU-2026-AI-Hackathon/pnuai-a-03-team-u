@@ -35,6 +35,7 @@ from app.api.portal_sync import (
 )
 from app.core.db import Base
 from app.domains.academics.course_substitution import (
+    liberal_area_completions,
     set_substitutions,
     substituted_course_names,
     substituting_record,
@@ -311,6 +312,19 @@ class TransferCourseSubstitutionTest(unittest.TestCase):
             {"사상과역사", "문학과예술", "융합과 창의"},
             set(substituted_course_names(self.db, 1)),
         )
+
+        completions = liberal_area_completions(
+            self.db,
+            self.user.id,
+            ("사상과역사", "문학과예술", "융복합"),
+        )
+        self.assertTrue(completions["사상과역사"].completed)
+        self.assertTrue(completions["문학과예술"].completed)
+        self.assertEqual(["교양선택 (대체 인정)"], completions["사상과역사"].course_names)
+        # 15학점 묶음을 선택한 영역마다 15학점씩 중복 배분하지 않는다.
+        self.assertEqual(0, completions["사상과역사"].direct_credits)
+        # 현재 균형교양 목록과 이름이 다른 옛 창의영역은 임의로 융복합 처리하지 않는다.
+        self.assertFalse(completions["융복합"].completed)
 
     def test_다시_저장하면_고른_집합으로_치환된다(self):
         """부분 추가가 아니라 치환이다 — 화면이 체크박스 전체 상태를 보낸다.
