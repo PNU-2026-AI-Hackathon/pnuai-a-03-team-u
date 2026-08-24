@@ -1,4 +1,4 @@
-"""챗 골든 데이터셋 — 29 케이스.
+"""챗 골든 데이터셋 — 32 케이스.
 
 각 케이스는 실제 관찰된 버그/설계 결정을 회귀 방지하는 assertion을 갖는다.
 
@@ -12,9 +12,11 @@
 - 22 재수강 요청 · 23 선수과목 차단 · 24 학점 상한 swap
 - 25 계절수업 제외 · 26 요청 범위 준수 · 27 범위 미지정 로드맵 요청
 
-**시간표 챗 (7)**:
+**시간표 챗 (10)**:
 - 17 정컴 3학년 · 18 시간 제약 · 19 엇학기 · 20 부전공 · 21 못 찾음
 - 28 선수과목 차단(시간표 버전) · 29 정확한 학점(credit_mode=exact)
+- 30 복수전공 시간 충돌 회피 · 31 재수강은 조언만(강제 편성 X)
+- 32 졸업위험(critical_missing) 재분류 — 카탈로그상 미개설이지만 실제 개설 중
 
 **assertion 고르는 법** (2026-08 실측 기반):
 - 데이터로 검증 가능하면 `custom` — 반환된 pending_changes/schedules를 직접 본다.
@@ -1775,6 +1777,243 @@ def case_tt_exact_credits() -> EvalCase:
     )
 
 
+# --- 4차 배치: 시간표 챗 커버리지 확장 -------------------------------------
+#
+# PR #209 Q&A에서 명시적으로 남긴 후속 과제 3개 — 복수전공 시간 충돌, 재수강(시간표
+# 버전), 졸업위험(critical_missing) — 를 채운다. 로드맵 챗엔 이미 대응하는 케이스가
+# 있지만(09 dual, 22 retake, 13 critical_missing), 시간표 챗은 도구 스키마가 달라서
+# (build_timetable에는 propose_change의 is_retake 같은 우회 플래그가 아예 없음, 조건부
+# 규칙도 별도 파일) 같은 로직이라도 따로 검증해야 실제로 지켜지는지 알 수 있다.
+
+
+def case_tt_dual_major_conflict() -> EvalCase:
+    """30: 복수전공(수학과) 시간표. 주전공 필수(자료구조)와 복수전공 필수(해석학)
+    분반이 완전히 같은 시간대라 반드시 충돌한다.
+
+    시간 충돌 회피 자체는 프로그램 구분 없이 동작하는 일반 규칙이지만, 지금까지
+    골든셋의 유일한 dual 케이스(09)는 로드맵 챗이라 "복수전공 두 학과 과목이 동시에
+    후보 풀에 들어왔을 때도 충돌 회피가 정상 동작하는가"는 실측된 적이 없다."""
+    depts, majors = _cs_hierarchy()
+    depts = depts + [DepartmentSpec(id=DEPT_MATH, name="수학과", college_name="자연과학대학")]
+    offerings = [
+        # 자료구조(주전공 필수)와 해석학(복수전공 필수) — 월요일 같은 시간대라 충돌.
+        OfferingSpec(id=9001, course_id=1010, year="2026", semester="2학기",
+                     times=[("월", "09:00", "10:30")]),
+        OfferingSpec(id=9002, course_id=4001, year="2026", semester="2학기",
+                     times=[("월", "09:00", "10:30")]),
+        # 안 겹치는 대안 하나씩 — 조합 자체는 나와야 한다.
+        OfferingSpec(id=9003, course_id=1011, year="2026", semester="2학기",  # 알고리즘
+                     times=[("화", "09:00", "10:30")]),
+        OfferingSpec(id=9004, course_id=4002, year="2026", semester="2학기",  # 선형대수학
+                     times=[("수", "09:00", "10:30")]),
+    ]
+    persona = PersonaSpec(
+        id="tt-dual-conflict", label="시간표: 정컴+수학과 dual, 필수과목 시간 충돌",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="데이터 사이언티스트",
+        programs=[
+            ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                        program_type="primary", curriculum_year="2024"),
+            ProgramSpec(department_id=DEPT_MATH, program_type="dual",
+                        curriculum_year="2024"),
+        ],
+        requirements=[
+            RequirementSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                            program_type="primary", curriculum_year="2024",
+                            required_total_credits=133, required_major_required=30),
+            RequirementSpec(department_id=DEPT_MATH, program_type="dual",
+                            curriculum_year="2024", required_total_credits=36,
+                            required_major_required=18),
+        ],
+        courses=_cs_catalog() + [
+            CourseSpec(id=4001, course_name="해석학", department_id=DEPT_MATH,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=4002, course_name="선형대수학", department_id=DEPT_MATH,
+                       category="전공필수", credits=3, year="2", semester="1"),
+        ],
+        offerings=offerings,
+    )
+    return EvalCase(
+        slug="30-tt-dual-major-conflict", persona=persona, agent="timetable",
+        prompt="정컴 주전공이랑 수학과 복수전공 둘 다 이번 학기 필수과목 넣어서 시간표 짜주세요.",
+        timetable_year="2026", timetable_semester="2학기",
+        expectations=[
+            ExpectedBehavior("tool_called", "build_timetable"),
+            ExpectedBehavior("schedules_count", (">=", 1),
+                             reason="안 겹치는 대안이 있으니 조합 자체는 나와야 함"),
+            ExpectedBehavior(
+                "custom",
+                lambda r: next(
+                    (f"자료구조(9001)·해석학(9002)이 같은 조합에 동시에 들어감: {s}"
+                     for s in r.schedules
+                     if {9001, 9002} <= set(s.get("offering_ids") or [])),
+                    None,
+                ),
+                reason="주전공·복수전공 필수과목이라도 시간이 겹치면 같은 조합에 "
+                       "동시에 들어가면 안 된다 — 프로그램 구분 없이 충돌 회피가 "
+                       "지켜지는지가 이 케이스의 핵심",
+            ),
+        ],
+    )
+
+
+def case_tt_retake_advisory_only() -> EvalCase:
+    """31: 자료구조 C0로 재수강 후보인 학생이 "재수강하면 뭐가 좋을지" 직접 질문.
+
+    로드맵 챗은 propose_change(is_retake=True)로 재수강을 실제 반영하는 우회 경로가
+    있지만, 시간표 챗의 build_timetable에는 그런 플래그가 아예 없다(설계 의도:
+    "재수강은 별도 신청 절차" — timetable_chat.py 조건부 규칙 retake_candidates 참고).
+    즉 시간표 챗은 **조언만 하고 실제 시간표에 강제로 넣으면 안 된다** — 이미 이수한
+    과목은 build_timetable 필터에서 무조건 빠지므로(우회 불가), 조언은 하되 시간표에
+    안 들어가는 게 정상 동작이다. 이걸 실측한 적이 없었다."""
+    depts, majors = _cs_hierarchy()
+    offerings = [
+        # 자료구조 분반이 이번 학기에도 있다 — 그래도 이미 이수했으니 빠져야 정상.
+        OfferingSpec(id=9101, course_id=1010, year="2026", semester="2학기",
+                     times=[("월", "09:00", "10:30")]),
+        OfferingSpec(id=9102, course_id=1021, year="2026", semester="2학기",  # 시스템프로그래밍
+                     times=[("화", "09:00", "10:30")]),
+    ]
+    persona = PersonaSpec(
+        id="tt-retake-advisory", label="시간표: 자료구조 C0 · 재수강 후보 조언 요청",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2024")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2024", required_total_credits=133,
+            required_major_required=30, required_major_elective=27,
+        )],
+        courses=_cs_catalog(),
+        records=[
+            RecordSpec(raw_course_name=n, category=cat, year=y, semester=sem,
+                       grade=g, grade_point=gp)
+            for (n, cat, g, gp), (y, sem) in zip(
+                [("컴퓨터프로그래밍(I)", "전공기초", "B+", 3.5),
+                 ("컴퓨터프로그래밍(II)", "전공기초", "A0", 4.0),
+                 ("자료구조", "전공필수", "C0", 2.0),
+                 ("알고리즘", "전공필수", "B0", 3.0)],
+                _terms_ending_at_last_completed(4),
+            )
+        ],
+        offerings=offerings,
+    )
+    return EvalCase(
+        slug="31-tt-retake-advisory-only", persona=persona, agent="timetable",
+        prompt="자료구조 C0 받았는데 재수강하면 학점 오르나요? 뭐 재수강하면 좋을지 알려주세요.",
+        timetable_year="2026", timetable_semester="2학기",
+        expectations=[
+            ExpectedBehavior(
+                "custom",
+                lambda r: next(
+                    (f"이미 이수한 자료구조(offering 9101)가 조합에 포함됨: {s}"
+                     for s in r.schedules
+                     if 9101 in (s.get("offering_ids") or [])),
+                    None,
+                ),
+                reason="build_timetable엔 is_retake 우회가 없다 — 재수강 후보라도 "
+                       "이미 이수한 과목은 무조건 빠져야 한다(설계 의도: 재수강은 "
+                       "별도 신청 절차)",
+            ),
+            ExpectedBehavior(
+                "llm_judge",
+                "자료구조를 C0로 이수했다는 사실과 재수강 시 GPA 개선 가능성을 "
+                "언급하며 조언했는가(구체적 학점 재계산 방식까지는 몰라도 됨)? "
+                "재수강 얘기를 아예 안 했거나, 반대로 재수강 과목을 이번 학기 "
+                "시간표에 그냥 넣어버렸으면 fail.",
+                reason="'조언은 하되 강제로 편성하지 않는다'는 설계 의도가 응답에도 "
+                       "드러나야 함",
+            ),
+        ],
+    )
+
+
+def case_tt_critical_missing_reclassified() -> EvalCase:
+    """32: 컴퓨터구조(전공필수, 카탈로그 semester='2')를 미이수한 채 1학기 시간표를
+    요청. 카탈로그만 보면 "1학기엔 개설 안 됨"이라 critical_missing_required에
+    잡히지만, **실제로는 1학기에도 분반이 열려 있다** — `_critical_missing_split`이
+    이런 경우를 `missing_required_offered_this_term`으로 재분류해서 오히려 1순위
+    후보로 올려야 한다(반대로 조용히 "개설 안 됨"이라고 오판하면 진짜 버그).
+
+    이 재분류 로직 자체가 실제 관측된 사고(공학작문및발표 사례, 코드 주석 참고)를
+    고친 것인데 지금까지 골든셋에 회귀 방지 장치가 없었다.
+
+    **관측된 신뢰도 (2026-08-24, gpt-5.4-nano, N=10)**: 8/10 통과. 백엔드 로직
+    (`_critical_missing_split`)은 tool_calls 직접 검사로 재현한 결과 10/10 항상
+    정확했다 — 실패 2건의 원인은 `list_offered_courses`를 필터 없이 넓게(예:
+    `program_type=primary`만, query/category 없이) 호출했을 때 0건이 나오면 LLM이
+    가끔 재검색 없이 바로 사용자에게 되묻고 끝내는 tool-use 전략의 비결정성이다
+    (나머지 8건은 같은 0건 상황에서도 `query="컴퓨터구조"`로 좁혀 재검색해 항상
+    9201을 찾음). 카탈로그가 이 케이스에서 의도적으로 극단적으로 얇아서(비교양
+    과목이 1개뿐) 실제 서비스보다 이 경로를 더 자주 밟을 수 있다 — 실제 카탈로그
+    규모에서 재현되는지는 확인 안 됨. 이 케이스를 지우거나 assertion을 느슨하게
+    풀지 않고 그대로 둔다 — 검증하려는 대상(재분류 로직)은 실제로 100% 정확하고,
+    남은 20% 실패는 "빈 검색 결과 시 재검색 유도" 프롬프트 개선 후보로 남긴다."""
+    depts, majors = _cs_hierarchy()
+    offerings = [
+        # 컴퓨터구조: 카탈로그는 2학기 전용이라고 돼 있지만 1학기에도 실제 분반이 있다.
+        OfferingSpec(id=9201, course_id=1012, year="2026", semester="1학기",
+                     times=[("월", "09:00", "10:30")]),
+    ]
+    persona = PersonaSpec(
+        id="tt-critical-reclassified", label="시간표: 컴퓨터구조 미이수, 1학기에도 실개설",
+        departments=depts, majors=majors,
+        department_id=DEPT_CS, major_id=MAJOR_CS,
+        career_goal="백엔드 개발자",
+        programs=[ProgramSpec(department_id=DEPT_CS, major_id=MAJOR_CS,
+                              program_type="primary", curriculum_year="2023")],
+        requirements=[RequirementSpec(
+            department_id=DEPT_CS, major_id=MAJOR_CS, program_type="primary",
+            curriculum_year="2023", required_total_credits=133,
+        )],
+        courses=[
+            CourseSpec(id=1010, course_name="자료구조", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="1"),
+            CourseSpec(id=1011, course_name="알고리즘", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="2"),
+            # 카탈로그상 2학기 전용 — 그래서 1학기 요청 시 critical_missing 후보가 된다.
+            CourseSpec(id=1012, course_name="컴퓨터구조", department_id=DEPT_CS, major_id=MAJOR_CS,
+                       category="전공필수", credits=3, year="2", semester="2"),
+        ],
+        # 컴퓨터구조만 미이수.
+        records=[
+            RecordSpec(raw_course_name=n, category="전공필수", year=y, semester=sem,
+                       grade="B+", grade_point=3.5)
+            for n, (y, sem) in zip(
+                ["자료구조", "알고리즘"], _terms_ending_at_last_completed(2),
+            )
+        ],
+        offerings=offerings,
+    )
+    return EvalCase(
+        slug="32-tt-critical-missing-reclassified", persona=persona, agent="timetable",
+        prompt="이번 학기 시간표 짜주세요.",
+        timetable_year="2026", timetable_semester="1학기",
+        expectations=[
+            ExpectedBehavior("tool_called", "get_student_context",
+                             reason="missing_required_offered_this_term 재분류는 이 도구 응답에만 있음"),
+            ExpectedBehavior(
+                "custom",
+                lambda r: None if 9201 in _schedule_offering_ids(r)
+                else (f"실제로 1학기에 개설 중인 미이수 필수 컴퓨터구조(offering 9201)가 "
+                      f"후보에서 빠짐: {r.schedules}"),
+                reason="카탈로그 권장학기(2학기)만 보고 '개설 안 됨'으로 오판하면 안 된다 — "
+                       "실제 course_offerings 기준으로 재분류해서 1순위 후보에 올려야 함",
+            ),
+            ExpectedBehavior(
+                "llm_judge",
+                "컴퓨터구조가 미이수 필수 과목인데 이번 학기에 실제로 들을 수 있다는 "
+                "점을 짚어주며 추천했는가? '이번 학기엔 개설 안 된다'고 잘못 말했으면 "
+                "fail.",
+                reason="재분류 로직의 목적 자체가 이 오판을 막는 것",
+            ),
+        ],
+    )
+
+
 ALL_CASES: list[EvalCase] = [
     # 로드맵 챗
     case_freshman_backend(),          # 01
@@ -1808,4 +2047,7 @@ ALL_CASES: list[EvalCase] = [
     case_unscoped_roadmap_request(),  # 27
     case_tt_prereq_blocked(),         # 28
     case_tt_exact_credits(),          # 29
+    case_tt_dual_major_conflict(),    # 30
+    case_tt_retake_advisory_only(),   # 31
+    case_tt_critical_missing_reclassified(),  # 32
 ]
