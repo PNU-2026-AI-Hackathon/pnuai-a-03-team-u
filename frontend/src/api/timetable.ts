@@ -229,8 +229,12 @@ export type OfferingSearchParams = {
   major?: string | null;
   /** 화면의 한 갈래가 DB 이수구분 여러 개일 수 있어 배열로 받는다. */
   categories?: string[];
-  /** 효원균형·창의교양 세부영역(사상과역사 등)으로 한 번 더 좁힐 때만 채운다. */
-  generalEducationArea?: string | null;
+  /**
+   * 효원균형·창의교양 세부영역(사상과역사 등)으로 한 번 더 좁힐 때만 채운다.
+   * 여러 개를 고르면 OR로 훑는다 — "최소 2개 영역에서 2과목" 요건은 영역
+   * 하나로만 좁히면 후보를 못 찾는다.
+   */
+  generalEducationAreas?: string[];
   q?: string;
   limit?: number;
 };
@@ -247,7 +251,7 @@ export async function searchOfferings({
   departmentId,
   major,
   categories,
-  generalEducationArea,
+  generalEducationAreas,
   q = "",
   limit = 50,
 }: OfferingSearchParams) {
@@ -258,7 +262,7 @@ export async function searchOfferings({
       department_id: departmentId ?? undefined,
       major: major || undefined,
       category: categories?.length ? categories : undefined,
-      general_education_area: generalEducationArea || undefined,
+      general_education_area: generalEducationAreas?.length ? generalEducationAreas : undefined,
       q,
       limit,
     },

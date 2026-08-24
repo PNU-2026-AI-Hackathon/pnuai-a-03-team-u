@@ -109,8 +109,10 @@ def search_offerings(
     # 효원균형·창의교양 갈래는 카테고리 2개로만 좁혀도 300건대가 그대로 나온다
     # (2026-2학기 357건). 세부영역(사상과역사 등)으로 한 번 더 좁히는 용도 —
     # courses.general_education_area의 정확한 값과 일치해야 한다(부분 일치 아님,
-    # "세계와 소통"처럼 다른 영역명에 부분 포함되는 값이 없어 안전).
-    general_education_area: str | None = None,
+    # "세계와 소통"처럼 다른 영역명에 부분 포함되는 값이 없어 안전). 여러 번 넘길 수
+    # 있다 — "균형교양 최소 2개 영역에서 2과목" 같은 요건은 사상과역사/사회와문화 중
+    # 아무거나 담아도 되니, 후보를 한 영역으로만 좁히면 오히려 못 찾는다.
+    general_education_area: list[str] | None = Query(None),
     q: str = "",
     # 상한을 둔 건 실수로 큰 값이 들어와 전 학기 개설(3천여 건)을 통째로
     # 내보내는 걸 막기 위해서다. 지금 데이터에서 가장 큰 갈래(음악학과 전공
@@ -150,8 +152,9 @@ def search_offerings(
         # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
         conditions = [Course.category.ilike(f"%{value}%") for value in wanted]
         query = query.where(or_(*conditions))
-    if general_education_area and general_education_area.strip():
-        query = query.where(Course.general_education_area == general_education_area.strip())
+    wanted_areas = [value.strip() for value in (general_education_area or []) if value.strip()]
+    if wanted_areas:
+        query = query.where(Course.general_education_area.in_(wanted_areas))
     q = q.strip()
     if q:
         query = query.where(

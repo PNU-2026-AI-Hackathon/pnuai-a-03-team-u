@@ -126,6 +126,7 @@ class OfferingSearchTest(unittest.TestCase):
             "year": "2026",
             "semester": "2학기",
             "category": None,
+            "general_education_area": None,
             "limit": 50,
             "current_user": self.user,
             "db": self.db,
@@ -187,12 +188,21 @@ class OfferingSearchTest(unittest.TestCase):
         self.assertEqual(
             ["서양철학사"],
             self._names(department_id=None, category=["효원균형교양"],
-                        general_education_area="사상과역사"),
+                        general_education_area=["사상과역사"]),
         )
         self.assertEqual(
             ["현대사회의이해"],
             self._names(department_id=None, category=["효원균형교양"],
-                        general_education_area="사회와문화"),
+                        general_education_area=["사회와문화"]),
+        )
+
+    def test_균형교양_세부영역_여러_개를_고르면_합집합이_나온다(self):
+        """"최소 2개 영역에서 2과목" 같은 요건은 영역을 하나로만 좁히면 후보를
+        못 찾는다 — 여러 개를 동시에 골라 OR로 훑을 수 있어야 한다."""
+        self.assertEqual(
+            ["서양철학사", "현대사회의이해"],
+            self._names(department_id=None, category=["효원균형교양"],
+                        general_education_area=["사상과역사", "사회와문화"]),
         )
 
     def test_세부영역_미지정이면_영역_섞인_전체가_그대로_나온다(self):
