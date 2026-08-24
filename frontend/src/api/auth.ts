@@ -52,6 +52,7 @@ export type User = {
   career_goal: string | null;
   advisor_name: string | null;
   advisor_consulted: boolean;
+  privacy_consent: boolean;
   academic_programs: AcademicProgram[];
 };
 
@@ -77,6 +78,7 @@ export type SignupPayload = {
   department?: string;
   career_goal?: string;
   academic_programs?: AcademicProgramInput[];
+  privacy_consent: boolean;
 };
 
 type MockUserSeed = {
@@ -119,6 +121,7 @@ function createMockUser({
     career_goal: careerGoal?.trim() || null,
     advisor_name: null,
     advisor_consulted: false,
+    privacy_consent: true,
     academic_programs: academicPrograms,
   };
 }

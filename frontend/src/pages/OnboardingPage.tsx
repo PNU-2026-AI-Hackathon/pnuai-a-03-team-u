@@ -159,7 +159,10 @@ export function OnboardingPage() {
                 </button>
               </div>
 
-              <p className="onboarding-note">✓ 개인정보 수집 · 이용 동의 · 성적표 원본은 저장하지 않습니다</p>
+              <p className="onboarding-note">
+                학생지원시스템 계정 정보(학번·비밀번호)는 이 요청을 처리하는 동안만 사용하고
+                서버에 저장하지 않습니다.
+              </p>
             </form>
 
             <div className="auth-panel onboarding-preview">

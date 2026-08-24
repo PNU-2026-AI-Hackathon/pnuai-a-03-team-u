@@ -108,6 +108,7 @@ export function AuthPage() {
   const [isAdditionalProgramsOpen, setIsAdditionalProgramsOpen] = useState(
     signupDraft?.additionalProgramsOpen ?? false,
   );
+  const [privacyConsent, setPrivacyConsent] = useState(false);
 
   // 대상 학과를 고르면 뜨는 AI융합트랙 홍보 카드. 트랙은 학과에 1:1이라
   // 고르는 UI가 아니라 안내 + 체크(가입 직후 이수 체크 시작)로 충분하다.
@@ -199,6 +200,10 @@ export function AuthPage() {
       setMessage("복수전공 세부전공을 입력하려면 학과 또는 학부를 먼저 입력해주세요.");
       return;
     }
+    if (!privacyConsent) {
+      setMessage("개인정보 수집·이용에 동의해야 가입할 수 있습니다.");
+      return;
+    }
 
     const academicPrograms: AcademicProgramInput[] = [];
     if (department.trim()) {
@@ -237,6 +242,7 @@ export function AuthPage() {
         department: department || undefined,
         career_goal: careerGoal.trim() || undefined,
         academic_programs: academicPrograms,
+        privacy_consent: privacyConsent,
       });
       isAccountCreated = true;
       saveSignupFlow({
@@ -598,10 +604,30 @@ export function AuthPage() {
               </div>
 
               <div className="signup-columns-footer">
+                {!isSignupReview ? (
+                  <label className="auth-consent-check">
+                    <input
+                      type="checkbox"
+                      checked={privacyConsent}
+                      onChange={(event) => setPrivacyConsent(event.target.checked)}
+                      required
+                    />
+                    <span>
+                      (필수) 개인정보 수집·이용 및 LLM 처리위탁에 동의합니다 —{" "}
+                      <Link to="/privacy" target="_blank" rel="noopener noreferrer">
+                        내용 보기
+                      </Link>
+                    </span>
+                  </label>
+                ) : null}
                 <div className={`auth-message${message ? " error" : ""}`} aria-live="assertive">
                   {message}
                 </div>
-                <button className="auth-submit" type="submit" disabled={isSignupSubmitting}>
+                <button
+                  className="auth-submit"
+                  type="submit"
+                  disabled={isSignupSubmitting || (!isSignupReview && !privacyConsent)}
+                >
                   {isSignupSubmitting ? "가입 중..." : "다음"}
                 </button>
                 {!isSignupReview ? (

@@ -126,6 +126,7 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
                 school="부산대학교",
                 college="정보의생명공학대학",
                 department="의생명융합공학부",
+                privacy_consent=True,
             ),
             db=self.db,
         )
@@ -134,6 +135,21 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
         self.assertEqual(response.academic_year, 4)
         self.assertIsNotNone(saved_user)
         self.assertEqual(saved_user.academic_year, 4)
+        self.assertTrue(saved_user.privacy_consent)
+        self.assertIsNotNone(saved_user.privacy_consent_at)
+        self.assertTrue(response.privacy_consent)
+
+    def test_signup_rejects_missing_privacy_consent(self):
+        """체크박스 검증은 프론트뿐 아니라 서버 스키마 레벨에서도 강제해야 한다 —
+        안 그러면 API를 직접 호출해 동의 없이 가입할 수 있다."""
+        with self.assertRaises(ValidationError):
+            SignupRequest(
+                email="no-consent@pusan.ac.kr",
+                password="password123",
+                name="미동의 학생",
+                student_id="202699998",
+                privacy_consent=False,
+            )
 
     def test_course_records_are_replaced_and_reloaded(self):
         created = replace_course_records(

@@ -41,6 +41,12 @@ class User(TimestampMixin, Base):
     # 보존기간 정책(security-privacy-plan.md P2)의 '미접속' 판단 근거.
     # updated_at은 프로필 수정에만 반응하고 로그인(조회)에는 안 움직여서 못 쓴다.
     last_login_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+    # 개인정보 수집·이용 및 LLM/Langfuse 처리위탁 동의(회원가입 시 필수 체크박스).
+    # nullable + server_default="false": 이미 가입한 옛 사용자 행은 동의를 받은 적이
+    # 없으므로 false로 채워지고(허위로 true를 만들지 않는다), 그 사실을
+    # privacy_consent_at(None)로도 함께 드러낸다. 재동의 UI는 이번 범위 밖.
+    privacy_consent: Mapped[bool] = mapped_column(default=False, server_default="false")
+    privacy_consent_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
 
 
 class PasswordResetToken(TimestampMixin, Base):

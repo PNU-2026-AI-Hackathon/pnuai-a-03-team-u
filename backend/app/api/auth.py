@@ -77,6 +77,17 @@ class SignupRequest(BaseModel):
     career_goal: str | None = None
     # 주전공 하나, 복수전공/부전공 여러 개까지 한 번에 등록 가능
     academic_programs: list[AcademicProgramInput] = []
+    # 개인정보 수집·이용 및 LLM/Langfuse 처리위탁 동의 체크박스. 프론트가 필수로
+    # 막아도 서버에서 다시 검증한다 — 클라이언트 검증만 믿으면 API 직접 호출로
+    # 우회된다.
+    privacy_consent: bool
+
+    @field_validator("privacy_consent")
+    @classmethod
+    def _check_privacy_consent(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("개인정보 수집·이용에 동의해야 가입할 수 있습니다")
+        return value
 
     @field_validator("student_id")
     @classmethod
@@ -169,6 +180,7 @@ class UserResponse(BaseModel):
     career_goal: str | None
     advisor_name: str | None
     advisor_consulted: bool
+    privacy_consent: bool
     academic_programs: list[AcademicProgramResponse] = []
 
     model_config = {"from_attributes": True}
@@ -204,6 +216,7 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         career_goal=user.career_goal,
         advisor_name=user.advisor_name,
         advisor_consulted=user.advisor_consulted,
+        privacy_consent=user.privacy_consent,
         academic_programs=[
             AcademicProgramResponse(
                 major=_major_name(db, p.major_id) or "",
@@ -241,6 +254,9 @@ def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_d
         admission_type=payload.admission_type,
         department_id=top_department_id,
         career_goal=payload.career_goal,
+        # 스키마 검증(_check_privacy_consent)을 통과했으므로 이 시점엔 항상 True다.
+        privacy_consent=True,
+        privacy_consent_at=datetime.datetime.now(datetime.UTC),
     )
     db.add(user)
     db.flush()
