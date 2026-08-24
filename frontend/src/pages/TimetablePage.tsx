@@ -70,6 +70,19 @@ type CourseGroupKey = (typeof COURSE_GROUPS)[number]["key"];
 const MAJOR_CATEGORIES = ["전공기초", "전공필수", "전공선택"] as const;
 
 /**
+ * 효원(균형·창의)교양 갈래 안에서 한 번 더 좁히는 세부영역. 비우면 갈래 전체
+ * (2026-2학기 357건이 그대로 나옴 — 세부영역 없이는 원하는 영역을 찾기 어렵다).
+ *
+ * `courses.general_education_area` 실값 그대로(공백 포함 표기 — "세계와 소통" 등).
+ * 효원균형교양 6개 + 효원창의교양 3개로 나뉘지만 화면에서는 하나의 칩 목록으로 둔다
+ * (구분해봐야 학생이 "어느 쪽인지"를 먼저 알아야 해서 오히려 번거롭다).
+ */
+const LIBERAL_AREAS = [
+  "사상과역사", "사회와문화", "문학과예술", "과학과기술", "세계와 소통", "효원브릿지",
+  "건강과레포츠", "융합과 창의", "인성과 사회봉사",
+] as const;
+
+/**
  * 한 번에 받아오는 개설 강좌 수. 서버 상한(courses.py의 limit le=500)과 같은 값이다.
  *
  * 60이던 시절에는 조용히 잘렸다 — 2026-2학기에서 가장 큰 갈래인 학부 전체 전공
@@ -181,6 +194,7 @@ export function TimetablePage() {
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSearchResult | null>(null);
   const [selectedMajor, setSelectedMajor] = useState<string>("");
   const [majorCategory, setMajorCategory] = useState<string>("");
+  const [liberalArea, setLiberalArea] = useState<string>("");
   const [offerings, setOfferings] = useState<SuggestedOffering[]>([]);
   const [isSearchingOfferings, setIsSearchingOfferings] = useState(false);
 
@@ -354,6 +368,7 @@ export function TimetablePage() {
         major: isMajor ? selectedMajor || null : null,
         categories:
           isMajor && majorCategory ? [majorCategory] : group ? [...group.categories] : undefined,
+        generalEducationArea: groupKey === "balance" ? liberalArea || null : null,
         q: search.trim(),
         limit: OFFERING_LIMIT,
       })
@@ -372,7 +387,7 @@ export function TimetablePage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [groupKey, selectedDepartment, selectedMajor, majorCategory, search]);
+  }, [groupKey, selectedDepartment, selectedMajor, majorCategory, liberalArea, search]);
 
   /** 학부를 가진 단과대만. "미지정"은 잘못 생성된 껍데기라 서버가 이미 걸러준다. */
   const colleges = [...new Set(departments.map((item) => item.college))].sort();
@@ -415,8 +430,11 @@ export function TimetablePage() {
         selectedMajor || (selectedDepartment ? "학부 전체" : ""),
         majorCategory || "전공 전체",
       ].filter(Boolean).join(" · ")
-    : `${selectedGroupLabel} · 전교 개설 강좌`;
-  const hasCourseFilters = search.trim() || selectedCollege || selectedDepartment || selectedMajor || majorCategory;
+    : groupKey === "balance"
+      ? [selectedGroupLabel, liberalArea || "전체 영역"].join(" · ")
+      : `${selectedGroupLabel} · 전교 개설 강좌`;
+  const hasCourseFilters =
+    search.trim() || selectedCollege || selectedDepartment || selectedMajor || majorCategory || liberalArea;
 
   function resetCourseFilters() {
     setSearch("");
@@ -424,6 +442,7 @@ export function TimetablePage() {
     setSelectedDepartment(null);
     setSelectedMajor("");
     setMajorCategory("");
+    setLiberalArea("");
   }
 
   /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
@@ -1004,6 +1023,24 @@ export function TimetablePage() {
                   }
                 >
                   {category}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {groupKey === "balance" ? (
+            <div className="timetable-filters is-sub">
+              {LIBERAL_AREAS.map((area) => (
+                <button
+                  key={area}
+                  type="button"
+                  className={liberalArea === area ? "selected" : ""}
+                  onClick={() =>
+                    // 켜진 칩을 다시 누르면 해제 → 균형·창의교양 전체
+                    setLiberalArea((current) => (current === area ? "" : area))
+                  }
+                >
+                  {area}
                 </button>
               ))}
             </div>

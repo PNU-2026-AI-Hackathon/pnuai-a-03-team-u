@@ -86,6 +86,8 @@ class OfferingSearchResult(BaseModel):
     # 학부만 고르면 그 학부의 모든 전공 과목이 함께 나온다. 어느 전공 과목인지
     # 줄마다 보여주지 않으면 "엉뚱한 과목이 섞였다"로 보인다(전공 미지정이면 None).
     major_name: str | None = None
+    # 효원균형·창의교양 세부영역(사상과역사 등). 그 갈래가 아닌 과목은 항상 None.
+    general_education_area: str | None = None
     times: list[OfferingTime] = []
 
 
@@ -104,6 +106,11 @@ def search_offerings(
     # 여러 번 넘길 수 있다. "효원(균형·창의)교양"처럼 화면의 한 갈래가 DB에서는
     # 두 개 이상의 이수구분으로 나뉘어 있기 때문이다.
     category: list[str] | None = Query(None),
+    # 효원균형·창의교양 갈래는 카테고리 2개로만 좁혀도 300건대가 그대로 나온다
+    # (2026-2학기 357건). 세부영역(사상과역사 등)으로 한 번 더 좁히는 용도 —
+    # courses.general_education_area의 정확한 값과 일치해야 한다(부분 일치 아님,
+    # "세계와 소통"처럼 다른 영역명에 부분 포함되는 값이 없어 안전).
+    general_education_area: str | None = None,
     q: str = "",
     # 상한을 둔 건 실수로 큰 값이 들어와 전 학기 개설(3천여 건)을 통째로
     # 내보내는 걸 막기 위해서다. 지금 데이터에서 가장 큰 갈래(음악학과 전공
@@ -143,6 +150,8 @@ def search_offerings(
         # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
         conditions = [Course.category.ilike(f"%{value}%") for value in wanted]
         query = query.where(or_(*conditions))
+    if general_education_area and general_education_area.strip():
+        query = query.where(Course.general_education_area == general_education_area.strip())
     q = q.strip()
     if q:
         query = query.where(
@@ -178,6 +187,7 @@ def search_offerings(
             section=offering.section,
             professor=offering.professor,
             major_name=major_name,
+            general_education_area=course.general_education_area,
             times=times_by_offering.get(offering.id, []),
         )
         for offering, course, major_name in rows
