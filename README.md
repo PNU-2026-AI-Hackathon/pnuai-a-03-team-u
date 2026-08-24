@@ -77,17 +77,21 @@ flowchart TB
     end
 
     subgraph EXT["🌐 외부 서비스"]
-        LLM["🤖 OpenAI API"]
+        LLM["🤖 OpenAI API<br/>채팅 모델 · 임베딩"]
         PNU["🏫 PNU 학생지원시스템"]
+        LANGFUSE["📊 Langfuse(자체 호스팅)<br/>LLM 트레이싱 · 평가"]
+        MAIL["✉️ Resend<br/>비밀번호 재설정 메일"]
     end
 
     FE -->|HTTPS / JSON| API
     API --> RULE
     API --> AGENT
     API --> CRAWL
+    API -->|재설정 메일 발송| MAIL
     RULE --> PG
     AGENT -->|RAG 검색| VEC
     AGENT --> LLM
+    AGENT -->|트레이싱| LANGFUSE
     CRAWL --> PG
     CRAWL --> PNU
 
@@ -99,7 +103,7 @@ flowchart TB
     class FE front
     class API,RULE,AGENT,CRAWL back
     class PG,VEC data
-    class LLM,PNU ext
+    class LLM,PNU,LANGFUSE,MAIL ext
     class FRONT,BACK,DATA,EXT band
 ```
 <br/>
@@ -113,13 +117,16 @@ flowchart TB
 | | react-router-dom | 7.18 |
 | | axios | 1.18 |
 | | lucide-react | 1.23 |
+| | react-markdown (+ remark-gfm) | 10.1 |
 | 백엔드 | Python | 3.12 |
 | | FastAPI | 0.138 |
 | | Uvicorn | 0.49 |
 | | SQLAlchemy | 2.0 |
 | | Alembic | 1.18 |
 | | LangChain (+ langchain-openai) | 1.3 |
-| | Langfuse (LLM 트레이싱) | 4.14 |
+| | OpenAI SDK | 2.44 |
+| | Langfuse (LLM 트레이싱, 자체 호스팅) | 4.14 |
+| | slowapi | 0.1 |
 | | bcrypt | 5.0 |
 | | python-jose | 3.5 |
 | 데이터베이스 | PostgreSQL (Supabase) | 17 |
@@ -128,6 +135,26 @@ flowchart TB
 | | BeautifulSoup | 4.15 |
 | | APScheduler | 3.11 |
 | 배포 | Netlify (프론트엔드) · Railway (백엔드) | - |
+
+**선정 이유 및 역할**
+
+| 이름 | 왜 이걸 골랐나 | 우리 시스템에서의 역할 |
+|:---|:---|:---|
+| React + TypeScript | 팀 전원이 익숙하고, 컴포넌트 단위로 5개 화면(회원가입~시간표)을 나눠 개발하기 좋다. TS는 백엔드 응답 스키마와 프론트 타입을 맞춰 런타임 전에 오류를 잡는다. | 전체 화면 렌더링과 상태 관리 |
+| Vite | esbuild 기반이라 CRA류보다 개발 서버 기동·HMR이 훨씬 빠르다 — 팀 규모(4인)에서 반복 개발 속도가 중요했다. | 프론트 빌드·개발 서버 |
+| react-router-dom | 화면 5개(가입/Home/내 정보/로드맵/시간표)를 인증 가드 하나로 감싸는 형제 라우트 구조가 필요했다. | `/roadmap`·`/timetable` 등 화면 라우팅, `RequireAuth` 가드 |
+| axios | fetch보다 요청/응답 인터셉터(JWT 헤더 자동 첨부, 401 처리)를 붙이기 쉬워 인증 흐름이 단순해진다. | 백엔드 API 호출 공통 레이어 |
+| react-markdown + remark-gfm | LLM 응답이 목록·표 형태로 오는 경우가 많아, 원문을 그대로 안전하게(XSS 없이) 렌더링할 라이브러리가 필요했다. | 로드맵/시간표 AI 채팅 응답을 마크다운으로 렌더링 |
+| FastAPI | 타입 힌트 기반 자동 검증·문서화(OpenAPI)가 되고, 비동기 크롤링·LLM 호출과 궁합이 좋다. | REST API 서버, 요청 검증, `/docs` 자동 문서 |
+| SQLAlchemy + Alembic | 학사 계층(학교/단과대/학과/전공)처럼 관계가 복잡한 스키마를 ORM으로 명시적으로 관리하고, 스키마 변경을 리비전으로 추적할 필요가 있었다. | 전체 도메인 모델 정의, DB 마이그레이션 |
+| LangChain + OpenAI SDK | 도구 호출(tool calling) 루프, 재시도, 모델 스왑(provider:model 문자열 하나로 교체)이 표준화돼 있어 두 에이전트(로드맵/시간표)를 같은 패턴으로 구현할 수 있었다. OpenAI SDK는 LangChain을 안 거치는 임베딩(`text-embedding-3-small`) 호출에 직접 쓴다. | LLM 에이전트 도구 호출 루프, RAG 임베딩 생성 |
+| Langfuse | LLM 응답은 비결정적이라 프롬프트를 바꿀 때마다 실제로 좋아졌는지 눈으로 확인하기 어렵다 — trace·지연시간·토큰 비용을 한곳에서 봐야 했다. 개인정보가 포함된 대화라 자체 호스팅으로 운영한다. | 로드맵/시간표 챗 실행마다 도구 호출·지연시간·비용 기록 |
+| slowapi | 로그인 brute force와 챗 엔드포인트의 LLM 비용 폭탄을 막을 요청량 제한이 FastAPI엔 기본 내장이 안 돼 있다. | 엔드포인트별 레이트 리밋(로그인·챗 등) |
+| bcrypt / python-jose | 비밀번호를 평문/가역 암호화가 아니라 단방향 해시로만 저장해야 한다는 원칙(CLAUDE.md)에 맞는 표준 선택지다. | 비밀번호 해시, JWT 발급·검증 |
+| PostgreSQL (Supabase) + pgvector | 관계형 학사 데이터와 교육과정 임베딩(벡터 검색)을 같은 DB에서 같이 다룰 수 있어 별도 벡터 DB 없이 RAG를 구현했다. Supabase는 팀이 함께 쓸 관리형 인스턴스가 바로 필요해서 골랐다. | 전체 테이블 저장, RAG 임베딩 벡터 유사도 검색 |
+| Playwright | 학생지원시스템(One-Stop)이 로그인 후 JS로 렌더링되는 페이지라 단순 HTTP 요청으론 못 긁는다 — 실제 브라우저 자동화가 필요했다. | 학적·이수내역·수강편람 크롤링 |
+| BeautifulSoup | Playwright로 받은 HTML에서 표 구조(성적표, 졸업요건표)를 파싱하는 데 가볍고 충분하다. | 크롤링 결과 HTML 파싱 |
+| APScheduler | 별도 인프라(Airflow 등) 없이 프로세스 내에서 주기적 크롤링·배치 작업을 예약할 수 있어 팀 규모에 맞는 선택이었다. | 정기 크롤링·보존기간 파기 스케줄 |
 <br/>
 
 ### 3. 개발결과

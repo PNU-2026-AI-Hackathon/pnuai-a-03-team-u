@@ -14,6 +14,31 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — README 2.1/2.2 실제 구성·의존성과 대조, 사용기술 선정이유·역할 추가
+
+같은 세션의 "Railway 미배포" 오류 발견 후속으로, 사용자 요청에 따라 2.1(시스템
+구성도)·2.2(사용기술)도 실제 코드와 대조했다.
+
+- **2.1 시스템 구성도**: EXT(외부 서비스) 서브그래프에 `Langfuse`(자체 호스팅
+  trace 전송)와 `Resend`(비밀번호 재설정 메일)가 빠져 있었다 — 둘 다 실제로 코드가
+  호출하는 외부 서비스인데 다이어그램엔 OpenAI·PNU 학생지원시스템만 있었다. 추가.
+- **2.2 사용기술**: `constraints.txt`(핀 고정된 실제 설치 버전)와 `frontend/package.json`을
+  대조해 두 가지 누락을 찾았다 — `slowapi`(레이트 리밋, `app/main.py`/`ratelimit.py`에서
+  실사용 확인)와 `react-markdown`+`remark-gfm`(AI 채팅 markdown 렌더링,
+  `ChatMarkdown.tsx`에서 실사용 확인). 추가. `openai` SDK도 LangChain 경유가 아니라
+  `app/ai/embeddings/openai_client.py`에서 직접 호출하는 별도 경로임을 확인해
+  분리 표기. `pytesseract`/`pillow`(OCR)는 `requirements.txt`엔 있지만 실제로 어디서도
+  `import`되지 않는 죽은 의존성임을 grep으로 확인 — 아직 안 쓰는 걸 "사용기술"로
+  올리면 거짓말이라 표에 넣지 않았다(제거도 안 함 — 그건 별도 판단, 이번 범위 아님).
+  `anthropic` 패키지도 `config.py`의 설정값 읽기 외엔 실사용 경로가 없어(모델 스왑
+  예비용, `.env.example` 주석 참고) 표에서 뺐다. Python/PostgreSQL/pgvector 버전은
+  각각 CI 워크플로 핀(`3.12`)과 Supabase 실측 SELECT(`17.6`/`0.8.0`)로 직접
+  검증해서 기존 표기가 맞았음을 확인 — 안 고침.
+- 사용기술 표 아래에 "선정 이유 및 역할" 표 신설 — 왜 이 라이브러리를 골랐는지,
+  우리 시스템에서 정확히 어떤 역할을 하는지 항목별로 정리.
+- `backend/requirements.txt`의 "Langfuse Cloud로 전송" 주석도 자체 호스팅으로 정정
+  (앞선 PR #212에서 `llm-privacy-audit.md`는 고쳤는데 이 파일 주석은 놓쳤었다).
+
 ## 2026-08-24 (blackest21) — README가 "Railway 미배포"라고 계속 우기고 있었다 — 실은 이미 배포돼서 실트래픽을 받는 중
 
 사용자 질문 한 줄("Railway로 배포 안 하고 있으면 프론트는 배포됐는데 백엔드 서버가 없이
