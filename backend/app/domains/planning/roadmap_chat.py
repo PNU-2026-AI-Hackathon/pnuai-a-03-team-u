@@ -1529,6 +1529,7 @@ def _compute_prereq_blocked(
     db: Session,
     user: User,
     roadmap_id: int | None,
+    pending_course_names: list[str] | None = None,
 ) -> list[dict]:
     """학과 개설 과목 중 (a) 아직 이수 안 함 (b) description에서 뽑아낸 선수과목 중
     하나 이상이 이수 완료 세트에 없음 — 조건을 만족하는 과목 목록.
@@ -1538,7 +1539,17 @@ def _compute_prereq_blocked(
     한다"고 안내해야 한다. courses.description 파싱 기반이라 best-effort — 학과 문서
     라벨링이 애매하면 false positive/negative 있을 수 있다 (LLM check_prereqs로 보완).
 
-    `roadmap_id=None`이면 이수 세트는 SCR만 참조 (timetable 챗).
+    `roadmap_id=None`이면 이수 세트는 SCR만 참조 (timetable 챗 — "지금 당장" 담을 수
+    있는지만 보므로 미래 계획은 관여하지 않는다. 의도적으로 다르게 둔다).
+
+    `roadmap_id`가 있으면(로드맵 챗) 이 로드맵의 **모든** 항목(`planned`도 포함, `rejected`
+    제외)을 이수 예정으로 본다 — "졸업까지 로드맵 짜줘"로 3학년 2학기에 자료구조를 이미
+    계획해 뒀으면, 아직 실제로 듣지 않았어도 4학년 1학기의 후속 과목을 선수과목 미이수로
+    막으면 안 된다. `pending_course_names`는 **같은 턴** 안에서 아직 DB에 저장되지 않은
+    제안(`propose_term_plan`이 앞 학기부터 순서대로 쌓는 `pending_changes`)까지 포함시켜
+    같은 문제가 턴 중간에도 나지 않게 한다. 학기 순서(그 과목이 실제로 먼저인지)까지는
+    안 따진다 — 이 함수 자체가 term-aware가 아니고, 로드맵은 대체로 시간순으로 짜여지므로
+    이 단순화로 충분하다고 본다(엄밀한 학기 순서 검증은 하지 않는 flat 설계, CLAUDE.md 참고).
     """
     if user.department_id is None:
         return []
@@ -1563,10 +1574,12 @@ def _compute_prereq_blocked(
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
-                CourseRoadmapItem.status == "completed",
+                CourseRoadmapItem.status != "rejected",
             )
         ).all():
             completed_norms.add(_norm(it.course_name))
+    for name in pending_course_names or ():
+        completed_norms.add(_norm(name))
 
     q = select(Course).where(
         Course.department_id == user.department_id,
@@ -2066,8 +2079,13 @@ class _ToolContext:
             # 선수과목 부족으로 담기 부적절한 학과 개설 과목. courses.description 파싱
             # 기반이라 best-effort — LLM이 이 목록에 있는 course_id는 propose_change
             # (create) 하지 말고, 학생이 물어보면 "선수과목 X부터 들어야" 안내해라.
+            # 이번 턴에 앞선 학기용으로 이미 제안한 과목(pending_changes)도 이수 예정으로
+            # 쳐준다 — 안 그러면 propose_term_plan이 3학년 2학기에 자료구조를 방금
+            # 담아놓고도, 같은 호출 안에서 4학년 1학기 후속 과목을 "선수과목 미이수"로
+            # 잘못 걸러낸다.
             "prereq_blocked": _compute_prereq_blocked(
                 self.db, self.user, roadmap_id=self.roadmap.id,
+                pending_course_names=self._pending_create_course_names(),
             ),
         }
 
@@ -2745,6 +2763,18 @@ class _ToolContext:
                 "먼저 next_action을 따라라."
             ),
         }
+
+    def _pending_create_course_names(self) -> list[str]:
+        """이번 턴에 아직 저장 전인 create 제안들의 과목명. `_compute_prereq_blocked`가
+        이수 예정으로 쳐줄 대상을 만드는 데 쓴다."""
+        names: list[str] = []
+        for change in self.pending_changes:
+            if change.action != "create" or change.course_id is None:
+                continue
+            course = self.db.get(Course, change.course_id)
+            if course is not None and course.course_name:
+                names.append(course.course_name)
+        return names
 
     def _plan_so_far(self) -> list[dict]:
         """이번 턴에 제안된 create를 학기별로 모은 최종 상태.
