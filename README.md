@@ -395,7 +395,9 @@ $ npm install
 $ npm run dev                     # http://localhost:5173
 ```
 
-주요 환경 변수 (`backend/.env`)
+<details>
+<summary>주요 환경 변수 (<code>backend/.env</code>)</summary>
+
 | 변수 | 설명 |
 |:---|:---|
 | `DATABASE_URL` | PostgreSQL 연결 문자열 (pgvector 확장 필요) |
@@ -404,6 +406,9 @@ $ npm run dev                     # http://localhost:5173
 | `CREDENTIAL_ENCRYPTION_KEY` | 포털 연동 자격증명 암호화(Fernet) 키 |
 | `SMTP_*` / `RESEND_API` | 비밀번호 재설정 메일 발송용 (미설정 시 발송을 건너뛰고 개발환경에서만 로그로 링크 확인) |
 | `PNU_LOGIN_ID` / `PNU_LOGIN_PW` | 수강편람·교과목개요 적재 스크립트용 포털 계정 (선택) |
+
+</details>
+<br/>
 
 **품질 검증**
 ```bash
