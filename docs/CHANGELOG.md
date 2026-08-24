@@ -46,7 +46,7 @@
   계정정보 미저장 사실만 정확히 서술하도록 축소했다(성적표 OCR 폐기 문구는
   뺐다 — `pytesseract`가 실제로 어디서도 안 쓰이는 죽은 의존성이라 그 주장은
   근거가 없었다, 2026-08-24 앞선 grep 확인 재사용).
-- **검증**: 로컬 Postgres에서 마이그레이션 round-trip, `pytest tests/` 623 passed,
+- **검증**: 로컬 Postgres에서 마이그레이션 round-trip, `pytest tests/` 624 passed,
   `npm run build` 통과, `TestClient`로 `/auth/signup` 실제 HTTP 호출 2건(동의
   거부 422 확인 / 동의 성공 201 + `privacy_consent_at` 타임스탬프 확인) —
   전부 이 세션에서 직접 실행. 브라우저 시각 확인은 이번엔 Playwright 등 브라우저
