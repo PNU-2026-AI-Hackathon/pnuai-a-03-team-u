@@ -457,6 +457,8 @@ $ npm run lint                     # oxlint
 
 </details>
 
+> ⚠️ 위 TC01~TC09는 **졸업요건 판정 엔진(`graduation_progress.py`)만** 검증한다. 로드맵·시간표 AI 에이전트는 이름은 비슷하지만 완전히 별도인 골든 데이터셋(`backend/tests/eval/cases.py`)으로 검증한다 — 로드맵 22건 · 시간표 10건, 각 케이스에 `agent="roadmap"`/`"timetable"` 태그가 붙어 하나의 파일로 관리된다. `python -m tests.eval.run_eval`(LLM 미호출 dry-run, PR마다 CI로 자동 실행)과 매주 실제 LLM으로 도는 정기 관측(`golden-eval-weekly.yml`, Langfuse에 결과 적재)으로 나뉜다 — "판정 정확성"과 "AI 응답 품질"은 서로 다른 검증 라인이라는 뜻이다.
+
 ```mermaid
 flowchart LR
     A["코드 변경"] --> B["pytest 650+"]
@@ -475,6 +477,54 @@ flowchart LR
 ```
 
 AI 도구를 개발에 활용한 범위와, "AI가 작성했다는 사실만으로 신뢰하지 않는다"는 원칙을 실제로 어떻게 지켰는지(독립 리뷰로 결함을 잡아낸 사례 포함), LLM에 학생 개인정보를 어떻게 안 보내는지는 [`docs/ai-usage.md`](docs/ai-usage.md)에 별도로 정리했다.
+
+**CI/CD — PR을 열면 자동으로 도는 것, 머지하면 자동으로 배포되는 것**
+
+```mermaid
+flowchart TB
+    subgraph PR["PR 오픈 · push — GitHub Actions"]
+        direction TB
+        SEC["🔒 security-scan<br/>gitleaks(시크릿) · pip-audit(CVE)<br/>모든 push/PR"]
+        GOLD["🤖 golden-eval-dry<br/>AI 에이전트 골든셋 dry-run<br/>+ roadmap_chat·timetable_chat 268케이스<br/>planning/academics 경로 변경 시만"]
+        MIG["🧬 migration-graph<br/>alembic 리비전 그래프 정합성<br/>migrations/ 경로 변경 시만"]
+    end
+
+    HUMAN["👤 독립 리뷰(별도 세션)<br/>+ 로컬 pytest 650+ · 골든 TC01~09<br/>— CI 게이트 아님, 팀 관행"]
+    MERGE(["머지 (squash → main)"])
+
+    subgraph DEPLOY["main 반영 즉시 — Netlify/Railway 자체 Git 연동 (GH Actions 아님)"]
+        direction LR
+        NF["🌐 Netlify<br/>frontend/ · npm run build<br/>→ planu-pnu.netlify.app"]
+        RW["🚂 Railway<br/>backend/ · Dockerfile 빌드<br/>→ Railway 프로덕션"]
+    end
+
+    SEC --> HUMAN
+    GOLD --> HUMAN
+    MIG --> HUMAN
+    HUMAN --> MERGE
+    MERGE --> NF
+    MERGE --> RW
+
+    classDef gate fill:#fecaca,stroke:#dc2626,color:#7f1d1d
+    classDef report fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef human fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef deploy fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    class SEC gate
+    class GOLD,MIG report
+    class HUMAN,MERGE human
+    class NF,RW deploy
+```
+
+| 워크플로 | 트리거 | 하는 일 | 실패 시 |
+|:---|:---|:---|:---|
+| `security-scan` | 모든 push/PR + 매주 월요일 | gitleaks로 시크릿 스캔, pip-audit로 `constraints.txt` CVE 점검 | **gitleaks는 머지 차단.** pip-audit는 Job Summary에만 기록(무관한 PR을 CVE 하나로 막지 않으려는 설계) |
+| `golden-eval-dry` | `planning/`·`academics/` 경로 변경 시 | LLM 미호출로 AI 에이전트 도구 호출 하니스가 정상 구동하는지 스모크 + `roadmap_chat`/`timetable_chat` 유닛 268케이스 | 보고만 (별도 required-check 설정 없음) |
+| `migration-graph` | `migrations/` 경로 변경 시 | alembic 리비전 중복/사이클/멀티헤드 여부(`test_migrations.py`) | 보고만 |
+| `golden-eval-weekly` | 매주 화요일 03:00(KST) + 수동 | AI 에이전트 골든셋을 **실제 LLM**으로 N=3 반복 실행, Langfuse에 트렌드 적재 | 게이트 아님 — LLM 확률성 특성상 실패 자체가 이상 신호는 아니라, Langfuse UI에서 추세로 판단 |
+
+**중요한 한계 — 숨기지 않고 명시한다**: 위 표에 **전체 pytest(650+)와 졸업요건 판정 골든테스트(TC01~09)는 없다.** 이 둘은 CI가 자동으로 막는 게 아니라, PR을 올리기 전에 로컬에서 직접 돌려 통과를 확인하는 **사람(세션)의 절차**다(`docs/CHANGELOG.md`에 매 세션 기록). GitHub 쪽 브랜치 보호(`protect-main` 룰셋)도 PR 존재·강제 푸시 금지·선형 히스토리는 강제하지만 **필수 승인 수는 0, 필수 상태 체크도 지정돼 있지 않다** — 실질적인 품질 게이트는 CI가 아니라 "PR마다 독립 리뷰를 거친다"는 팀 관행(`docs/ai-usage.md` 3절)이 맡고 있다.
+
+**배포는 GitHub Actions가 안 한다** — Netlify(프론트)와 Railway(백엔드)가 각자 GitHub 저장소를 직접 구독하는 자체 연동이라, `main`에 뭔가 머지되는 즉시(별도 배포 워크플로 없이) 두 서비스가 독립적으로 빌드·배포한다. 그래서 "머지됐는데 배포가 안 됐다"가 발생해도 GitHub Actions 로그에는 아무 흔적이 안 남는다 — 원인 확인은 Netlify/Railway 각자의 대시보드에서 해야 한다.
 <br/>
 
 <p align="right">(<a href="#목차">목차로 ↑</a>)</p>
