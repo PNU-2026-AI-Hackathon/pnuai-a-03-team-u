@@ -457,7 +457,7 @@ $ npm run lint                     # oxlint
 
 </details>
 
-> ⚠️ 위 TC01~TC09는 **졸업요건 판정 엔진(`graduation_progress.py`)만** 검증한다. 로드맵·시간표 AI 에이전트는 이름은 비슷하지만 완전히 별도인 골든 데이터셋(`backend/tests/eval/cases.py`)으로 검증한다 — 로드맵 22건 · 시간표 10건, 각 케이스에 `agent="roadmap"`/`"timetable"` 태그가 붙어 하나의 파일로 관리된다. `python -m tests.eval.run_eval`(LLM 미호출 dry-run, PR마다 CI로 자동 실행)과 매주 실제 LLM으로 도는 정기 관측(`golden-eval-weekly.yml`, Langfuse에 결과 적재)으로 나뉜다 — "판정 정확성"과 "AI 응답 품질"은 서로 다른 검증 라인이라는 뜻이다.
+> ⚠️ 위 TC01~TC09는 **졸업요건 판정 엔진(`graduation_progress.py`)만** 검증한다. 로드맵·시간표 AI 에이전트는 이름은 비슷하지만 완전히 별도인 골든 데이터셋(`backend/tests/eval/cases.py`)으로 검증한다 — 로드맵 22건 · 시간표 10건, 각 케이스에 `agent="roadmap"`/`"timetable"` 태그가 붙어 하나의 파일로 관리된다. `python -m tests.eval.run_eval`(LLM 미호출 dry-run, `planning/`·`academics/` 경로 변경 시 CI로 자동 실행 — 아래 표 참고)과 매주 실제 LLM으로 도는 정기 관측(`golden-eval-weekly.yml`, Langfuse에 결과 적재)으로 나뉜다 — "판정 정확성"과 "AI 응답 품질"은 서로 다른 검증 라인이라는 뜻이다.
 
 ```mermaid
 flowchart LR
@@ -517,8 +517,8 @@ flowchart TB
 
 | 워크플로 | 트리거 | 하는 일 | 실패 시 |
 |:---|:---|:---|:---|
-| `security-scan` | 모든 push/PR + 매주 월요일 | gitleaks로 시크릿 스캔, pip-audit로 `constraints.txt` CVE 점검 | **gitleaks는 머지 차단.** pip-audit는 Job Summary에만 기록(무관한 PR을 CVE 하나로 막지 않으려는 설계) |
-| `golden-eval-dry` | `planning/`·`academics/` 경로 변경 시 | LLM 미호출로 AI 에이전트 도구 호출 하니스가 정상 구동하는지 스모크 + `roadmap_chat`/`timetable_chat` 유닛 268케이스 | 보고만 (별도 required-check 설정 없음) |
+| `security-scan` | 모든 push/PR + 매주 월요일 | gitleaks로 시크릿 스캔, pip-audit로 `constraints.txt` CVE 점검 | 워크플로 설계 의도는 "gitleaks 실패 = 머지 차단"이지만, 아래 명시했듯 GitHub 쪽에 required status check로 실제 등록돼 있진 않다 — 지금은 실패해도 버튼상 머지가 막히진 않는다. pip-audit는 애초에 Job Summary 보고용(무관한 PR을 CVE 하나로 막지 않으려는 설계) |
+| `golden-eval-dry` | `planning/`·`academics/`·`tests/eval/` 경로 또는 `requirements.txt`/`constraints.txt` 변경 시 | LLM 미호출로 AI 에이전트 도구 호출 하니스가 정상 구동하는지 스모크 + `roadmap_chat`/`timetable_chat` 유닛 268케이스 | 보고만 (별도 required-check 설정 없음) |
 | `migration-graph` | `migrations/` 경로 변경 시 | alembic 리비전 중복/사이클/멀티헤드 여부(`test_migrations.py`) | 보고만 |
 | `golden-eval-weekly` | 매주 화요일 03:00(KST) + 수동 | AI 에이전트 골든셋을 **실제 LLM**으로 N=3 반복 실행, Langfuse에 트렌드 적재 | 게이트 아님 — LLM 확률성 특성상 실패 자체가 이상 신호는 아니라, Langfuse UI에서 추세로 판단 |
 
