@@ -41,9 +41,10 @@ from app.ingestion.crawlers.onestop_syllabus import crawl_syllabi_for_course_nam
 from app.ingestion.parsers.onestop_syllabus import parse_syllabus_pdf
 
 # 크롤러가 받는 raw term code(One-Stop selectAtlectManual_v2025 기준) →
-# course_offerings.semester 표기. 지금 크롤러는 정규학기만 지원한다(계절학기는
-# 학기 전환 UI 자체를 아직 안 만들었다 — 크롤러 모듈 docstring 참고), 그래서
-# 이 매핑도 정규학기 2개만 있으면 된다.
+# course_offerings.semester 표기. 크롤러 자체는 학기 전환(select_option)을 지원하지만
+# (2026-08-25, 크롤러 모듈 docstring 참고), `course_offerings.semester`에 계절학기
+# 표기("여름계절수업" 등)가 뭔지 정해진 바가 없어 이 매핑은 정규학기 2개만 둔다 —
+# 계절학기까지 지원하려면 course_offerings 쪽 표기 컨벤션부터 확인해야 한다.
 _SEMESTER_LABELS = {"0010": "1학기", "0020": "2학기"}
 
 
@@ -51,7 +52,7 @@ def resolve_semester_label(semester_code: str) -> str:
     if semester_code not in _SEMESTER_LABELS:
         raise ValueError(
             f"semester_code={semester_code!r}는 아직 지원 안 함(정규학기 0010/0020만) — "
-            "계절학기는 크롤러가 학기 전환을 지원하지 않아 course_offerings 매칭 표기를 정할 수 없다."
+            "계절학기는 course_offerings.semester 표기 컨벤션이 안 정해져 있어 매칭 표기를 정할 수 없다."
         )
     return _SEMESTER_LABELS[semester_code]
 

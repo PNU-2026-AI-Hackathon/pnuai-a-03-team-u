@@ -84,25 +84,29 @@ def search_offerings_by_name(
     `semester_code`는 `selectAtlectManual_v2025`가 쓰는 raw 코드다(정규학기
     1학기="0010", 2학기="0020" — `onestop_course_catalog.TERM_CODES`와 동일 체계).
 
-    `year`/`semester_code`는 **DOM을 건드리지 않고 검증만 한다** — `#SCH_SYEAR`/
-    `#SCH_TERM_GCD`를 JS로 바꾸면 change 이벤트가 안 걸려서 `fn_VisibleSet(false)`가
-    못 돌고, `dispatchEvent`로 직접 change를 걸어봤더니 그 즉시 검색방법 라디오가
-    조작 불가능해지는 회귀가 실측으로 났다(2026-08-24). One-Stop 페이지는 기본값이
-    이미 "오늘 기준 이 학기"라 그 페이지가 정말 `year`/`semester_code`와 같은 학기를
-    보여주고 있는지만 확인하고, 다르면 조용히 엉뚱한 학기를 크롤링하는 대신 바로
-    에러를 낸다. 다른 학기를 크롤링하려면(다음 파일럿 확장 시) 학기 전환 UI 조작을
-    별도로 검증해서 추가할 것.
+    `#SCH_SYEAR`/`#SCH_TERM_GCD`는 (대학/대학원과 달리) 순수 네이티브 `<select>`다
+    — `page.select_option()`으로 바꾸면 실제 change 이벤트가 정상 발생한다(2026-08-25
+    실측 확인 및 검색+PDF 다운로드까지 end-to-end 검증 완료). 예전엔 JS로 `.value`만
+    세팅하고 `dispatchEvent`로 change를 흉내 냈다가 검색방법 라디오가 조작 불가능해지는
+    회귀가 났었는데(2026-08-24), 그건 `dispatchEvent` 흉내가 문제였지 select 자체가
+    커스텀 위젯이라서가 아니었다 — `select_option()`은 별도 문제가 없었다. 다른 필드를
+    만지기 전에 **맨 먼저** 전환한다(전환 순서를 바꿨을 때 다른 필드가 초기화되는지는
+    확인 안 했으니 항상 이 순서를 지킨다).
     """
     page.goto(SYLLABUS_SEARCH_PAGE, wait_until="networkidle", timeout=30_000)
     time.sleep(1)
+
+    page.select_option("#SCH_SYEAR", str(year))
+    page.select_option("#SCH_TERM_GCD", semester_code)
+    time.sleep(_SEARCH_DEBOUNCE_S)
 
     page_syear = page.eval_on_selector("#SCH_SYEAR", "el => el.value")
     page_term = page.eval_on_selector("#SCH_TERM_GCD", "el => el.value")
     if page_syear != str(year) or page_term != semester_code:
         raise RuntimeError(
-            f"One-Stop 페이지 기본 학기({page_syear}/{page_term})가 요청한 "
-            f"{year}/{semester_code}와 다르다 — 학기 전환 UI 조작이 아직 구현/검증"
-            "돼 있지 않아 엉뚱한 학기를 크롤링하는 대신 여기서 멈춘다."
+            f"학기 전환 실패: 선택 후에도 페이지가 {page_syear}/{page_term}로 남아있음"
+            f"(요청 {year}/{semester_code}) — semester_code/year 값 자체가 select의"
+            " option에 없는 값일 수 있다."
         )
 
     page.check("#SEARCH_GBN2", force=True)

@@ -199,7 +199,7 @@ class ResolveSemesterLabelTest(unittest.TestCase):
         self.assertEqual("2학기", resolve_semester_label("0020"))
 
     def test_rejects_unsupported_codes(self):
-        """계절학기(0011/0021)는 크롤러가 학기 전환을 지원하기 전까지 명시적으로 막는다."""
+        """계절학기(0011/0021)는 course_offerings.semester 표기 컨벤션이 안 정해져 있어 막는다."""
         with self.assertRaises(ValueError):
             resolve_semester_label("0011")
 
