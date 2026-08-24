@@ -10388,6 +10388,119 @@ body.theme-dark .roadmap-meta-editor > button {
   accent-color: var(--blue, #2563eb);
 }
 
+.auth-consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  max-width: 480px;
+  text-align: left;
+}
+
+.auth-consent-check input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--blue, #2563eb);
+}
+
+.auth-consent-check a {
+  color: var(--blue, #2563eb);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* --- 개인정보처리방침 문서 화면 --------------------------------------- */
+
+.privacy-shell {
+  max-width: 760px;
+}
+
+.privacy-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.privacy-doc h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.privacy-doc h2 {
+  margin: 20px 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.privacy-doc p,
+.privacy-doc li {
+  color: var(--muted, #64748b);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.privacy-doc ul {
+  margin: 4px 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.privacy-doc a {
+  color: var(--blue, #2563eb);
+  font-weight: 600;
+}
+
+.privacy-note {
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.privacy-table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  overflow-x: auto;
+  display: block;
+}
+
+.privacy-table thead,
+.privacy-table tbody {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.privacy-table th,
+.privacy-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--shell-line);
+  text-align: left;
+  vertical-align: top;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.privacy-table th {
+  background: var(--shell-canvas);
+  font-weight: 700;
+}
+
+body.theme-dark .privacy-table th {
+  background: #1d2536;
+}
+
 body.theme-dark .auth-track-card {
   border-color: #33415e;
   background: #1d2536;

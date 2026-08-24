@@ -14,6 +14,51 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — 회원가입 개인정보 동의 체크박스 + 개인정보처리방침 페이지 구현 (F-08 착수)
+
+같은 세션에서 발견한 것(README 1.3/F-08): 온보딩에 "✓ 개인정보 수집 · 이용 동의"
+문구는 있었지만 실제 옵트인 컨트롤이 아니라 정적 텍스트라 사용자 응답과 무관하게
+항상 "✓"로 보이는 상태였다. Railway가 이미 배포돼 실사용자를 받고 있다는 게 드러난
+뒤라, 문서 정정을 넘어 실제로 만들어달라는 요청을 받아 착수.
+
+- **[db]** `users.privacy_consent`(bool, not null, server_default false) /
+  `privacy_consent_at`(nullable timestamp) 추가 — 마이그레이션 `b8d89abee0ab`
+  (`down_revision=26790dcb3180`, 로컬 Postgres에서 upgrade/downgrade/재upgrade
+  라운드트립 확인). 기존 가입자는 동의를 받은 적이 없으므로 `false`/`NULL`로
+  남는다 — 허위로 `true`를 채우지 않는다.
+- **[api]** `POST /auth/signup`에 `privacy_consent: bool` 필수 필드 추가.
+  `False`면 Pydantic validator가 422로 거부(`"개인정보 수집·이용에 동의해야
+  가입할 수 있습니다"`) — **클라이언트 검증만 믿지 않고 서버에서도 다시
+  강제한다**, 안 그러면 API 직접 호출로 동의 없이 가입할 수 있다. `UserResponse`에
+  `privacy_consent` 필드도 노출.
+- **[frontend]** 회원가입 STEP 1에 필수 체크박스 추가(`AuthPage.tsx`) — 체크
+  전엔 제출 버튼 비활성화 + 클라이언트 단 메시지도 별도로 띄운다. "내용 보기"
+  링크로 새 탭에 `/privacy` 페이지(신규, `PrivacyPolicyPage.tsx`)를 연다.
+- **[frontend]** 개인정보처리방침·LLM 처리위탁 고지 페이지 신설. 내용은
+  `docs/backend/security-privacy-plan.md`의 데이터 인벤토리(S/A/B/C 등급)와
+  `docs/backend/features/llm-privacy-audit.md`의 실측(OpenAI/Langfuse에 정확히
+  뭘 보내고 안 보내는지, 마스킹 4패턴)을 그대로 근거로 썼다 — 지어내지 않았다.
+  **보존기간 자동파기는 "도구는 구현됐지만 자동 실행은 아직 안 함"이라고
+  정직하게 적었다** — 실제로 안 하는 걸 하는 것처럼 적으면 이 문서 자체가
+  근거 있는 허위 고지가 된다.
+- `OnboardingPage.tsx`의 옛 정적 문구("✓ 개인정보 수집·이용 동의...")도 정정 —
+  진짜 동의는 이제 회원가입(STEP 1)에서 받으므로, 여기 남은 문구는 포털
+  계정정보 미저장 사실만 정확히 서술하도록 축소했다(성적표 OCR 폐기 문구는
+  뺐다 — `pytesseract`가 실제로 어디서도 안 쓰이는 죽은 의존성이라 그 주장은
+  근거가 없었다, 2026-08-24 앞선 grep 확인 재사용).
+- **검증**: 로컬 Postgres에서 마이그레이션 round-trip, `pytest tests/` 623 passed,
+  `npm run build` 통과, `TestClient`로 `/auth/signup` 실제 HTTP 호출 2건(동의
+  거부 422 확인 / 동의 성공 201 + `privacy_consent_at` 타임스탬프 확인) —
+  전부 이 세션에서 직접 실행. 브라우저 시각 확인은 이번엔 Playwright 등 브라우저
+  도구가 세션에 연결돼 있지 않아 못 했다 — `npm run build` 통과 + dev 서버가
+  `/auth`·`/privacy` 둘 다 200으로 서빙하는 것까지만 확인했다.
+
+**⚠️ 아직 안 한 것 — 다음 세션에서 반드시**: 이 마이그레이션을 팀 공유
+Supabase에는 아직 안 올렸다. Railway가 이미 실배포 상태라, 이 PR을 머지해서
+Railway가 재배포되면 ORM이 기대하는 `privacy_consent` 컬럼이 Supabase엔 없어서
+**회원가입 자체가 그 순간부터 깨진다.** 머지 전에 반드시 Supabase에
+`alembic upgrade head`를 먼저 적용해야 한다 — 순서를 지킬 것.
+
 ## 2026-08-24 (blackest21) — README 3.3/3.4도 같은 방식으로 대조 — F-01/F-08 문구 불일치, 디렉토리 구조 누락 5곳
 
 2.1/2.2에 이어 사용자 요청으로 3.3(기능명세서)·3.4(디렉토리 구조)도 독립 세션으로

@@ -8,6 +8,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { InfoPage } from "../pages/InfoPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
+import { PrivacyPolicyPage } from "../pages/PrivacyPolicyPage";
 import { ResetPasswordPage } from "../pages/ResetPasswordPage";
 import { RoadmapPage } from "../pages/RoadmapPage";
 import { TimetablePage } from "../pages/TimetablePage";
@@ -42,6 +43,9 @@ export function AppRouter() {
           <Route path="/forgot-password" element={<GuestOnly><ForgotPasswordPage /></GuestOnly>} />
           {/* 메일 링크로 들어오는 재설정 화면. 로그인 상태면 홈으로 보낸다. */}
           <Route path="/reset-password" element={<GuestOnly><ResetPasswordPage /></GuestOnly>} />
+          {/* 회원가입 동의 체크박스에서 새 탭으로 여는 정책 문서. 로그인 여부와 무관하게 열람 가능해야
+              해서 GuestOnly/RequireAuth 어느 쪽으로도 감싸지 않는다. */}
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route index element={<DashboardPage />} />
             <Route path="/info" element={<InfoPage />} />
