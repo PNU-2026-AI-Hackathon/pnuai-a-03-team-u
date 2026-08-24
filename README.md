@@ -411,6 +411,9 @@ $ npm run dev                     # http://localhost:5173
 <br/>
 
 **품질 검증**
+
+이 프로젝트의 절대 원칙(1.3 참고)은 "졸업요건 충족·미충족 판정은 규칙 기반 엔진만 하고, LLM은 그 결과를 설명·추천만 한다"는 것이다. 이 경계가 코드 변경 중에 흐려지지 않았는지를 사람이 매번 눈으로 검토하는 대신, 실제 학과 데이터를 근거로 한 회귀 테스트로 고정해뒀다 — 그래서 "판정 로직을 건드렸는데 골든테스트를 안 돌렸다"는 곧 이 경계를 검증 없이 바꿨다는 뜻이 된다.
+
 ```bash
 $ cd backend
 $ pip install pytest==9.1.1        # requirements.txt엔 없음 — 프로덕션 의존이 아니라 로컬/CI 전용
@@ -422,6 +425,56 @@ $ cd frontend
 $ npm run build                    # tsc -b(타입체크) + vite build
 $ npm run lint                     # oxlint
 ```
+
+<details>
+<summary>단위 테스트 656개, 무엇을 검증하는지 (영역별 분류)</summary>
+
+| 영역 | 케이스 수 | 예시 |
+|:---|:---:|:---|
+| AI 에이전트(로드맵·시간표 챗 + RAG) | 316 | 도구 호출 순서, human-in-the-loop 승인 흐름, 선수과목 판정 |
+| 크롤링·정규화(ingestion) | 106 | One-Stop/마이페이지 파서, 학과·전공 정규화, 강의계획서 파싱 |
+| 졸업요건 판정 엔진 | 92 | 카테고리별 학점 대조, 편입 학점 인정, AI융합트랙 판정 |
+| 보안·개인정보 | 73 | 레이트 리밋, 비밀번호 재설정, Langfuse 마스킹, 계정 파기 |
+| API·시드·마이그레이션 | 69 | 강좌 검색, 시간표 CRUD, 학사 계층 시드 |
+| **합계** | **656** | |
+
+</details>
+
+<details>
+<summary>골든 시나리오 TC01~TC09, 각각 무엇을 고정하는지</summary>
+
+| ID | 고정하는 것 |
+|:---|:---|
+| TC01 | 표준 주전공(컴퓨터공학과) — 6개 카테고리 전부 정확히 충족 |
+| TC02 | 전공선택 학점만 미달 — 해당 카테고리와 총계가 함께 미충족으로 잡혀야 함 |
+| TC03 | 요건 데이터 자체가 없는 학과×이수유형 — 판정 불가 상태로 명확히 남아야 함 |
+| TC04 | 학생 교육과정연도와 정확히 일치하는 기준학점이 없을 때 최신 이전 연도로 폴백 |
+| TC05 | `major_id`가 있으면 학과 레벨이 아니라 전공 레벨 기준학점을 써야 함 |
+| TC06 | 복수전공 병행 시 이수학점 집계가 프로그램별로 분리 안 되고 전체 이수내역을 공유하는 현재 엔진의 단순화를 고정(설계 그대로, 버그 아님) |
+| TC07 | AI융합트랙 대상 비SW 학과가 트랙 요건(21학점)을 채우면 `is_ai_track=True` |
+| TC08 | 전공필수 비중이 큰 비CS 학과(간호학과) — 전 카테고리 기준학점 대조 |
+| TC09 | 부전공(minor) — 카테고리 세분 없이 총학점만 있는 실제 요건 모양 재현 |
+
+</details>
+
+```mermaid
+flowchart LR
+    A["코드 변경"] --> B["pytest 650+"]
+    B --> C["골든테스트 TC01~09"]
+    C --> D["PR 생성"]
+    D --> E["별도 세션 독립 리뷰<br/>작성자 주장을 안 믿고<br/>직접 재현·재검증"]
+    E -->|"결함 발견"| A
+    E -->|"통과"| F["머지"]
+
+    classDef test fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef review fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class B,C test
+    class D,E review
+    class F done
+```
+
+AI 도구를 개발에 활용한 범위와, "AI가 작성했다는 사실만으로 신뢰하지 않는다"는 원칙을 실제로 어떻게 지켰는지(독립 리뷰로 결함을 잡아낸 사례 포함), LLM에 학생 개인정보를 어떻게 안 보내는지는 [`docs/ai-usage.md`](docs/ai-usage.md)에 별도로 정리했다.
 <br/>
 
 <p align="right">(<a href="#목차">목차로 ↑</a>)</p>
@@ -508,6 +561,7 @@ $ npm run lint                     # oxlint
 **저장소 문서**
 - [아키텍처 개요](docs/backend/architecture.md)
 - [개인정보·보안 계획](docs/backend/security-privacy-plan.md)
+- [AI 활용 내역](docs/ai-usage.md) - 활용한 AI 도구·선정 이유, AI 생성 코드 검증 방식, LLM 개인정보 보안 경계
 - [기능별 설계 문서](docs/backend/features/) - 학사 인증, 로드맵 RAG, 시간표 채팅, 편입 학점 인정 등
 - [프론트엔드 API 연동 가이드](docs/frontend/frontend-api-guide.md)
 - [개발 변경 이력](docs/CHANGELOG.md)
