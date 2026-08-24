@@ -174,16 +174,24 @@ def import_course_syllabi(
 
     output_dir = Path(output_dir_str)
     semester = resolve_semester_label(semester_code)
+
+    # DB 세션과 크롤링(브라우저 자동화, 분반 수십~수백 개면 수십 분 걸림)을 세션
+    # 하나로 묶지 않는다 — 실제로 묶어서 돌렸다가 크롤링하는 내내 DB 커넥션이
+    # 아무 것도 안 하며 열려만 있어서 Supabase가 유휴 커넥션을 끊어버린 사고가
+    # 났다("server closed the connection unexpectedly", 2026-08-24 사회학과
+    # 실행에서 실측). course_names 조회용 세션을 먼저 닫고, 크롤링은 DB 세션
+    # 없이 하고, 저장할 때 새 세션을 연다.
+    with SessionLocal() as name_db:
+        course_names = _resolve_course_names(name_db, department, major)
+    print(f"대상 과목명 {len(course_names)}개: {course_names[:10]}{'...' if len(course_names) > 10 else ''}")
+    if not course_names:
+        print("대상이 0건이다 — department/major 이름을 확인할 것.")
+        return
+
+    results = crawl_syllabi_for_course_names(course_names, year, semester_code, output_dir)
+
     db = SessionLocal()
     try:
-        course_names = _resolve_course_names(db, department, major)
-        print(f"대상 과목명 {len(course_names)}개: {course_names[:10]}{'...' if len(course_names) > 10 else ''}")
-        if not course_names:
-            print("대상이 0건이다 — department/major 이름을 확인할 것.")
-            return
-
-        results = crawl_syllabi_for_course_names(course_names, year, semester_code, output_dir)
-
         counts = {"created": 0, "updated": 0, "no_offering": 0, "no_pdf": 0, "failed": 0}
         for result in results:
             status = upsert_syllabus_row(db, result, year, semester)
