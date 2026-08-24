@@ -112,6 +112,14 @@ def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
         return "no_offering"
 
     parsed = parse_syllabus_pdf(result.pdf_path)
+    # `SessionLocal`은 `autoflush=False`다(`core/db.py`) — 이 SELECT가 세션 안에
+    # 아직 flush 안 된 이전 `db.add()`를 못 본다. 같은 offering이 이번 실행 중
+    # 두 번 이상 나타나면(검색 결과 중복, 같은 offering이 여러 course_name 검색에
+    # 걸리는 경우 등 — 실제 파일럿 규모에서 실측됨, 2026-08-24) 둘 다 "없음"으로
+    # 잘못 판단해 CREATE를 두 번 시도하다가 최종 커밋 시점에 unique 제약 위반으로
+    # **트랜잭션 전체가 롤백**됐다(197건 다운로드해놓고 0건 저장되는 사고). 아래
+    # `db.flush()`로 매번 즉시 반영해서 다음 호출의 existing 체크가 항상 최신
+    # 상태를 보게 한다.
     existing = db.scalar(select(CourseSyllabus).where(CourseSyllabus.offering_id == offering.id))
     row = existing or CourseSyllabus(offering_id=offering.id)
     # office/office_hours(연구실/상담시간)는 실측 샘플 전부 빈 셀이라 파서가 아직
@@ -133,6 +141,7 @@ def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
         status = "created"
     else:
         status = "updated"
+    db.flush()
 
     # RAG 검색(`CurriculumRetriever.search`, use_vector=False 기본 경로)이 실제로
     # 읽는 건 courses.description이다(RagChunk 임베딩이 아니라 — 확인 완료). 강의

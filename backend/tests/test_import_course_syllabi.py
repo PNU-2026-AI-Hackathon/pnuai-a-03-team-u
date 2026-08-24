@@ -38,7 +38,13 @@ class UpsertSyllabusRowTest(unittest.TestCase):
         )
 
     def setUp(self):
-        self.db = Session(self.engine)
+        # autoflush=False — 실제 `app.core.db.SessionLocal`과 똑같이 맞춘다.
+        # 기본값(autoflush=True)으로 테스트하면 이 파일이 잡으려는 정확한 버그
+        # (같은 세션 안에서 커밋 전에 같은 offering이 두 번 나타나는 것)가
+        # 애초에 재현이 안 된다 — 실제로 첫 구현 때 이 차이 때문에 로컬
+        # 테스트는 전부 통과했는데 실제 파일럿(197건 규모)에서는 트랜잭션
+        # 전체가 롤백되는 사고가 났다(2026-08-24).
+        self.db = Session(self.engine, autoflush=False)
         for model in (CourseSyllabus, CourseOffering, Course):
             self.db.query(model).delete()
         self.db.commit()
@@ -86,6 +92,26 @@ class UpsertSyllabusRowTest(unittest.TestCase):
         rows = self.db.query(CourseSyllabus).filter_by(offering_id=1).all()
         self.assertEqual(1, len(rows), "같은 offering을 두 번 넣으면 중복이 아니라 갱신이어야 한다")
         self.assertEqual("changed@pusan.ac.kr", rows[0].email)
+
+    def test_same_offering_twice_in_one_session_without_commit_does_not_crash(self):
+        """실제 파일럿 사고(2026-08-24) 재현: `import_course_syllabi`는 전체 실행이
+        끝날 때 한 번만 커밋한다 — 그 사이 같은 offering이 검색 결과 중복 등으로
+        두 번 처리되면(실제로 197건 규모에서 일어남) `SessionLocal`의
+        `autoflush=False` 때문에 두 번째 호출의 "이미 있는지" 체크가 첫 번째
+        호출이 아직 flush 안 된 걸 못 보고 CREATE를 또 시도했다. 최종 커밋 시점에
+        unique 제약 위반으로 **트랜잭션 전체가 롤백**돼서 197건을 다운로드해놓고
+        0건 저장되는 사고가 났다. `db.commit()` 없이 두 번 호출해서 이 정확한
+        시나리오를 재현한다."""
+        result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
+        with patch("scripts.import_course_syllabi.parse_syllabus_pdf", return_value=self._parsed()):
+            status1 = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
+            status2 = upsert_syllabus_row(
+                self.db, result, year=2026, semester="2학기",
+            )
+        self.db.commit()  # autoflush=False 세션에서도 최종 커밋이 실패하면 안 된다
+        self.assertEqual("created", status1)
+        self.assertEqual("updated", status2, "두 번째는 flush된 첫 번째를 찾아서 갱신해야지 또 생성하면 안 된다")
+        self.assertEqual(1, self.db.query(CourseSyllabus).filter_by(offering_id=1).count())
 
     def test_no_matching_offering_reports_status_without_writing(self):
         result = SyllabusCrawlResult(offering=_offering(subj_no="ZZ9999999"), pdf_path=Path("/tmp/x.pdf"))
