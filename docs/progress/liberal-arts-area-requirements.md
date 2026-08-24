@@ -411,25 +411,34 @@ _CATEGORY_ROLLUP = {area: "교양선택" for area in BALANCED_LIBERAL_AREAS}
 
 ### 7.3 제안 — 3단계
 
-**1단계 (마이그레이션 없음, 지금 당장 가능):**
-`BALANCED_LIBERAL_AREAS`를 세대별 dict로 바꾼다.
+**1단계 (마이그레이션 없음, 지금 당장 가능): ✅ 구현 완료 (2026-08-24)**
 
-```python
-LIBERAL_AREAS_BY_GENERATION = {
-    "2021": {  # 2022~2025학년도 교육과정
-        "사상과역사": "교양선택", "사회와문화": "교양선택", "문학과예술": "교양선택",
-        "과학과기술": "교양선택", "건강과레포츠": "교양선택", "외국어": "교양선택",
-        "융복합": "교양선택", "효원브릿지": "교양선택",   # ← 8영역 추가
-    },
-    "2026": {
-        "사상과역사": "효원균형교양", "사회와문화": "효원균형교양", "문학과예술": "효원균형교양",
-        "과학과기술": "효원균형교양", "세계와소통": "효원균형교양", "효원브릿지": "효원균형교양",
-        "융합과창의": "효원창의교양", "건강과레포츠": "효원창의교양", "인성과사회봉사": "효원창의교양",
-    },
-}
-```
-롤업 대상(`교양선택` vs `효원균형교양`/`효원창의교양`)이 세대에 따라 달라지므로 dict 값으로 들고 가야 한다.
-세대는 `user_academic_programs.curriculum_year`로 판별한다(≤2025 → `2021`, ≥2026 → `2026`).
+`app/domains/academics/graduation_progress.py`에 `LIBERAL_AREAS_2021`/`LIBERAL_AREAS_2026`/
+`LIBERAL_AREAS_BY_GENERATION`/`resolve_liberal_area_generation()`/`liberal_areas_for_generation()`로
+구현했다. 이 문서 초안과 실제 구현이 다른 점 두 가지:
+
+1. **롤업 대상은 세대에 따라 갈리지 않는다.** `graduation_requirements`(flat 스키마)에
+   `효원균형교양`/`효원창의교양`을 따로 담을 컬럼이 애초에 없어서, 이 엔진 안에서는
+   두 세대 다 결국 `교양선택` 하나로 롤업된다(`_CATEGORY_ROLLUP`, 세대 무관 dict 값
+   `"교양선택"` 고정). 세대가 실제로 갈라야 하는 곳은 롤업이 아니라 **로드맵/시간표 챗의
+   자문 컨텍스트**다 — 어느 세부영역이 "이 학생에게 적용되는 영역인지"를 보여줄 때만
+   `liberal_areas_for_generation(curriculum_year)`로 세대별 부분집합을 쓴다.
+2. **영역명 표기가 초안과 다르다.** `courses.general_education_area` 운영 DB 실값을
+   확인한 결과(2026-08-24) `세계와소통`/`융합과창의`/`인성과사회봉사`가 아니라
+   **공백 포함** `세계와 소통`/`융합과 창의`/`인성과 사회봉사`가 맞다. 초안의 무공백
+   표기는 오타였다 — 실측 없이 문서만 보고 구현했으면 신입생 데이터가 실제로 들어올 때
+   전부 매칭 실패했을 것이다.
+
+세대 판별은 `user_academic_programs.curriculum_year`로 한다(≤2025 또는 결측 → `2021`,
+≥2026 → `2026`) — 2026-08-24 기준 실사용자 curriculum_year는 2023/2024 또는 결측뿐이라
+아직 신체계 학생이 실제로 이 분기를 타지는 않았지만, 다음 신입생 코호트가 유입되면
+바로 맞는 값이 나오게 지금 반영해뒀다. 테스트: `tests/test_graduation_progress.py::LiberalAreaGenerationTest`,
+`tests/test_roadmap_chat.py::...::test_context_block_uses_2026_curriculum_areas_for_2026_student`,
+`tests/test_timetable_chat.py::...::test_get_student_context_uses_2026_curriculum_areas_for_2026_student`.
+
+2단계(영역 마스터 테이블 + 학과별 기초교양 필수과목 매핑)와 3단계(요건 표현)는 여전히
+미구현이다 — 151개 학과 중 21개만 원문을 읽은 상태라 지금 스키마를 확정하면 나머지
+130개에서 나올 변형을 놓칠 위험이 크다. 더 조사한 뒤 착수할 것.
 
 **2단계 (영역 마스터 테이블 신설):**
 

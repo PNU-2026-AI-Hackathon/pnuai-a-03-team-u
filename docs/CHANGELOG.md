@@ -14,6 +14,34 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — 교양 세부영역 세대(2021/2026체계) 분기 — PR #199 잔여 항목 1단계
+
+`docs/progress/liberal-arts-area-requirements.md` §7.3에서 조사만 하고 구현하지
+않았던 3단계 제안 중 **마이그레이션 없이 되는 1단계**를 반영. `graduation_progress.
+BALANCED_LIBERAL_AREAS`가 2021교육과정(2022~2025학번) 구체계 8개 영역만 알고 있어서,
+2026학번이 One-Stop 동기화를 하면 신체계 세부영역명("세계와 소통"/"융합과 창의"/
+"인성과 사회봉사")을 `_match_known_liberal_area`가 인식 못 하고 조용히 놓치는 구조였다
+— 실사용자 중 2026학번이 아직 없어(`user_academic_programs.curriculum_year` 전원
+2023/2024 또는 결측, 2026-08-24 Supabase 실측) 지금까지 드러나지 않았을 뿐.
+
+- **[feat]** `LIBERAL_AREAS_2021`/`LIBERAL_AREAS_2026`/`LIBERAL_AREAS_BY_GENERATION`
+  + `resolve_liberal_area_generation()`/`liberal_areas_for_generation()` 추가.
+  `BALANCED_LIBERAL_AREAS`는 두 세대 합집합(11개)으로 확장 — 매칭·롤업(전부 "교양선택"
+  하나로 귀결, 세대 무관)은 계속 이 이름으로 쓰고, 로드맵/시간표 챗의 자문 컨텍스트
+  (이 학생 기준 몇 개 영역 중 몇 개 미이수)만 `liberal_areas_for_generation(주전공
+  curriculum_year)`로 세대별 부분집합을 골라 쓰게 분리했다.
+- **표기 정정**: 조사 문서 초안은 "세계와소통"(무공백)으로 적어놨는데, `courses.
+  general_education_area` 운영 DB 실값을 확인해보니 **공백 포함** "세계와 소통"이
+  맞았다. 실측 없이 문서만 보고 구현했으면 신입생 데이터가 들어와도 계속 매칭
+  실패했을 뻔했다.
+- 2단계(영역 마스터 테이블)·3단계(학과별 기초교양 필수과목을 `special_rules`에
+  구조화)는 이번에 안 건드림 — 151개 학과 중 21개만 원문 조사가 끝난 상태라 지금
+  스키마를 확정하면 나머지 130개 변형을 놓칠 위험이 크다. 조사 더 진행한 뒤 착수.
+- 신규 테스트 6+1+1건(`test_graduation_progress.py::LiberalAreaGenerationTest`,
+  roadmap/timetable 각 1건씩 2026학번 시나리오) — 기존 285→293건, 전부 그린.
+  골든테스트(TC01~09) 9건, eval dry-run 29/29건도 재확인.
+- 관련 문서: `docs/progress/liberal-arts-area-requirements.md` §7.3 갱신.
+
 ## 2026-08-24 (blackest21) — README 3.2 기능설명에 AI 에이전트 도구 호출 흐름도 추가
 
 3.2가 화면별 불릿 나열뿐이라 "AI가 실제로 어떻게 동작하는지"가 안 보인다는 지적.

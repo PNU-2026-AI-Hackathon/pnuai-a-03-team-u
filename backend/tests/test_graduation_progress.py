@@ -12,7 +12,11 @@ from sqlalchemy.orm import sessionmaker
 from app.core.db import Base
 from app.domains.academics.graduation_progress import (
     BALANCED_LIBERAL_AREAS,
+    LIBERAL_AREAS_2021,
+    LIBERAL_AREAS_2026,
     compute_graduation_progress,
+    liberal_areas_for_generation,
+    resolve_liberal_area_generation,
 )
 from app.domains.academics.models import (
     College,
@@ -101,6 +105,69 @@ class BalancedLiberalAreaRollupTest(_Base):
         progress = compute_graduation_progress(db, 1)[0]
         mr = next(c for c in progress.categories if c.category_name == "전공필수")
         self.assertEqual(3, int(mr.earned_credits))
+
+
+class LiberalAreaGenerationTest(_Base):
+    """교양 세부영역 구/신체계(2021 vs 2026) 세대 분기.
+
+    2026-08-24 실측: courses.general_education_area에 2026체계 영역명이 이미
+    "세계와 소통"/"융합과 창의"/"인성과 사회봉사"(공백 포함)로 들어와 있는데, 판정
+    엔진의 BALANCED_LIBERAL_AREAS는 2021체계 8개만 알고 있었다 — 신입생이 이
+    이름으로 One-Stop 동기화를 하면 세부영역 인식이 조용히 실패했을 것이다(아직
+    실사용자가 없어 드러나지 않았을 뿐). 세대별 목록과 판별 함수를 고정한다.
+    """
+
+    def test_resolve_generation_by_year(self):
+        self.assertEqual("2021", resolve_liberal_area_generation("2023"))
+        self.assertEqual("2021", resolve_liberal_area_generation("2025"))
+        self.assertEqual("2026", resolve_liberal_area_generation("2026"))
+        self.assertEqual("2026", resolve_liberal_area_generation("2027"))
+        self.assertEqual("2026", resolve_liberal_area_generation(2026))
+
+    def test_resolve_generation_defaults_to_2021_when_unknown(self):
+        """실사용자 curriculum_year가 결측이면 전부 구체계라(2026-08-24 기준) 기본값도 구체계."""
+        self.assertEqual("2021", resolve_liberal_area_generation(None))
+        self.assertEqual("2021", resolve_liberal_area_generation("모름"))
+
+    def test_liberal_areas_for_generation_returns_correct_subset(self):
+        self.assertEqual(LIBERAL_AREAS_2021, liberal_areas_for_generation("2024"))
+        self.assertEqual(LIBERAL_AREAS_2026, liberal_areas_for_generation("2026"))
+
+    def test_generation_specific_names_dont_leak_into_each_other(self):
+        """2021학번에게 신체계 이름을, 2026학번에게 구체계 이름을 보여주면 안 된다."""
+        areas_2021 = liberal_areas_for_generation("2024")
+        areas_2026 = liberal_areas_for_generation("2026")
+        self.assertIn("외국어", areas_2021)
+        self.assertNotIn("세계와 소통", areas_2021)
+        self.assertIn("세계와 소통", areas_2026)
+        self.assertNotIn("외국어", areas_2026)
+        self.assertIn("인성과 사회봉사", areas_2026)
+        self.assertNotIn("인성과 사회봉사", areas_2021)
+
+    def test_balanced_liberal_areas_union_covers_both_generations(self):
+        for area in LIBERAL_AREAS_2021 + LIBERAL_AREAS_2026:
+            self.assertIn(area, BALANCED_LIBERAL_AREAS)
+
+    def test_2026_area_names_still_roll_up_to_general_elective(self):
+        """세대와 무관하게 이 flat 엔진에서 롤업 대상은 항상 '교양선택' 하나뿐이다."""
+        db = self.make_db()
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130, required_general_elective=9,
+        ))
+        db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="글로벌커뮤니케이션",
+                                 category="세계와 소통", credits=3),
+            StudentCourseRecord(user_id=1, raw_course_name="창의적문제해결",
+                                 category="융합과 창의", credits=3),
+            StudentCourseRecord(user_id=1, raw_course_name="사회봉사와나눔",
+                                 category="인성과 사회봉사", credits=3),
+        ])
+        db.commit()
+        progress = compute_graduation_progress(db, 1)[0]
+        ge = next(c for c in progress.categories if c.category_name == "교양선택")
+        self.assertEqual(9, int(ge.earned_credits))
+        self.assertTrue(ge.satisfied)
 
 
 class DepartmentLevelFallbackTest(_Base):
