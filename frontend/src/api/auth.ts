@@ -11,6 +11,7 @@ export const isMockAuthEnabled =
 
 export type AcademicProgram = {
   major: string;
+  department?: string | null;
   program_type: "primary" | "dual" | "minor" | "interdisciplinary";
 };
 
@@ -103,11 +104,19 @@ function createMockUser({
   academicPrograms: programInputs = [],
 }: MockUserSeed): User {
   const academicPrograms = programInputs.reduce<AcademicProgram[]>((programs, program) => {
-    const major = program.major?.trim();
-    if (major) programs.push({ major, program_type: program.program_type });
+    const major = program.major?.trim() ?? "";
+    const programDepartment = program.department?.trim() || null;
+    if (major || programDepartment) {
+      programs.push({
+        major,
+        department: programDepartment,
+        program_type: program.program_type,
+      });
+    }
     return programs;
   }, []);
-  const primaryMajor = academicPrograms.find((program) => program.program_type === "primary")?.major ?? null;
+  const primaryProgram = academicPrograms.find((program) => program.program_type === "primary");
+  const primaryMajor = primaryProgram?.major || primaryProgram?.department || null;
 
   return {
     id: 0,
