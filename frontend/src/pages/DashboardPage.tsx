@@ -209,9 +209,6 @@ export function DashboardPage() {
               <strong>{isAdvisorSaving ? "저장 중" : currentConsultationStatus}</strong>
             </button>
           </div>
-          <Link className="advisor-record-link" to="/info#advisor">
-            상담 기록 보기
-          </Link>
         </article>
 
         <article className="card certificate-card dashboard-summary-card">
