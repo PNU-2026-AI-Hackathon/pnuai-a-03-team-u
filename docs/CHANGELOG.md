@@ -14,6 +14,35 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-24 (blackest21) — Langfuse를 팀 공유 셀프호스팅으로 전환
+
+지금까지 Langfuse가 Tailscale MagicDNS(`desktop-thfnrod`)로만 접속되는 개인 기기
+호스팅이라, 그 기기 소유자가 로컬에서 테스트할 때 낸 trace만 쌓이고 있었다(다른
+팀원이 로컬에서 백엔드를 돌려도 이 host에 못 닿아 trace가 전혀 안 감 — 백엔드는 아직
+Railway 미배포라 다들 로컬로 돌린다, README 3.2/3.3 "배포 예정" 참고). 이제 같은
+인스턴스를 공인 도메인(`https://langfuse-planu.xyz`)으로 노출해서 팀 전체가 같은
+프로젝트("planU")로 trace를 보낼 수 있게 됐다.
+
+- **[config]** `LANGFUSE_BASE_URL` 기본값을 `https://cloud.langfuse.com` →
+  `https://langfuse-planu.xyz`로 변경(`app/core/config.py`). `.env.example`도 같이
+  갱신 — 키(SECRET/PUBLIC)는 DATABASE_URL과 같은 방식으로 팀 채널에서만 공유,
+  커밋 금지 원칙 그대로.
+- 개인 `.env`도 새 host로 전환. 기존 API 키(`sk-lf-...`/`pk-lf-...`)는 같은 프로젝트라
+  그대로 재사용 가능함을 확인.
+- **검증**: `observe_agent_call()`로 실제 trace 하나를 보내고, Langfuse v4 API
+  (`GET /api/public/v2/observations`)로 그 trace가 새 host에 실제로 쌓였는지 직접
+  조회해 확인했다(로컬에서 테스트하는 이 세션이 아니라 별도 환경에서 쐈는데도 도달함
+  — 진짜 외부 접근 가능 상태 확인).
+- `docs/backend/features/llm-privacy-audit.md`의 "Langfuse Cloud" 서술을 실제
+  구성으로 정정. **확인 안 하고 넘어간 것**: 접근 통제가 예전엔 Langfuse Cloud의 유료
+  seat 제한이었는데, 자체 호스팅으로 오면서 그 역할을 인스턴스 자체 로그인 계정이
+  대신하게 됐다 — `langfuse-planu.xyz`가 공인 도메인으로 열려 있어 로그인 화면까지는
+  누구나 접근 가능하다. 계정 발급 범위(팀원만인지)·TLS/방화벽 설정은 인프라 쪽이라
+  이번 세션에서 확인하지 않았다. **다음에 확인할 것.**
+- Railway 배포가 실제로 이뤄지면(현재 "예정" 상태, README 참고) 그 환경변수에도
+  같은 `LANGFUSE_*` 값을 넣어야 한다 — 지금은 로컬 실행 팀원 전체를 한 곳으로 모으는
+  것까지만 했다.
+
 ## 2026-08-24 (blackest21) — 교양 세부영역 세대(2021/2026체계) 분기 — PR #199 잔여 항목 1단계
 
 `docs/progress/liberal-arts-area-requirements.md` §7.3에서 조사만 하고 구현하지
