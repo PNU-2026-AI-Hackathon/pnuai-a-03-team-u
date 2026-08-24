@@ -12,6 +12,7 @@ ONESTOP_URL = "https://onestop.pusan.ac.kr"
 
 _LOGIN_FORM_ATTEMPTS = 3
 _LOGIN_FORM_TIMEOUT_MS = 12_000
+_LOGIN_POPUP_CLOSE_SELECTOR = '.popup_layer a[href*="layerPopupClose"]'
 
 
 class PnuLoginError(Exception):
@@ -100,6 +101,40 @@ def _wait_for_select_menu(page: Page, timeout_ms: int = 8000, interval_ms: int =
     return _evaluate_stable(page, "typeof window.selectMenu") == "function"
 
 
+def _dismiss_login_popups(page: Page) -> int:
+    """통합로그인 페이지의 공지 팝업을 닫고 닫은 개수를 반환한다.
+
+    부산대가 별도 배포 없이 로그인 공지를 띄우는 경우 팝업이 ``#idpwTab`` 위를
+    덮는다. Playwright의 일반 click은 가려진 요소를 누르지 않으므로 30초 뒤
+    타임아웃되고, 크롤러는 이를 사이트 응답 지연으로 잘못 안내했다. 공지마다
+    ``popup_27``처럼 번호가 바뀌므로 고정 ID 대신 사이트가 공통으로 사용하는
+    ``layerPopupClose`` 링크를 DOM click으로 실행한다.
+
+    팝업 구조가 다시 바뀌어도 로그인 자체를 이 보조 로직 때문에 중단하지 않는다.
+    이후 폼 클릭/대기 로직이 실제 성공 여부를 판정한다.
+    """
+    try:
+        closed = page.locator(_LOGIN_POPUP_CLOSE_SELECTOR).evaluate_all(
+            """links => {
+                const visibleLinks = links.filter(link => {
+                    const popup = link.closest('.popup_layer');
+                    if (!popup) return false;
+                    const style = window.getComputedStyle(popup);
+                    return style.display !== 'none' && style.visibility !== 'hidden';
+                });
+                visibleLinks.forEach(link => link.click());
+                return visibleLinks.length;
+            }"""
+        )
+    except Exception as exc:  # noqa: BLE001 - 외부 사이트의 보조 UI 때문에 로그인을 중단하지 않는다
+        _logger.debug("통합로그인 공지 팝업 닫기 실패: %s", exc)
+        return 0
+
+    if closed:
+        page.wait_for_timeout(100)
+    return int(closed)
+
+
 def _reach_login_form(page: Page) -> None:
     """onestop.pusan.ac.kr을 거쳐 login.pusan.ac.kr의 "아이디 로그인" 입력폼(#login_id)이
     실제로 보일 때까지 페이지를 연다.
@@ -126,6 +161,7 @@ def _reach_login_form(page: Page) -> None:
                 page.click('a[href="#global_login"]')
             page.wait_for_load_state("networkidle")
             page.wait_for_selector("#idpwTab > a", state="visible", timeout=_LOGIN_FORM_TIMEOUT_MS)
+            _dismiss_login_popups(page)
             if not page.evaluate("document.querySelector('#login_id')?.offsetParent !== null"):
                 page.click("#idpwTab > a")
             page.wait_for_selector("#login_id", state="visible", timeout=_LOGIN_FORM_TIMEOUT_MS)
@@ -133,6 +169,11 @@ def _reach_login_form(page: Page) -> None:
         except PlaywrightTimeoutError as exc:
             last_error = exc
     assert last_error is not None
+    _logger.warning(
+        "One-Stop 로그인 폼 진입 실패. url=%s error=%s",
+        page.url,
+        last_error,
+    )
     raise PnuLoginError(
         "One-Stop 로그인 페이지 로딩에 실패했습니다(사이트 응답 지연). 잠시 후 다시 시도해주세요."
     ) from last_error
