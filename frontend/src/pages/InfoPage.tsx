@@ -1295,7 +1295,7 @@ export function InfoPage() {
                 {displayedGraduation.categories.map((category) => {
                   const percentage = category.required_credits ? Math.min(100, (category.earned_credits / category.required_credits) * 100) : 0;
                   return (
-                    <div key={category.category_code}>
+                    <div className={isProfileEditing ? "is-editing" : undefined} key={category.category_code}>
                       <span>{category.category_name}</span>
                       {isProfileEditing ? (
                         <div className="graduation-credit-editor">

@@ -102,8 +102,10 @@ export function DashboardPage() {
   const requiredCredits = graduation?.required_total_credits ?? (isMockStudentDataEnabled ? 130 : null);
   const remainingCredits = requiredCredits === null ? null : Math.max(0, requiredCredits - earnedCredits);
   const creditProgress = requiredCredits ? Math.min(100, Math.round((earnedCredits / requiredCredits) * 100)) : 0;
-  const minorMajor = user?.academic_programs?.find((program) => program.program_type === "minor")?.major ?? "-";
-  const dualMajor = user?.academic_programs?.find((program) => program.program_type === "dual")?.major ?? "-";
+  const minorProgram = user?.academic_programs?.find((program) => program.program_type === "minor");
+  const dualProgram = user?.academic_programs?.find((program) => program.program_type === "dual");
+  const minorMajor = minorProgram?.major || minorProgram?.department || "-";
+  const dualMajor = dualProgram?.major || dualProgram?.department || "-";
   const profileFacts = [
     ...(profileProgramNames.length === 1
       ? [[department.trim() ? "학과" : "전공", profileProgramNames[0]]]

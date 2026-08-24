@@ -5466,14 +5466,17 @@ body.theme-dark .semester-course-status.status-completed {
 
 .graduation-list > div {
   display: grid;
-  grid-template-columns: 52px 44px minmax(0, 1fr);
+  grid-template-columns: minmax(72px, 0.18fr) minmax(52px, auto) minmax(180px, 1fr);
   align-items: center;
-  column-gap: 8px;
+  column-gap: 12px;
 }
 
-/* 라벨 블록(52+8+44=104px)과 진행바 사이 간격 — Frame 144 gap 12px */
+.graduation-list > div.is-editing {
+  grid-template-columns: minmax(72px, 0.18fr) minmax(150px, 0.28fr) minmax(220px, 1fr);
+}
+
 .graduation-list > div > .stellic-bar {
-  margin-left: 4px;
+  min-width: 0;
 }
 
 .graduation-list span,
@@ -5540,9 +5543,10 @@ body.theme-dark .semester-course-status.status-completed {
 
 .graduation-credit-editor {
   display: grid;
-  grid-template-columns: minmax(52px, 1fr) auto minmax(52px, 1fr);
+  grid-template-columns: minmax(58px, 1fr) auto minmax(58px, 1fr);
   align-items: center;
-  gap: 5px;
+  min-width: 150px;
+  gap: 6px;
 }
 
 .graduation-credit-editor input {

@@ -161,6 +161,7 @@ class MessageResponse(BaseModel):
 
 class AcademicProgramResponse(BaseModel):
     major: str
+    department: str | None = None
     program_type: str
 
     model_config = {"from_attributes": True}
@@ -220,6 +221,7 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
         academic_programs=[
             AcademicProgramResponse(
                 major=_major_name(db, p.major_id) or "",
+                department=_department_name(db, p.department_id),
                 program_type=p.program_type,
             )
             for p in programs
