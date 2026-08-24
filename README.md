@@ -317,7 +317,7 @@ flowchart TB
 **로드맵이 "같은 대화에서 방금 제안한 계획"을 선수과목 판정에서 못 알아본 문제 ([PR #222](https://github.com/PNU-2026-AI-Hackathon/pnuai-a-03-team-u/pull/222))**
 - 문제 상황: "졸업까지 로드맵 짜줘"에 AI가 응해 3학년 2학기에 자료구조를 계획으로 넣어도, 선수과목 충족 판정(`_compute_prereq_blocked`)은 실제 성적표·전적대 대체인정·이미 저장된 로드맵 항목만 "이수 예정"으로 인정했다. 사용자가 아직 승인하지 않은 `planned` 계획이나 같은 턴에서 막 제안된 `pending_changes`(DB 저장 전)는 반영이 안 돼, 4학년 1학기 후속 과목이 "선수과목 미이수"로 잘못 걸릴 수 있었다.
 - 1차 수정은 로드맵 항목 상태 필터를 `status != 'rejected'`로 넓히는 것이었는데, 독립 리뷰 세션에서 `CourseRoadmapItem.status`는 애초에 `planned`/`completed`/`dropped` 세 값뿐이고 `rejected`는 다른 모델(`PendingRoadmapChange.status`)의 값이라는 걸 지적받아 `!= 'dropped'`로 정정했다.
-- 이 저장소는 PR을 머지하기 전 항상 별도 세션에서 독립 리뷰를 거친다 — 작성자 본인은 놓친 이런 실수를 실제로 잡아낸 사례다. 테스트 4건 추가 후 단위테스트 268개+골든테스트 6개 전부 통과 확인.
+- 이 저장소는 PR을 머지하기 전 항상 별도 세션에서 독립 리뷰를 거친다 — 작성자 본인은 놓친 이런 실수를 실제로 잡아낸 사례다. 테스트 4건 추가 후 단위테스트 268개+골든테스트 전부 통과 확인.
 <br/>
 
 #### 3.3. 기능명세서
@@ -355,7 +355,7 @@ flowchart TB
 │   │   └── ingestion/          # 학생지원시스템 크롤러
 │   ├── migrations/             # Alembic 마이그레이션
 │   ├── scripts/                # 시드 · 수강편람/교과목개요 적재 스크립트
-│   └── tests/                  # 단위 테스트 (100+ 케이스)
+│   └── tests/                  # 단위 테스트 (650+ 케이스)
 ├── frontend/
 │   └── src/
 │       ├── api/                # 백엔드 API 래퍼
@@ -414,8 +414,8 @@ $ npm run dev                     # http://localhost:5173
 ```bash
 $ cd backend
 $ pip install pytest==9.1.1        # requirements.txt엔 없음 — 프로덕션 의존이 아니라 로컬/CI 전용
-$ pytest                           # 단위 테스트 612+ 케이스 (도메인 로직 · API · 크롤러 정규화 등)
-$ python tests/run_golden_tests.py # 졸업요건 규칙 엔진 골든 시나리오(TC01~TC06) — 판정 로직을 고치면 필수로 통과 확인
+$ pytest                           # 단위 테스트 650+ 케이스 (도메인 로직 · API · 크롤러 정규화 등)
+$ python tests/run_golden_tests.py # 졸업요건 규칙 엔진 골든 시나리오(TC01~TC09) — 판정 로직을 고치면 필수로 통과 확인
 ```
 ```bash
 $ cd frontend
