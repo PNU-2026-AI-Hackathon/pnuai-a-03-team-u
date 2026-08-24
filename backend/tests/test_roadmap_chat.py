@@ -1675,6 +1675,58 @@ class PrereqBlockedTest(unittest.TestCase):
         db.flush()
         self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
 
+    def test_uses_roadmap_planned_not_just_completed(self):
+        """'졸업까지 로드맵 짜줘'로 3-2에 자료구조를 이미 계획해 뒀으면(아직 status=
+        'planned', 실제로 듣지는 않음) 4-1의 후속 과목을 선수과목 미이수로 막으면
+        안 된다 — 로드맵은 시간순으로 짜인다고 가정한다."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=107, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(CourseRoadmapItem(roadmap_id=rm.id, course_name="자료구조",
+                                  planned_grade=3, planned_year="2026",
+                                  planned_semester="2학기", status="planned"))
+        db.flush()
+        self.assertEqual([], _compute_prereq_blocked(db, user, roadmap_id=rm.id))
+
+    def test_dropped_roadmap_item_does_not_satisfy_prereq(self):
+        """계획에서 뺀(dropped) 과목은 이수 예정이 아니다.
+
+        `CourseRoadmapItem.status`는 `planned`/`completed`/`dropped` 셋뿐이다
+        (`rejected`는 `PendingRoadmapChange.status`의 값이지 이 모델과 무관 —
+        독립 리뷰가 `!= "rejected"` 필터가 실제로는 절대 안 걸리는 죽은 조건이었다는
+        걸 잡아냈다. 이 테스트도 원래 "rejected"로 잘못 써서 신·구 코드 양쪽에서
+        전부 통과하는 가짜 안전망이었다 — 이제 실제로 존재하는 값으로 고쳤다)."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=108, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.add(CourseRoadmapItem(roadmap_id=rm.id, course_name="자료구조",
+                                  planned_grade=3, status="dropped"))
+        db.flush()
+        result = _compute_prereq_blocked(db, user, roadmap_id=rm.id)
+        self.assertEqual(1, len(result))
+
+    def test_pending_create_this_turn_satisfies_prereq(self):
+        """propose_term_plan이 같은 턴 안에서 앞 학기(3-2)에 자료구조를 방금
+        pending_changes로 쌓아둔 상태 — 아직 DB에 저장 전이라도 뒤 학기(4-1)의
+        후속 과목을 선수과목 미이수로 막으면 안 된다."""
+        from app.domains.planning.roadmap_chat import _compute_prereq_blocked
+        db = self.make_db()
+        user, rm = self.make_setup(db)
+        db.add(Course(id=109, course_name="운영체제", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="1",
+                      description="선수과목: 자료구조"))
+        db.flush()
+        result = _compute_prereq_blocked(
+            db, user, roadmap_id=rm.id, pending_course_names=["자료구조"],
+        )
+        self.assertEqual([], result)
+
 
 class SafeCallDispatchGuardTest(unittest.TestCase):
     """LLM(gpt-4o-mini)이 종종 잘못된 kwarg를 낸다 — 예: `{"query=": "..."}` (등호 붙음),
