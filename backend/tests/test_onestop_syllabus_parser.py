@@ -135,6 +135,18 @@ class SyllabusParserTest(unittest.TestCase):
         self.assertIn("제4주", weeks)
         self.assertIn("자료구조 성능 평가", weeks["제4주"])
 
+    def test_weekly_plan_keeps_content_that_precedes_its_own_week_marker(self):
+        """"[표절, 시험 부정행위 예방교육..." 줄이 "제1주" 레이블 줄보다 앞에 있다
+        (같은 세로중앙정렬 함정, 독립 리뷰 2026-08-24 지적) — 잃으면 안 된다."""
+        weeks = {w["week"]: w["content"] for w in self.parsed.weekly_plan}
+        self.assertIn("표절", weeks["제1주"])
+
+    def test_weekly_plan_does_not_leak_the_column_header_row(self):
+        """"주차 / 강의 및 실험 실기 내용 / 과제 및 기타 참고사항" 표 헤더는 내용이
+        아니다 — 어느 주차에도 안 붙어야 한다."""
+        for week in self.parsed.weekly_plan:
+            self.assertNotIn("과제 및 기타 참고사항", week["content"])
+
     def test_weekly_plan_strips_the_지정보강주_marker(self):
         weeks = {w["week"]: w["content"] for w in self.parsed.weekly_plan}
         self.assertIn("제15주", weeks)

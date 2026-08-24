@@ -142,6 +142,11 @@ def _parse_weekly_plan(lines: list[str], start_idx: int) -> list[dict] | None:
     weeks: list[dict] = []
     current_week: str | None = None
     current_content: list[str] = []
+    # 표 행 레이블이 세로 중앙 정렬이라("제N주" 행도 예외 아니다), 그 행의 첫 줄이
+    # 레이블보다 먼저 나올 수 있다(예: "[표절, 시험 부정행위 예방교육..." 이 "제1주"
+    # 줄보다 위에 있음 — 독립 리뷰 2026-08-24 지적). 아직 어느 주차에도 못 붙인
+    # 줄을 여기 모아뒀다가, 첫 "제N주"를 찾으면 그 주차 내용 맨 앞에 붙인다.
+    pending_prefix: list[str] = []
 
     def _flush() -> None:
         if current_week is not None:
@@ -155,11 +160,18 @@ def _parse_weekly_plan(lines: list[str], start_idx: int) -> list[dict] | None:
             _flush()
             current_week = f"제{m.group(1)}주"
             rest = line.strip()[len(current_week):].strip()
-            current_content = [rest] if rest else []
+            current_content = pending_prefix + ([rest] if rest else [])
+            pending_prefix = []
         elif current_week is not None:
             stripped = line.strip()
             if stripped and stripped != "(지정보강주)":
                 current_content.append(stripped)
+        else:
+            stripped = line.strip()
+            # "주차 / 강의 및 실험 실기 내용 / 과제 및 기타 참고사항" 표 헤더 행은
+            # 내용이 아니라 컬럼 이름이다 — 1주차 내용으로 잘못 붙이면 안 된다.
+            if stripped and not stripped.startswith("주차"):
+                pending_prefix.append(stripped)
     _flush()
     return weeks or None
 

@@ -18,7 +18,7 @@ from app.core.db import Base
 from app.domains.courses.models import Course, CourseOffering, CourseSyllabus
 from app.ingestion.crawlers.onestop_syllabus import SyllabusCrawlResult, SyllabusOffering
 from app.ingestion.parsers.onestop_syllabus import ParsedSyllabus
-from scripts.import_course_syllabi import upsert_syllabus_row
+from scripts.import_course_syllabi import resolve_semester_label, upsert_syllabus_row
 
 
 def _offering(subj_no="CB1501019", class_no="059") -> SyllabusOffering:
@@ -44,6 +44,9 @@ class UpsertSyllabusRowTest(unittest.TestCase):
         self.db.commit()
         self.db.add(Course(id=1, course_code="CB1501019", course_name="자료구조", credits=3))
         self.db.add(CourseOffering(id=1, course_id=1, year="2026", semester="2학기", section="059"))
+        # 같은 연도·같은 과목코드·같은 분반번호가 다른 학기에도 있을 수 있다(분반
+        # 번호가 학기마다 재시작) — 학기 필터가 진짜 이 둘을 구분하는지 검증용.
+        self.db.add(CourseOffering(id=2, course_id=1, year="2026", semester="1학기", section="059"))
         self.db.commit()
 
     def tearDown(self):
@@ -61,7 +64,7 @@ class UpsertSyllabusRowTest(unittest.TestCase):
     def test_creates_row_for_matching_offering(self):
         result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
         with patch("scripts.import_course_syllabi.parse_syllabus_pdf", return_value=self._parsed()):
-            status = upsert_syllabus_row(self.db, result, year=2026)
+            status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.db.commit()
         self.assertEqual("created", status)
         row = self.db.query(CourseSyllabus).filter_by(offering_id=1).one()
@@ -71,13 +74,13 @@ class UpsertSyllabusRowTest(unittest.TestCase):
     def test_updates_existing_row_instead_of_duplicating(self):
         result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
         with patch("scripts.import_course_syllabi.parse_syllabus_pdf", return_value=self._parsed()):
-            upsert_syllabus_row(self.db, result, year=2026)
+            upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.db.commit()
         with patch(
             "scripts.import_course_syllabi.parse_syllabus_pdf",
             return_value=self._parsed(email="changed@pusan.ac.kr"),
         ):
-            status = upsert_syllabus_row(self.db, result, year=2026)
+            status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.db.commit()
         self.assertEqual("updated", status)
         rows = self.db.query(CourseSyllabus).filter_by(offering_id=1).all()
@@ -86,26 +89,48 @@ class UpsertSyllabusRowTest(unittest.TestCase):
 
     def test_no_matching_offering_reports_status_without_writing(self):
         result = SyllabusCrawlResult(offering=_offering(subj_no="ZZ9999999"), pdf_path=Path("/tmp/x.pdf"))
-        status = upsert_syllabus_row(self.db, result, year=2026)
+        status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.assertEqual("no_offering", status)
         self.assertEqual(0, self.db.query(CourseSyllabus).count())
 
     def test_wrong_year_does_not_match(self):
         """같은 subj_no/section이라도 연도가 다르면(재개설) 다른 offering이다."""
         result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
-        status = upsert_syllabus_row(self.db, result, year=2025)
+        status = upsert_syllabus_row(self.db, result, year=2025, semester="2학기")
         self.assertEqual("no_offering", status)
+
+    def test_wrong_semester_does_not_match_even_with_same_section_number(self):
+        """독립 리뷰(2026-08-24) 지적: 같은 연도·과목코드·분반번호가 1학기에도 있는
+        상태(setUp의 id=2)에서, 학기까지 안 맞으면 절대 그쪽에 잘못 매칭되면 안 된다."""
+        result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
+        with patch("scripts.import_course_syllabi.parse_syllabus_pdf", return_value=self._parsed()):
+            status = upsert_syllabus_row(self.db, result, year=2026, semester="1학기")
+        self.db.commit()
+        self.assertEqual("created", status)
+        row = self.db.query(CourseSyllabus).one()
+        self.assertEqual(2, row.offering_id, "1학기를 요청했으면 1학기 offering(id=2)에 붙어야 한다")
 
     def test_no_pdf_without_error_is_no_pdf_status(self):
         """PRT_KOR이 애초에 없던 분반(정상 스킵) — 실패가 아니다."""
         result = SyllabusCrawlResult(offering=_offering(), pdf_path=None)
-        status = upsert_syllabus_row(self.db, result, year=2026)
+        status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.assertEqual("no_pdf", status)
 
     def test_download_error_is_failed_status(self):
         result = SyllabusCrawlResult(offering=_offering(), pdf_path=None, error="타임아웃")
-        status = upsert_syllabus_row(self.db, result, year=2026)
+        status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.assertEqual("failed", status)
+
+
+class ResolveSemesterLabelTest(unittest.TestCase):
+    def test_maps_raw_term_codes(self):
+        self.assertEqual("1학기", resolve_semester_label("0010"))
+        self.assertEqual("2학기", resolve_semester_label("0020"))
+
+    def test_rejects_unsupported_codes(self):
+        """계절학기(0011/0021)는 크롤러가 학기 전환을 지원하기 전까지 명시적으로 막는다."""
+        with self.assertRaises(ValueError):
+            resolve_semester_label("0011")
 
 
 if __name__ == "__main__":

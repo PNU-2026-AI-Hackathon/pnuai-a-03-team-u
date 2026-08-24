@@ -30,6 +30,21 @@ from app.domains.courses.models import Course, CourseOffering, CourseSyllabus
 from app.ingestion.crawlers.onestop_syllabus import crawl_syllabi_for_course_names
 from app.ingestion.parsers.onestop_syllabus import parse_syllabus_pdf
 
+# 크롤러가 받는 raw term code(One-Stop selectAtlectManual_v2025 기준) →
+# course_offerings.semester 표기. 지금 크롤러는 정규학기만 지원한다(계절학기는
+# 학기 전환 UI 자체를 아직 안 만들었다 — 크롤러 모듈 docstring 참고), 그래서
+# 이 매핑도 정규학기 2개만 있으면 된다.
+_SEMESTER_LABELS = {"0010": "1학기", "0020": "2학기"}
+
+
+def resolve_semester_label(semester_code: str) -> str:
+    if semester_code not in _SEMESTER_LABELS:
+        raise ValueError(
+            f"semester_code={semester_code!r}는 아직 지원 안 함(정규학기 0010/0020만) — "
+            "계절학기는 크롤러가 학기 전환을 지원하지 않아 course_offerings 매칭 표기를 정할 수 없다."
+        )
+    return _SEMESTER_LABELS[semester_code]
+
 
 def _resolve_course_names(db, department: str | None, major: str | None) -> list[str]:
     """department/major 이름으로 `courses.course_name` 목록을 조회한다(get-or-create
@@ -55,12 +70,18 @@ def _resolve_course_names(db, department: str | None, major: str | None) -> list
     return sorted(name for name in db.scalars(query) if name)
 
 
-def upsert_syllabus_row(db, result, year: int) -> str:
+def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
     """크롤 결과 하나를 `course_offerings`와 매칭해 `CourseSyllabus`로 upsert한다.
 
     `db`를 인자로 받는 순수 함수로 분리해서 SQLite 인메모리로 단위 테스트할 수 있게
     했다(`SessionLocal()`을 직접 여는 `import_course_syllabi`는 실 DB에 묶여 있어
     테스트하기 어렵다 — `tests/test_import_course_syllabi.py` 참고).
+
+    `semester`는 `course_offerings.semester` 표기 그대로("2학기" 등, `resolve_semester_label`
+    참고) — **연도만으로 매칭하면 안 된다.** 같은 과목코드+분반 번호가 같은 연도
+    1학기/2학기 양쪽에 있을 수 있어서(분반 번호가 학기마다 재시작), 학기까지 같이
+    걸지 않으면 `db.scalar()`가 어느 학기 offering을 집을지 결정적이지 않다
+    (독립 리뷰 2026-08-24 지적, 실제로 놓쳤던 정확도 버그).
 
     돌려주는 문자열은 "created"/"updated"/"no_offering"/"no_pdf"/"failed" 중 하나다.
     """
@@ -74,6 +95,7 @@ def upsert_syllabus_row(db, result, year: int) -> str:
             Course.course_code == result.offering.subj_no,
             CourseOffering.section == result.offering.class_no,
             CourseOffering.year == str(year),
+            CourseOffering.semester == semester,
         )
     )
     if offering_id is None:
@@ -113,6 +135,7 @@ def import_course_syllabi(
     from pathlib import Path
 
     output_dir = Path(output_dir_str)
+    semester = resolve_semester_label(semester_code)
     db = SessionLocal()
     try:
         course_names = _resolve_course_names(db, department, major)
@@ -125,7 +148,7 @@ def import_course_syllabi(
 
         counts = {"created": 0, "updated": 0, "no_offering": 0, "no_pdf": 0, "failed": 0}
         for result in results:
-            status = upsert_syllabus_row(db, result, year)
+            status = upsert_syllabus_row(db, result, year, semester)
             counts[status] += 1
             if status == "no_offering":
                 print(
