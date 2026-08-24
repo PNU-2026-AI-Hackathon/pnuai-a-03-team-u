@@ -1,9 +1,19 @@
-"""One-Stop 교수계획표(강의계획서)를 크롤링·파싱해서 `course_syllabi`에 upsert한다.
+"""One-Stop 교수계획표(강의계획서)를 크롤링·파싱해서 `course_syllabi`에 upsert하고,
+`courses.description`을 그 내용으로 덮어써서 실제 RAG 검색에 반영한다.
 
 강의계획서 RAG 반영 파일럿(2026-08-24, `docs/progress/`에 아직 설계 문서는 없음 —
 `local.md` 참고) 실행 스크립트. 전공(major) 하나를 대상으로, 그 전공 소속
 `courses`의 이름들로 One-Stop을 검색하고, `course_offerings`(같은 year/semester)에
 매칭되는 분반만 `CourseSyllabus`로 저장한다.
+
+**`courses.description` 오버라이딩(사용자 판단, 2026-08-24)**: `CurriculumRetriever.
+search()`의 기본 검색 경로(`use_vector=False`, 실제 서비스가 쓰는 경로 — `RagChunk`
+임베딩이 아니다)가 진로 키워드 매칭에 직접 읽는 필드가 `courses.description`이다.
+그래서 강의계획서에서 강의개요(없으면 교수목표)를 뽑아 이 필드를 **무조건 덮어쓴다**
+— 학과 "교과목개요" 원문이든 예전 값이든, 수강편람에서 방금 받아온 게 가장 현재
+상황을 반영한다는 판단. 같은 과목에 분반(교수)이 여럿이면 마지막으로 처리된 분반의
+내용이 남는다(분반 간 우선순위를 정할 근거가 없어 임의 — 처리 순서는 One-Stop 검색
+결과 순서를 따른다). `upsert_syllabus_row`의 docstring 참고.
 
 전공 대신 학과(department) 전체를 대상으로 하려면 `--department`만 주고
 `--major`는 생략 — 그 학과 소속 전공 미지정 과목까지 포함해서 이름을 모은다.
@@ -88,8 +98,8 @@ def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
     if result.pdf_path is None:
         return "failed" if result.error else "no_pdf"
 
-    offering_id = db.scalar(
-        select(CourseOffering.id)
+    offering = db.scalars(
+        select(CourseOffering)
         .join(Course, Course.id == CourseOffering.course_id)
         .where(
             Course.course_code == result.offering.subj_no,
@@ -97,13 +107,13 @@ def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
             CourseOffering.year == str(year),
             CourseOffering.semester == semester,
         )
-    )
-    if offering_id is None:
+    ).first()
+    if offering is None:
         return "no_offering"
 
     parsed = parse_syllabus_pdf(result.pdf_path)
-    existing = db.scalar(select(CourseSyllabus).where(CourseSyllabus.offering_id == offering_id))
-    row = existing or CourseSyllabus(offering_id=offering_id)
+    existing = db.scalar(select(CourseSyllabus).where(CourseSyllabus.offering_id == offering.id))
+    row = existing or CourseSyllabus(offering_id=offering.id)
     # office/office_hours(연구실/상담시간)는 실측 샘플 전부 빈 셀이라 파서가 아직
     # 안 뽑는다(파서 모듈 docstring 참고) — 모델 컬럼은 남겨두되 여기선 안 채운다.
     row.phone = parsed.phone
@@ -120,8 +130,27 @@ def upsert_syllabus_row(db, result, year: int, semester: str) -> str:
     row.source_pdf_path = str(result.pdf_path)
     if existing is None:
         db.add(row)
-        return "created"
-    return "updated"
+        status = "created"
+    else:
+        status = "updated"
+
+    # RAG 검색(`CurriculumRetriever.search`, use_vector=False 기본 경로)이 실제로
+    # 읽는 건 courses.description이다(RagChunk 임베딩이 아니라 — 확인 완료). 강의
+    # 계획서가 있으면 **무조건 그걸로 덮어쓴다**: 학과 "교과목개요" 원문이든 예전
+    # description이든, 지금 수강편람에서 직접 받아온 게 제일 현재 상황을 반영한다
+    # (사용자 판단, 2026-08-24). 개요가 비어있는 드문 경우엔 교수목표로 대체 —
+    # 둘 다 없으면 description을 건드리지 않는다(빈 값으로 덮어써서 잃지 않는다).
+    description_text = parsed.course_overview or parsed.course_objectives
+    if description_text:
+        course = db.get(Course, offering.course_id)
+        if course is not None:
+            course.description = description_text
+            course.source_document = (
+                f"One-Stop 수강편람 교수계획표(강의계획서) — "
+                f"{result.offering.prof_nm or '교수 미상'} 교수, "
+                f"{result.offering.subj_no}/{result.offering.class_no}분반, {year}년 {semester}"
+            )
+    return status
 
 
 def import_course_syllabi(

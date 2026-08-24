@@ -121,6 +121,51 @@ class UpsertSyllabusRowTest(unittest.TestCase):
         status = upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
         self.assertEqual("failed", status)
 
+    def test_course_overview_overrides_existing_description(self):
+        """`CurriculumRetriever.search`의 기본 경로(use_vector=False)가 실제로
+        읽는 건 RagChunk 임베딩이 아니라 courses.description이다 — 강의계획서가
+        있으면 옛 description(학과 교과목개요 원문이든 뭐든)을 무조건 덮어써야
+        진로 키워드 매칭에 실제로 반영된다(사용자 판단, 2026-08-24)."""
+        course = self.db.get(Course, 1)
+        course.description = "옛날에 학과 교과목개요에서 가져온 설명"
+        self.db.commit()
+
+        result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
+        with patch(
+            "scripts.import_course_syllabi.parse_syllabus_pdf",
+            return_value=self._parsed(course_overview="배열, 링크 리스트, 스택/큐, 트리, 그래프, 해쉬를 다룬다."),
+        ):
+            upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
+        self.db.commit()
+
+        course = self.db.get(Course, 1)
+        self.assertEqual("배열, 링크 리스트, 스택/큐, 트리, 그래프, 해쉬를 다룬다.", course.description)
+        self.assertIn("교수계획표", course.source_document)
+
+    def test_falls_back_to_objectives_when_overview_missing(self):
+        result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
+        with patch(
+            "scripts.import_course_syllabi.parse_syllabus_pdf",
+            return_value=self._parsed(course_overview=None, course_objectives="1. 자료구조를 이해한다."),
+        ):
+            upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
+        self.db.commit()
+        self.assertEqual("1. 자료구조를 이해한다.", self.db.get(Course, 1).description)
+
+    def test_does_not_blank_out_description_when_both_missing(self):
+        course = self.db.get(Course, 1)
+        course.description = "기존 설명은 남아있어야 한다"
+        self.db.commit()
+
+        result = SyllabusCrawlResult(offering=_offering(), pdf_path=Path("/tmp/x.pdf"))
+        with patch(
+            "scripts.import_course_syllabi.parse_syllabus_pdf",
+            return_value=self._parsed(course_overview=None, course_objectives=None),
+        ):
+            upsert_syllabus_row(self.db, result, year=2026, semester="2학기")
+        self.db.commit()
+        self.assertEqual("기존 설명은 남아있어야 한다", self.db.get(Course, 1).description)
+
 
 class ResolveSemesterLabelTest(unittest.TestCase):
     def test_maps_raw_term_codes(self):
