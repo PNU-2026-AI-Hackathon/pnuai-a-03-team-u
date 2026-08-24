@@ -1,9 +1,13 @@
 # LLM 개인정보 경계 감사
 
 `backend/app/ai/llm/langfuse_masking.py`가 참조하는 정책 문서. 외부로 나가는 두 경로
-(**LLM 프로바이더**, **Langfuse Cloud**)에 무엇을 보내고 무엇을 보내지 않는지 확정한다.
+(**LLM 프로바이더**, **Langfuse**)에 무엇을 보내고 무엇을 보내지 않는지 확정한다.
 
 작성: 2026-08-12 / 근거: 코드 실측 (아래 "검증 방법" 참고)
+갱신: 2026-08-24 — Langfuse를 Cloud에서 **팀 자체 호스팅**(`https://langfuse-planu.xyz`)으로
+전환. 제3자 관리형 서비스가 아니라 우리가 통제하는 서버로 나간다는 점에서 privacy
+관점으로는 개선이지만, 접근 통제 근거가 "Cloud seat 제한"에서 "이 호스트 자체의
+로그인/네트워크 노출"로 바뀌었으므로 아래 3절을 다시 확인할 것.
 
 ---
 
@@ -12,7 +16,7 @@
 | 경로 | 대상 | 전송 시점 | 전송 주체 |
 |------|------|-----------|-----------|
 | LLM 추론 | OpenAI (`ROADMAP_AGENT_MODEL`) | 챗 요청마다 | `roadmap_chat._build_llm()`, `timetable_chat._build_llm()` |
-| 관측 trace | Langfuse Cloud | 챗 요청마다 (비동기 배치) | `langfuse_callback.observe_agent_call()` |
+| 관측 trace | Langfuse (팀 자체 호스팅, `langfuse-planu.xyz`) | 챗 요청마다 (비동기 배치) | `langfuse_callback.observe_agent_call()` |
 
 임베딩(`app/ai/embeddings/openai_client.py`)은 **교육과정 카탈로그 텍스트만** 임베딩한다.
 학생 데이터는 임베딩하지 않는다.
@@ -55,8 +59,11 @@
 2. 학번을 연도 앵커로 좁힌 이유 — `course_id`, `department_id` 같은 랜덤 정수를 학번으로
    오탐해서 지워버리면 디버깅이 불가능해진다.
 
-**마스킹하지 않는 것**: 학과명·과목명·이수구분·학점. 개선 분석에 필수이고, 접근 통제
-(Langfuse 프로젝트 seat 제한)로 커버한다.
+**마스킹하지 않는 것**: 학과명·과목명·이수구분·학점. 개선 분석에 필수이고, 접근 통제로
+커버한다. (2026-08-24 이전엔 Langfuse Cloud 프로젝트 seat 제한이 접근 통제였다. 지금은
+자체 호스팅 인스턴스 자체의 로그인 계정이 그 역할을 한다 — 이 인스턴스는
+`langfuse-planu.xyz`로 공개 도메인에 노출돼 있으므로, 계정 발급을 팀원으로만 제한하고
+있는지 별도로 확인 필요. 아래 4절 "알려진 한계"에 추가.)
 
 `user_id`는 `hash_user_id()`로 salt+sha256 앞 12자만 보낸다. `LANGFUSE_USER_ID_SALT`가
 비면 경고 로그를 남기고 salt=""로 폴백한다 — 이 상태는 rainbow 공격에 취약하니 배포
@@ -72,6 +79,12 @@
   판단해 현재는 수용한다 — 재검토 트리거는 실사용 trace 샘플링 감사.
 - **탈퇴 후 trace 잔존**: 계정 삭제(`DELETE /me/account`)는 DB만 지운다. Langfuse에
   남은 해시 user_id trace는 별도 삭제 절차가 필요하다 (보안 계획 P1-4 참고).
+- **자체 호스팅 인스턴스의 공개 노출**: `langfuse-planu.xyz`가 공인 도메인으로 열려
+  있어 URL만 알면 로그인 화면까지는 누구나 접근 가능하다(API 키 없이는 데이터 조회
+  불가하지만, UI 로그인 자체가 뚫리면 팀 전체 대화 trace가 노출된다). Langfuse Cloud
+  때는 이 계층이 벤더 책임이었는데 자체 호스팅으로 오면서 우리 책임이 됐다 —
+  인스턴스 자체 계정 발급 범위(팀원만인지), TLS/방화벽 설정은 이 문서 밖(인프라
+  설정)이라 별도 확인이 필요하다. 확인 안 됨 — 이번 세션에서 손대지 않음.
 
 ## 5. 검증 방법
 

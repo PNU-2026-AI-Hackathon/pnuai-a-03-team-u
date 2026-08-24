@@ -116,10 +116,12 @@ class Settings(BaseSettings):
 
     # --- Langfuse (LLM 관측/평가) ---
     # 셋 다 값이 있어야 실제 trace 전송된다. 하나라도 비면 콜백은 no-op.
-    # 개인 Cloud 프로젝트 `planu-backend` API 키를 팀 채널에서 공유.
+    # 팀 공유 셀프호스팅 인스턴스(langfuse-planu.xyz, 프로젝트 "planU") API 키를
+    # 팀 채널에서 공유 — DB 비밀번호와 같은 취급이다. 2026-08-24 전에는 Tailscale로만
+    # 접속되는 개인 기기 호스팅이라 이 값을 못 채운 팀원의 trace는 안 쌓였다.
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
-    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+    LANGFUSE_BASE_URL: str = "https://langfuse-planu.xyz"
     # user_id 해시용 salt. .env에 각자 로컬로 두고, 유출 시 재발급.
     # 없으면 hash가 salt="" 로 만들어져 rainbow 공격에 취약해지므로 반드시 설정.
     LANGFUSE_USER_ID_SALT: str | None = None
