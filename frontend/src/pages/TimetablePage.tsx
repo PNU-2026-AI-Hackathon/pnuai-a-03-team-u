@@ -194,7 +194,9 @@ export function TimetablePage() {
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSearchResult | null>(null);
   const [selectedMajor, setSelectedMajor] = useState<string>("");
   const [majorCategory, setMajorCategory] = useState<string>("");
-  const [liberalArea, setLiberalArea] = useState<string>("");
+  // 여러 영역을 동시에 고를 수 있다 — "효원균형교양 최소 2개 영역에서 2과목" 같은
+  // 요건은 영역 하나로만 좁히면 후보를 못 찾는다.
+  const [liberalAreas, setLiberalAreas] = useState<string[]>([]);
   const [offerings, setOfferings] = useState<SuggestedOffering[]>([]);
   const [isSearchingOfferings, setIsSearchingOfferings] = useState(false);
 
@@ -368,7 +370,7 @@ export function TimetablePage() {
         major: isMajor ? selectedMajor || null : null,
         categories:
           isMajor && majorCategory ? [majorCategory] : group ? [...group.categories] : undefined,
-        generalEducationArea: groupKey === "balance" ? liberalArea || null : null,
+        generalEducationAreas: groupKey === "balance" ? liberalAreas : undefined,
         q: search.trim(),
         limit: OFFERING_LIMIT,
       })
@@ -387,7 +389,7 @@ export function TimetablePage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [groupKey, selectedDepartment, selectedMajor, majorCategory, liberalArea, search]);
+  }, [groupKey, selectedDepartment, selectedMajor, majorCategory, liberalAreas, search]);
 
   /** 학부를 가진 단과대만. "미지정"은 잘못 생성된 껍데기라 서버가 이미 걸러준다. */
   const colleges = [...new Set(departments.map((item) => item.college))].sort();
@@ -431,10 +433,10 @@ export function TimetablePage() {
         majorCategory || "전공 전체",
       ].filter(Boolean).join(" · ")
     : groupKey === "balance"
-      ? [selectedGroupLabel, liberalArea || "전체 영역"].join(" · ")
+      ? [selectedGroupLabel, liberalAreas.length ? liberalAreas.join(", ") : "전체 영역"].join(" · ")
       : `${selectedGroupLabel} · 전교 개설 강좌`;
   const hasCourseFilters =
-    search.trim() || selectedCollege || selectedDepartment || selectedMajor || majorCategory || liberalArea;
+    search.trim() || selectedCollege || selectedDepartment || selectedMajor || majorCategory || liberalAreas.length > 0;
 
   function resetCourseFilters() {
     setSearch("");
@@ -442,7 +444,7 @@ export function TimetablePage() {
     setSelectedDepartment(null);
     setSelectedMajor("");
     setMajorCategory("");
-    setLiberalArea("");
+    setLiberalAreas([]);
   }
 
   /** 열린 시간표에 담긴 분반. "과목 추가" 목록의 담기 완료 표시에 쓴다. */
@@ -1034,10 +1036,14 @@ export function TimetablePage() {
                 <button
                   key={area}
                   type="button"
-                  className={liberalArea === area ? "selected" : ""}
+                  className={liberalAreas.includes(area) ? "selected" : ""}
                   onClick={() =>
-                    // 켜진 칩을 다시 누르면 해제 → 균형·창의교양 전체
-                    setLiberalArea((current) => (current === area ? "" : area))
+                    // 여러 영역을 동시에 켤 수 있다 — 켜진 칩을 다시 누르면 그것만 해제.
+                    setLiberalAreas((current) =>
+                      current.includes(area)
+                        ? current.filter((value) => value !== area)
+                        : [...current, area],
+                    )
                   }
                 >
                   {area}
