@@ -29,10 +29,10 @@
 - 포털 자격증명 비저장: 크롤링에 쓰는 학생지원시스템 학번·비밀번호는 동기화 요청 처리에만 사용하고 서버에 저장하지 않는다. 추후 정보화본부와 협의해 크롤링을 학지시 API 연동으로 전환할 계획이다.
 - 접근 통제: 계정 인증(JWT)을 통해 본인 데이터에만 접근하도록 제한하고, 로그인 비밀번호는 단방향 해시(bcrypt)로만 저장한다.
 - 보관·파기: 회원 탈퇴 API로 계정과 학사 데이터를 즉시 파기한다. 장기 미접속(기본 24개월) 계정은 보존기간 정책에 따라 파기하며, 파기 도구는 구현돼 있고 자동 실행은 백업·복구 검증 후 활성화한다.
-- 저장·전송 보안(적용 예정): 프론트엔드는 Netlify, 백엔드는 Railway로 배포하여 전송 구간을 HTTPS(TLS)로 보호할 예정이다. 현재 개발 단계에서는 로컬 환경에서만 구동한다.
-- 수집 최소화 및 동의(적용 예정): 서비스 제공에 필요한 항목만 수집하고 사전 동의를 받는 절차를 배포 전에 도입한다.
+- 저장·전송 보안: 프론트엔드는 Netlify, 백엔드는 Railway로 배포해 전송 구간을 HTTPS(TLS)로 보호한다(적용됨).
+- **수집 최소화 및 동의(미도입 — 배포 이후에도 아직 없음)**: 서비스 제공에 필요한 항목만 수집한다는 원칙은 지키고 있지만, 가입 시 실제로 동의를 받는 절차(체크박스 등 옵트인 UI)가 프론트엔드에 없다. 온보딩 화면에 "✓ 개인정보 수집 · 이용 동의 · 성적표 원본은 저장하지 않습니다"라는 안내 문구(`OnboardingPage.tsx`)는 있지만 클릭·체크로 응답을 받는 컨트롤이 아니라 그냥 표시 텍스트라, 사용자가 실제로 동의했는지와 무관하게 항상 "✓"로 보인다 — 오히려 동의를 받은 것처럼 오인시킬 여지가 있어 "안내문만 있고 동의 없음"보다 먼저 손볼 필요가 있다. "배포 전에 도입한다"고 적어뒀던 항목인데 이미 배포된 상태에서도 실제 옵트인 절차는 빠져 있는 것이라, 실사용자 확대 전 최우선으로 처리해야 한다.
 - 외부 LLM 호출 시 비식별화: 외부 API 호출 시 개인 식별정보를 직접 전송하지 않고 필요한 최소 정보만 전달한다. 관측 도구(Langfuse)로 보내는 대화는 학번·이메일·전화번호를 마스킹하고 사용자 식별자는 해시한다.
-- 개인정보처리방침 · LLM 처리위탁 고지(적용 예정): 현재는 LLM 응답 품질을 검증(골든 데이터셋·트레이싱)하기 위해 외부 API로 대화를 전송해야 하므로, 위탁 범위가 확정되는 배포 시점에 처리방침과 위탁 고지를 온보딩 동의 절차에 포함한다.
+- **개인정보처리방침 · LLM 처리위탁 고지(미도입 — 배포 이후에도 아직 없음)**: 현재도 LLM 응답 품질을 검증(골든 데이터셋·트레이싱)하기 위해 외부 API로 대화를 전송하고 있는데, 처리방침과 위탁 고지를 온보딩 동의 절차에 포함하는 작업은 아직 안 됐다. 위와 같은 이유로 최우선 처리 대상이다.
 
 핵심 기능(본선 구현)은 졸업요건 분석(F-01), AI 수강 계획 추천(F-02), AI 기반 수강신청 시간표 추천(F-03)이며, 확장 기능(향후 개발)으로는 비교과·공모전 개인화 추천(F-04), 진로별 자격증·어학 준비 일정 추천(F-05), 통합 정보 캘린더(F-06), AI 기반 학사·진로 챗봇(F-07)을 계획하고 있다.
 <br/>
@@ -60,11 +60,11 @@
 #### 2.1. 시스템 구성도
 ```mermaid
 flowchart TB
-    subgraph FRONT["🖥️ 프론트엔드 — React SPA · Netlify(예정)"]
+    subgraph FRONT["🖥️ 프론트엔드 — React SPA · Netlify"]
         FE["회원가입 · Home · 내 정보 · 성장 로드맵 · 시간표 작성"]
     end
 
-    subgraph BACK["⚙️ 백엔드 — FastAPI · Railway(예정)"]
+    subgraph BACK["⚙️ 백엔드 — FastAPI · Railway"]
         API["REST API<br/>인증(JWT) · 프로필 · 로드맵<br/>시간표 · 학과/강좌 검색"]
         RULE["규칙 기반 검증 엔진<br/>졸업요건 판정<br/>시간표 충돌 검사"]
         AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>규칙 엔진을 도구로 호출"]
@@ -77,17 +77,21 @@ flowchart TB
     end
 
     subgraph EXT["🌐 외부 서비스"]
-        LLM["🤖 OpenAI API"]
+        LLM["🤖 OpenAI API<br/>채팅 모델 · 임베딩"]
         PNU["🏫 PNU 학생지원시스템"]
+        LANGFUSE["📊 Langfuse(자체 호스팅)<br/>LLM 트레이싱 · 평가"]
+        MAIL["✉️ Resend<br/>비밀번호 재설정 메일"]
     end
 
     FE -->|HTTPS / JSON| API
     API --> RULE
     API --> AGENT
     API --> CRAWL
+    API -->|재설정 메일 발송| MAIL
     RULE --> PG
     AGENT -->|RAG 검색| VEC
     AGENT --> LLM
+    AGENT -->|트레이싱| LANGFUSE
     CRAWL --> PG
     CRAWL --> PNU
 
@@ -99,7 +103,7 @@ flowchart TB
     class FE front
     class API,RULE,AGENT,CRAWL back
     class PG,VEC data
-    class LLM,PNU ext
+    class LLM,PNU,LANGFUSE,MAIL ext
     class FRONT,BACK,DATA,EXT band
 ```
 <br/>
@@ -113,13 +117,16 @@ flowchart TB
 | | react-router-dom | 7.18 |
 | | axios | 1.18 |
 | | lucide-react | 1.23 |
+| | react-markdown (+ remark-gfm) | 10.1 |
 | 백엔드 | Python | 3.12 |
 | | FastAPI | 0.138 |
 | | Uvicorn | 0.49 |
 | | SQLAlchemy | 2.0 |
 | | Alembic | 1.18 |
 | | LangChain (+ langchain-openai) | 1.3 |
-| | Langfuse (LLM 트레이싱) | 4.14 |
+| | OpenAI SDK | 2.44 |
+| | Langfuse (LLM 트레이싱, 자체 호스팅) | 4.14 |
+| | slowapi | 0.1 |
 | | bcrypt | 5.0 |
 | | python-jose | 3.5 |
 | 데이터베이스 | PostgreSQL (Supabase) | 17 |
@@ -127,7 +134,27 @@ flowchart TB
 | 크롤러 | Playwright | 1.61 |
 | | BeautifulSoup | 4.15 |
 | | APScheduler | 3.11 |
-| 배포 (예정) | Netlify (프론트엔드) · Railway (백엔드) | - |
+| 배포 | Netlify (프론트엔드) · Railway (백엔드) | - |
+
+**선정 이유 및 역할**
+
+| 이름 | 왜 이걸 골랐나 | 우리 시스템에서의 역할 |
+|:---|:---|:---|
+| React + TypeScript | 팀 전원이 익숙하고, 컴포넌트 단위로 5개 화면(회원가입~시간표)을 나눠 개발하기 좋다. TS는 백엔드 응답 스키마와 프론트 타입을 맞춰 런타임 전에 오류를 잡는다. | 전체 화면 렌더링과 상태 관리 |
+| Vite | esbuild 기반이라 CRA류보다 개발 서버 기동·HMR이 훨씬 빠르다 — 팀 규모(4인)에서 반복 개발 속도가 중요했다. | 프론트 빌드·개발 서버 |
+| react-router-dom | 화면 5개(가입/Home/내 정보/로드맵/시간표)를 인증 가드 하나로 감싸는 형제 라우트 구조가 필요했다. | `/roadmap`·`/timetable` 등 화면 라우팅, `RequireAuth` 가드 |
+| axios | fetch보다 요청/응답 인터셉터(JWT 헤더 자동 첨부, 401 처리)를 붙이기 쉬워 인증 흐름이 단순해진다. | 백엔드 API 호출 공통 레이어 |
+| react-markdown + remark-gfm | LLM 응답이 목록·표 형태로 오는 경우가 많아, 원문을 그대로 안전하게(XSS 없이) 렌더링할 라이브러리가 필요했다. | 로드맵/시간표 AI 채팅 응답을 마크다운으로 렌더링 |
+| FastAPI | 타입 힌트 기반 자동 검증·문서화(OpenAPI)가 되고, 비동기 크롤링·LLM 호출과 궁합이 좋다. | REST API 서버, 요청 검증, `/docs` 자동 문서 |
+| SQLAlchemy + Alembic | 학사 계층(학교/단과대/학과/전공)처럼 관계가 복잡한 스키마를 ORM으로 명시적으로 관리하고, 스키마 변경을 리비전으로 추적할 필요가 있었다. | 전체 도메인 모델 정의, DB 마이그레이션 |
+| LangChain + OpenAI SDK | 도구 호출(tool calling) 루프, 재시도, 모델 스왑(provider:model 문자열 하나로 교체)이 표준화돼 있어 두 에이전트(로드맵/시간표)를 같은 패턴으로 구현할 수 있었다. OpenAI SDK는 LangChain을 안 거치는 임베딩(`text-embedding-3-small`) 호출에 직접 쓴다. | LLM 에이전트 도구 호출 루프, RAG 임베딩 생성 |
+| Langfuse | LLM 응답은 비결정적이라 프롬프트를 바꿀 때마다 실제로 좋아졌는지 눈으로 확인하기 어렵다 — trace·지연시간·토큰 비용을 한곳에서 봐야 했다. 개인정보가 포함된 대화라 자체 호스팅으로 운영한다. | 로드맵/시간표 챗 실행마다 도구 호출·지연시간·비용 기록 |
+| slowapi | 로그인 brute force와 챗 엔드포인트의 LLM 비용 폭탄을 막을 요청량 제한이 FastAPI엔 기본 내장이 안 돼 있다. | 엔드포인트별 레이트 리밋(로그인·챗 등) |
+| bcrypt / python-jose | 비밀번호를 평문/가역 암호화가 아니라 단방향 해시로만 저장해야 한다는 원칙(CLAUDE.md)에 맞는 표준 선택지다. | 비밀번호 해시, JWT 발급·검증 |
+| PostgreSQL (Supabase) + pgvector | 관계형 학사 데이터와 교육과정 임베딩(벡터 검색)을 같은 DB에서 같이 다룰 수 있어 별도 벡터 DB 없이 RAG를 구현했다. Supabase는 팀이 함께 쓸 관리형 인스턴스가 바로 필요해서 골랐다. | 전체 테이블 저장, RAG 임베딩 벡터 유사도 검색 |
+| Playwright | 학생지원시스템(One-Stop)이 로그인 후 JS로 렌더링되는 페이지라 단순 HTTP 요청으론 못 긁는다 — 실제 브라우저 자동화가 필요했다. | 학적·이수내역·수강편람 크롤링 |
+| BeautifulSoup | Playwright로 받은 HTML에서 표 구조(성적표, 졸업요건표)를 파싱하는 데 가볍고 충분하다. | 크롤링 결과 HTML 파싱 |
+| APScheduler | 별도 인프라(Airflow 등) 없이 프로세스 내에서 주기적 크롤링·배치 작업을 예약할 수 있어 팀 규모에 맞는 선택이었다. | 정기 크롤링·보존기간 파기 스케줄 |
 <br/>
 
 ### 3. 개발결과
@@ -254,7 +281,7 @@ flowchart TB
 **핵심 기능 (구현 완료)**
 |ID|기능명|구현 내용|
 |:---:|:---|:---|
-| F-01 | 졸업요건 자동 분석 | 이수 내역 크롤링 연동, 영역별 충족/미충족 판정, 복수전공·부전공·SW/AI융합트랙 규칙(택N/M, 최소 학점 등) 동시 반영 |
+| F-01 | 졸업요건 자동 분석 | 이수 내역 크롤링 연동, 영역별 충족/미충족 판정, 복수전공·부전공·AI융합트랙 규칙(택N/M, 최소 학점 등) 동시 반영 |
 | F-02 | AI 수강 계획 추천 | 이수 현황 기반 학기별 로드맵, LLM 상담으로 변경안 제안 → 사용자 승인 후 반영, 선수과목·학점 상한 검증 |
 | F-03 | AI 시간표 추천 | 수강편람 기반 시간표 후보 생성, 시간 충돌 자동 검사, 개설 강좌 검색·담기, LLM 대화로 조건 반영 |
 
@@ -265,7 +292,7 @@ flowchart TB
 | F-05 | 진로별 자격증·어학 준비 일정 추천 | 희망 직무별 시험 일정 안내 및 준비 타임라인 |
 | F-06 | 통합 정보 캘린더 | 학사일정·자격증 접수일·비교과 신청 기간 통합, Google/Apple 캘린더 동기화 |
 | F-07 | AI 학사·진로 챗봇 확장 | 현재 로드맵·시간표 상담에서 학사 공지·진로 상담 전반으로 확대 |
-| F-08 | 개인정보처리방침 · LLM 처리위탁 고지 | 수집 항목·보유기간·파기 절차 명시. OpenAI·Langfuse 위탁 고지를 온보딩 동의에 포함 (품질 검증 기간에는 외부 전송이 필요해 배포 시점에 확정) |
+| F-08 | 개인정보처리방침 · LLM 처리위탁 고지 | 수집 항목·보유기간·파기 절차 명시. OpenAI·Langfuse 위탁 고지를 온보딩 동의에 포함 (배포 이후에도 아직 미도입 — 품질 검증을 위한 외부 전송은 계속되고 있어 최우선 처리 대상) |
 | F-09 | 보존기간 자동 파기 · 접근 감사 | 장기 미접속 계정 파기 스케줄 등록(도구는 구현 완료, 백업·복구 리허설 후 활성화), 프로덕션 DB 접근 로그 보존 |
 <br/>
 
@@ -274,13 +301,14 @@ flowchart TB
 ├── backend/
 │   ├── app/
 │   │   ├── api/                # REST 엔드포인트 (인증·프로필·로드맵·시간표·검색)
-│   │   ├── core/               # 설정 · DB 연결 · 보안(JWT/bcrypt/Fernet) · 메일러
+│   │   ├── core/               # 설정 · DB 연결 · 보안(JWT/bcrypt/Fernet) · 메일러 · Rate limit · 스케줄러(APScheduler)
 │   │   ├── domains/
 │   │   │   ├── academics/      # 학사 계층 · 졸업요건 · 규칙 판정 엔진
 │   │   │   ├── courses/        # 과목 · 개설 강좌 · 교과목개요
 │   │   │   ├── planning/       # 로드맵 · 시간표 · LLM 에이전트 (roadmap_chat / timetable_chat)
+│   │   │   ├── content/        # 학사정보 안내 글 (API 미연결)
 │   │   │   └── users/          # 사용자 · 편입 구분 · 활동/자격증
-│   │   ├── ai/                 # RAG (pgvector 임베딩 · 교육과정 검색)
+│   │   ├── ai/                 # RAG(pgvector 임베딩 · 교육과정 검색) · LLM 트레이싱/개인정보 마스킹(Langfuse)
 │   │   └── ingestion/          # 학생지원시스템 크롤러
 │   ├── migrations/             # Alembic 마이그레이션
 │   ├── scripts/                # 시드 · 수강편람/교과목개요 적재 스크립트
@@ -289,14 +317,19 @@ flowchart TB
 │   └── src/
 │       ├── api/                # 백엔드 API 래퍼
 │       ├── auth/               # 인증 컨텍스트
-│       ├── components/         # 공용 컴포넌트 (레이아웃 · 자동완성 등)
+│       ├── components/         # 공용 컴포넌트 (레이아웃 · 자동완성 · 채팅 렌더링 등)
+│       ├── data/                # 정적 데이터 (추천 활동 목록 · 로컬 스토리지 유틸)
 │       ├── pages/              # 화면 (Auth · Dashboard · Info · Roadmap · Timetable)
 │       └── routes/             # 라우터
+├── infra/                      # 로컬 Postgres(pgvector) docker-compose, 배포 인프라 스캐폴딩
+├── .github/                    # CI 워크플로우 (골든테스트 · 보안 스캔 · 마이그레이션 그래프)
 └── docs/                       # 개발계획서 · 아키텍처 문서
 ```
 <br/>
 
 ### 4. 설치 및 사용 방법
+**배포된 서비스**: 프론트엔드 [planu-pnu.netlify.app](https://planu-pnu.netlify.app) · 백엔드 API [pnuai-a-03-team-u-production.up.railway.app](https://pnuai-a-03-team-u-production.up.railway.app)(`/docs`에 Swagger UI). 아래는 로컬 개발 환경 구성 방법이다.
+
 **필요 환경**: Python 3.12+, Node.js 20+, PostgreSQL (pgvector 확장)
 
 **백엔드**
