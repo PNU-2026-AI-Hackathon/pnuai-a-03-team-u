@@ -83,9 +83,21 @@ class OfferingSearchTest(unittest.TestCase):
             # 전공 미지정(학부 공통) 과목이 있는 학부 — 대조군
             Course(id=6, course_code="ZZ0000001", course_name="학부공통과목",
                    department_id=200, major_id=None, category="전공필수", credits=3),
+            # 효원균형·창의교양 세부영역 필터 검증용. 실 서비스에서 "효원균형·창의교양"
+            # 갈래 하나가 300건대로 뭉쳐 나와(2026-2학기 357건) 세부영역으로 좁히는
+            # 필터를 추가했다 — 사용자 관찰.
+            Course(id=8, course_code="ZF0000001", course_name="서양철학사",
+                   department_id=None, major_id=None, category="효원균형교양",
+                   general_education_area="사상과역사", credits=3),
+            Course(id=9, course_code="ZF0000002", course_name="현대사회의이해",
+                   department_id=None, major_id=None, category="효원균형교양",
+                   general_education_area="사회와문화", credits=3),
+            Course(id=10, course_code="ZF0000003", course_name="영역미지정균형교양",
+                   department_id=None, major_id=None, category="효원균형교양",
+                   general_education_area=None, credits=3),
         ])
         self.db.flush()
-        for course_id in (1, 2, 3, 4, 5, 6):
+        for course_id in (1, 2, 3, 4, 5, 6, 8, 9, 10):
             self.db.add(CourseOffering(id=course_id, course_id=course_id,
                                        year="2026", semester="2학기", section="001",
                                        professor="교수"))
@@ -170,6 +182,26 @@ class OfferingSearchTest(unittest.TestCase):
         )
         self.assertEqual(["일반물리학"], self._names(department_id=108, category=["전공기초"]))
         self.assertEqual(["캡스톤디자인"], self._names(department_id=108, category=["전공선택"]))
+
+    def test_균형교양_세부영역으로_좁히면_그_영역_과목만_남는다(self):
+        self.assertEqual(
+            ["서양철학사"],
+            self._names(department_id=None, category=["효원균형교양"],
+                        general_education_area="사상과역사"),
+        )
+        self.assertEqual(
+            ["현대사회의이해"],
+            self._names(department_id=None, category=["효원균형교양"],
+                        general_education_area="사회와문화"),
+        )
+
+    def test_세부영역_미지정이면_영역_섞인_전체가_그대로_나온다(self):
+        """필터를 안 주면(기존 동작 유지) 영역 없는 과목도 함께 나와야 한다 —
+        신규 파라미터가 옵트인이어야지, 있는 걸 조용히 걸러내면 안 된다."""
+        self.assertEqual(
+            ["서양철학사", "영역미지정균형교양", "현대사회의이해"],
+            self._names(department_id=None, category=["효원균형교양"]),
+        )
 
     def test_전공을_고르면_그_전공_과목만_남는다(self):
         self.assertEqual(
