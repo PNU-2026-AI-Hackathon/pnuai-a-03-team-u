@@ -1542,8 +1542,10 @@ def _compute_prereq_blocked(
     `roadmap_id=None`이면 이수 세트는 SCR만 참조 (timetable 챗 — "지금 당장" 담을 수
     있는지만 보므로 미래 계획은 관여하지 않는다. 의도적으로 다르게 둔다).
 
-    `roadmap_id`가 있으면(로드맵 챗) 이 로드맵의 **모든** 항목(`planned`도 포함, `rejected`
-    제외)을 이수 예정으로 본다 — "졸업까지 로드맵 짜줘"로 3학년 2학기에 자료구조를 이미
+    `roadmap_id`가 있으면(로드맵 챗) 이 로드맵의 **모든** 항목(`planned`도 포함, `dropped`
+    제외 — `CourseRoadmapItem.status`는 `planned`/`completed`/`dropped` 셋뿐이다.
+    `rejected`는 `PendingRoadmapChange.status`의 값이지 이 모델과 무관하다)을 이수
+    예정으로 본다 — "졸업까지 로드맵 짜줘"로 3학년 2학기에 자료구조를 이미
     계획해 뒀으면, 아직 실제로 듣지 않았어도 4학년 1학기의 후속 과목을 선수과목 미이수로
     막으면 안 된다. `pending_course_names`는 **같은 턴** 안에서 아직 DB에 저장되지 않은
     제안(`propose_term_plan`이 앞 학기부터 순서대로 쌓는 `pending_changes`)까지 포함시켜
@@ -1574,7 +1576,7 @@ def _compute_prereq_blocked(
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
-                CourseRoadmapItem.status != "rejected",
+                CourseRoadmapItem.status != "dropped",
             )
         ).all():
             completed_norms.add(_norm(it.course_name))
