@@ -76,16 +76,19 @@ MAX_TOOL_ITERATIONS = 12
 # 못했어요"가 나갔다. 제안은 19건이나 쌓여 있었는데도).
 _FINISH_GATE_RESERVE = 4
 
-# "교양선택" 세부영역 8개(2021교육과정 구체계 — graduation_progress.BALANCED_LIBERAL_AREAS
-# 참고). portal_sync._refine_liberal_area_categories가 One-Stop
-# 졸업예정정보 판정을 근거로 student_course_records.liberal_area에 저장한다.
-# 여기 목록은 One-Stop 원문("N영역 : 이름"에서 이름만)과
-# 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서 조용히 빠져 LLM이
-# 미이수로 오인할 수 있다.
+# "교양선택" 세부영역(구/신체계 합집합 — graduation_progress.BALANCED_LIBERAL_AREAS 참고).
+# portal_sync._refine_liberal_area_categories가 One-Stop 졸업예정정보 판정을 근거로
+# student_course_records.liberal_area에 저장한다. 여기 목록은 One-Stop 원문("N영역 :
+# 이름"에서 이름만)과 일치해야 한다 — 목록에 없는 이름이 들어오면 컨텍스트 요약에서
+# 조용히 빠져 LLM이 미이수로 오인할 수 있다.
+# 학생 자문(이 학생 기준 몇 개 영역 중 몇 개 미이수)에는 세대별 부분집합
+# `liberal_areas_for_generation`을 쓴다 — 2021학번에게 "세계와 소통 미이수"라고 하거나
+# 2026학번에게 "외국어 미이수"라고 하면 안 되기 때문이다.
 # 단일 출처는 academics 쪽이다 — 판정 엔진이 이 값들을 '교양선택'으로 롤업해야 해서
 # (graduation_progress._CATEGORY_ROLLUP) 두 곳에 따로 두면 한쪽만 고쳐져 집계가 어긋난다.
 from app.domains.academics.graduation_progress import (
     BALANCED_LIBERAL_AREAS,
+    liberal_areas_for_generation,
     requirement_category_for_course,
 )
 from app.domains.academics.program_status import (
@@ -2929,6 +2932,14 @@ def _build_student_context_block(db: Session, user: User) -> str:
     if not program_lines:
         program_lines.append("  - (등록된 학적 프로그램 없음)")
 
+    # 균형/창의교양 세부영역 자문은 주전공 curriculum_year 기준으로 세대(구/신체계)를
+    # 고른다 — 부전공·복수전공의 연도는 안 본다(교양 이수는 학생 1인 기준이지 프로그램별로
+    # 안 갈리므로, 여러 프로그램 중 어느 걸 기준으로 삼을지 애매하게 만들지 않는다).
+    primary_program = next((p for p in programs if p.program_type == "primary"), None)
+    student_liberal_areas = liberal_areas_for_generation(
+        primary_program.curriculum_year if primary_program else None
+    )
+
     completed = db.scalars(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
     ).all()
@@ -2950,11 +2961,11 @@ def _build_student_context_block(db: Session, user: User) -> str:
     # 균형교양 세부영역별 이수/미이수 요약. One-Stop 학교 판정뿐 아니라 학생이
     # 입학 전 인정 학점에 직접 지정한 영역 대체도 같은 완료 근거로 집계한다.
     liberal_completions = liberal_area_completions(
-        db, user.id, _BALANCED_LIBERAL_AREAS, records=completed
+        db, user.id, student_liberal_areas, records=completed
     )
     balanced_lines: list[str] = []
     missing_areas: list[str] = []
-    for area in _BALANCED_LIBERAL_AREAS:
+    for area in student_liberal_areas:
         completion = liberal_completions[area]
         if completion.completed:
             # direct_credits(학점 합계)가 아니라 direct_records(직접 이수 근거 자체)로
@@ -2985,7 +2996,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
         # 상수 앞 3개를 하드코딩하던 옛 버전은 이미 이수한 영역을 예시로 드는 어색함이 있었다.
         missing_example = "'" + "/".join(missing_areas[:2]) + "'"
     else:
-        missing_block = f"(없음 — {len(_BALANCED_LIBERAL_AREAS)}개 세부영역 모두 최소 1과목 이수)"
+        missing_block = f"(없음 — {len(student_liberal_areas)}개 세부영역 모두 최소 1과목 이수)"
         missing_example = "'미이수 영역'"
 
     career = user.career_goal.strip() if user.career_goal else ""
@@ -3046,7 +3057,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
     같은 과목이라 단정하지 말고, 후보에 뜨면 사용자에게 "같은 과목인가요?"라고 되물어
     확인 후 다음 턴에 제외해라. 우리 데이터로 동치 여부를 확인할 방법이 없다.
 
-- **균형교양 세부영역 이수 현황(One-Stop 학교 판정 결과 기반, {len(_BALANCED_LIBERAL_AREAS)}개 영역 중)**:
+- **균형교양 세부영역 이수 현황(One-Stop 학교 판정 결과 기반, {len(student_liberal_areas)}개 영역 중)**:
 {balanced_block}
   → 미이수 세부영역: {missing_block}
   → 균형교양은 총 학점만 채우는 게 아니라 **세부영역 골고루** 이수해야 졸업요건이 인정된다.

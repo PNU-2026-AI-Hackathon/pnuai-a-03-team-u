@@ -791,6 +791,29 @@ class StudentContextBlockTest(unittest.TestCase):
         block = _build_student_context_block(db, db.get(User, 1))
         self.assertIn("이수한 균형교양 세부영역 없음", block)
 
+    def test_context_block_uses_2026_curriculum_areas_for_2026_student(self):
+        """주전공 curriculum_year=2026이면 신체계 세부영역(효원균형·창의교양)으로 자문해야
+        한다 — 2021체계 이름('외국어'/'융복합')을 미이수라고 잘못 짚으면 안 된다."""
+        from app.domains.planning.roadmap_chat import _build_student_context_block
+        db = self.make_db()
+        db.add(User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=None, major_id=None, career_goal=None))
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=None, major_id=None, curriculum_year="2026"))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="글로벌커뮤니케이션",
+                                     category="교양선택", liberal_area="세계와 소통",
+                                     credits=3, year="2026", semester="1"))
+        db.commit()
+        block = _build_student_context_block(db, db.get(User, 1))
+        self.assertIn("세계와 소통: 3학점 이수", block)
+        missing_idx = block.index("미이수 세부영역")
+        missing_section = block[missing_idx : missing_idx + 300]
+        # 신체계 나머지 미이수 영역은 나와야 하고
+        self.assertIn("인성과 사회봉사", missing_section)
+        # 구체계 전용 이름은 이 학생 자문에 아예 등장하면 안 된다
+        self.assertNotIn("외국어", block)
+        self.assertNotIn("융복합", block)
+
     def test_context_block_includes_transfer_liberal_area_substitution(self):
         """학생이 직접 지정한 입학 전 인정 영역도 미이수가 아니라 대체 인정이다."""
         from app.domains.planning.roadmap_chat import _build_student_context_block

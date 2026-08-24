@@ -746,6 +746,28 @@ class StudentContextTest(unittest.TestCase):
         self.assertNotIn("사상과역사", result["missing_liberal_areas"])
         self.assertIn("과학과기술", result["missing_liberal_areas"])
 
+    def test_get_student_context_uses_2026_curriculum_areas_for_2026_student(self):
+        """주전공 curriculum_year=2026이면 신체계 세부영역으로 자문해야 한다 — 2021체계
+        이름('외국어'/'융복합')을 missing_liberal_areas에 잘못 넣으면 안 된다."""
+        db = _make_db()
+        user = _make_student(db)
+        db.add(UserAcademicProgram(user_id=user.id, program_type="primary",
+                                    department_id=100, curriculum_year="2026"))
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="글로벌커뮤니케이션", category="교양선택",
+            liberal_area="세계와 소통", credits=3.0,
+        ))
+        db.flush()
+
+        result = _TimeTableToolContext(
+            db, user, year="2026", semester="2학기"
+        ).get_student_context()
+
+        self.assertIn("세계와 소통", {i["area"] for i in result["completed_liberal_areas"]})
+        self.assertIn("인성과 사회봉사", result["missing_liberal_areas"])
+        self.assertNotIn("외국어", result["missing_liberal_areas"])
+        self.assertNotIn("융복합", result["missing_liberal_areas"])
+
     def test_get_student_context_supports_legacy_liberal_area_category(self):
         """마이그레이션 전 category에 남은 세부영역도 누락 없이 전달한다."""
         db = _make_db()

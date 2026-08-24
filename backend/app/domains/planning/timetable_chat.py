@@ -1202,8 +1202,8 @@ class _TimeTableToolContext:
 
     def get_student_context(self) -> dict:
         from app.domains.academics.graduation_progress import (
-            BALANCED_LIBERAL_AREAS,
             compute_graduation_progress,
+            liberal_areas_for_generation,
         )
         from app.domains.planning.history import project_curriculum_term
 
@@ -1223,12 +1223,14 @@ class _TimeTableToolContext:
         # 같은 breakdown을 보고 카테고리별로 훑도록 유도한다. 없으면 mini가 career_goal
         # 하나만 보고 좁게 검색해서 결국 소수 과목만 확정하는 문제가 있음(2026-08-10 관찰).
         remaining_by_category: list[dict] = []
+        primary_curriculum_year: str | None = None
         try:
             progresses = compute_graduation_progress(
                 self.db, self.user.id, program_types={"primary"}
             )
             if progresses:
                 p = progresses[0]  # 주전공만 노출 (시간표는 로드맵 독립이라 부전공까진 안 봄)
+                primary_curriculum_year = p.curriculum_year
                 for c in p.categories:
                     if c.remaining_credits is None or c.remaining_credits <= 0:
                         continue
@@ -1240,17 +1242,20 @@ class _TimeTableToolContext:
             pass
 
         # One-Stop이 공식 판정한 영역과 입학 전 인정 학점에 학생이 직접 지정한 영역
-        # 대체를 합쳐 시간표 LLM에도 구조화해 전달한다.
+        # 대체를 합쳐 시간표 LLM에도 구조화해 전달한다. 세대별(구/신체계) 부분집합만
+        # 보여줘야 2021학번에게 "세계와 소통 미이수"처럼 해당 없는 영역을 들이밀지 않는다
+        # (roadmap_chat.py의 같은 처리와 대칭).
+        student_liberal_areas = liberal_areas_for_generation(primary_curriculum_year)
         liberal_completions = liberal_area_completions(
             self.db,
             self.user.id,
-            BALANCED_LIBERAL_AREAS,
+            student_liberal_areas,
             records=course_records,
         )
 
         completed_liberal_areas: list[dict] = []
         missing_liberal_areas: list[str] = []
-        for area in BALANCED_LIBERAL_AREAS:
+        for area in student_liberal_areas:
             completion = liberal_completions[area]
             if not completion.completed:
                 missing_liberal_areas.append(area)

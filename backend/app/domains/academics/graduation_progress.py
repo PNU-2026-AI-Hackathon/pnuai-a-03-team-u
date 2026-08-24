@@ -28,23 +28,29 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
     "required_free_elective": "일반선택",
 }
 
-# "교양선택" 세부영역 8개 — **2021교육과정(2022~2025학번) 구체계 영역명**이다.
-# "효원균형교양"이 아니다 — 그건 2026교육과정에서 새로 생긴 이름이고 영역 구성도 다르다
-# (docs/progress/liberal-arts-area-requirements.md §4.1/§7.2 조사 참고). 지금 재학생
-# 대다수(2026학번 신입생 제외)가 이 구체계를 쓰므로 여기 하드코딩된 값이 실질적으로 맞다.
+# "교양선택" 세부영역 — 세대별로 이름과 구성이 다르다
+# (docs/progress/liberal-arts-area-requirements.md §4.1/§6/§7.2/§7.3 조사 참고).
 #
-# portal_sync._refine_liberal_area_categories는 이제 One-Stop 졸업예정정보를 근거로
-# student_course_records.liberal_area에 세부영역명을 별도 저장한다. 아래 롤업은
+# 2021교육과정(2022~2025학번) 구체계: 8개 영역, 전부 "교양선택" 하나로 롤업.
+# 2026교육과정 신체계: 효원균형교양 6개 + 효원창의교양 3개로 나뉘지만, 이 flat 엔진의
+# GraduationRequirement에는 균형/창의를 나눠 담을 컬럼이 없어 결국 둘 다 "교양선택"으로
+# 롤업된다 — 그래서 롤업 대상(_CATEGORY_ROLLUP 값)은 세대 상관없이 항상 "교양선택"이다.
+# 세대가 실제로 갈라야 하는 곳은 롤업이 아니라 **자문(advisory) 컨텍스트**다: 2021학번에게
+# "세계와 소통 미이수"라고 말하면 안 되고, 2026학번에게 "외국어 미이수"라고 말하면 안
+# 된다 — `liberal_areas_for_generation()`으로 세대별 부분집합을 골라 써라
+# (roadmap_chat/timetable_chat의 균형교양 세부영역 안내 블록 참고).
+#
+# 이름 표기는 `courses.general_education_area` 운영 DB 실값 그대로다(2026-08-24 확인) —
+# "세계와 소통"/"융합과 창의"/"인성과 사회봉사"는 **공백 포함**이 맞다. 설계 문서 초안의
+# 무공백 표기("세계와소통")는 오타였다.
+#
+# portal_sync._refine_liberal_area_categories는 One-Stop 졸업예정정보를 근거로
+# student_course_records.liberal_area에 세부영역명을 별도 저장한다. _CATEGORY_ROLLUP은
 # 마이그레이션 전 데이터나 테스트처럼 category에 세부영역이 남은 경우의 호환 장치다.
 #
-# 여기(academics)에 두는 이유: 판정 엔진이 진짜 소비자이고, planning(로드맵 챗)이
+# 여기(academics)에 두는 이유: 판정 엔진이 진짜 소비자이고, planning(로드맵/시간표 챗)이
 # 이걸 가져다 쓰는 방향이 모듈 경계상 맞다.
-#
-# ⚠️ 2026교육과정(효원균형교양/효원창의교양, 영역명도 다름 — 예: 외국어→세계와소통,
-# 융복합→융합과창의, 신설 인성과사회봉사)은 여기 없다. 세대별로 분기하는 게 맞고
-# (curriculum_year 기준), 영역 이수 규칙 자체도 학과·전공별로 달라 위 문서 §6대로
-# 별도 설계가 필요하다 — 지금 이 튜플에 2026 이름을 섞어 넣으면 안 된다.
-BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
+LIBERAL_AREAS_2021: tuple[str, ...] = (
     "사상과역사",
     "사회와문화",
     "문학과예술",
@@ -55,8 +61,55 @@ BALANCED_LIBERAL_AREAS: tuple[str, ...] = (
     "효원브릿지",  # 8영역. 2022학년도 신입생부터 적용(REG 부칙) — 이전엔 누락돼 있었다.
 )
 
-# 이수기록 category 원값 → 요건 집계에 쓸 상위 이수구분.
+LIBERAL_AREAS_2026: tuple[str, ...] = (
+    # 효원균형교양 6개
+    "사상과역사",
+    "사회와문화",
+    "문학과예술",
+    "과학과기술",
+    "세계와 소통",  # 구체계 "외국어" 개편
+    "효원브릿지",
+    # 효원창의교양 3개
+    "융합과 창의",  # 구체계 "융복합" 개편
+    "건강과레포츠",
+    "인성과 사회봉사",  # 신설
+)
+
+LIBERAL_AREAS_BY_GENERATION: dict[str, tuple[str, ...]] = {
+    "2021": LIBERAL_AREAS_2021,
+    "2026": LIBERAL_AREAS_2026,
+}
+
+# 매칭·집계(One-Stop 영역명 인식, category 필터, 롤업 대상 판별)는 세대를 몰라도 되므로
+# 두 세대의 합집합을 쓴다 — 순서는 두 튜플을 이어붙인 뒤 중복만 제거(첫 등장 순서 유지).
+BALANCED_LIBERAL_AREAS: tuple[str, ...] = tuple(
+    dict.fromkeys(LIBERAL_AREAS_2021 + LIBERAL_AREAS_2026)
+)
+
+# 이수기록 category 원값 → 요건 집계에 쓸 상위 이수구분. 세대 상관없이 전부 "교양선택".
 _CATEGORY_ROLLUP: dict[str, str] = {area: "교양선택" for area in BALANCED_LIBERAL_AREAS}
+
+
+def resolve_liberal_area_generation(curriculum_year: str | int | None) -> str:
+    """학생의 curriculum_year로 교양 체계 세대("2021" | "2026")를 판별한다.
+
+    2026 이상이면 신체계, 그 외(2025 이하 또는 파싱 불가·None)는 구체계로 본다.
+    2026-08-24 기준 실사용자 curriculum_year는 2023/2024 또는 결측뿐이라(전원 구체계),
+    None을 구체계로 보는 기본값이 지금 데이터와 맞는다 — 2026학번이 실제로 유입되면
+    이 함수 하나만 바뀌면 된다.
+    """
+    if curriculum_year is None:
+        return "2021"
+    try:
+        year = int(curriculum_year)
+    except (TypeError, ValueError):
+        return "2021"
+    return "2026" if year >= 2026 else "2021"
+
+
+def liberal_areas_for_generation(curriculum_year: str | int | None) -> tuple[str, ...]:
+    """학생의 curriculum_year에 맞는 교양 세부영역 목록(자문용 부분집합)."""
+    return LIBERAL_AREAS_BY_GENERATION[resolve_liberal_area_generation(curriculum_year)]
 
 # `courses.category`(수강편람 어휘) → `graduation_requirements` 라벨(성적표 어휘).
 #
