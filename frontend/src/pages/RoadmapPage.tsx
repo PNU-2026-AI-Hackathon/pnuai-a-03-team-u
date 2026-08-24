@@ -1253,8 +1253,28 @@ function displayCategory(value: string | null) {
   return labels[compact] ?? value ?? "이수구분 미정";
 }
 
+function displayRequirementSummaryLabel(value: string) {
+  const compact = value.replace(/\s/g, "");
+  const labels: Record<string, string> = {
+    전공기초: "전공기초",
+    전공필수: "전공필수",
+    전공선택: "전공선택",
+    교양필수: "교양필수",
+    교양선택: "교양선택",
+    일반선택: "일반선택",
+    교직과목: "교직과목",
+  };
+  return labels[compact] ?? value;
+}
+
 function sameCategory(left: string | null, right: string | null) {
   return (left ?? "").replace(/\s/g, "") === (right ?? "").replace(/\s/g, "");
+}
+
+const COLLAPSED_CURRICULUM_COURSE_COUNT = 6;
+
+function shouldCollapseCurriculumGroup(title: string) {
+  return title.includes("공통") || title.includes("전학년");
 }
 
 /** 활동 시작일을 학기 키(연도-학기)로 환산한다. 3~8월은 1학기, 나머지는 2학기로 본다. */
@@ -1450,6 +1470,7 @@ function ConnectedRoadmapPage() {
   const [metaTargetYearDraft, setMetaTargetYearDraft] = useState("");
   const [isMetaSaving, setIsMetaSaving] = useState(false);
   const [metaError, setMetaError] = useState("");
+  const [expandedCurriculumLists, setExpandedCurriculumLists] = useState<Set<string>>(() => new Set());
   const chatLogRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const requirementStripRef = useRef<HTMLElement>(null);
@@ -2073,7 +2094,7 @@ function ConnectedRoadmapPage() {
                     const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
                     return (
                       <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
-                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
+                        <div className="requirement-summary-head"><h3 title={group.category}>{displayRequirementSummaryLabel(group.category)}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
                         <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
                         <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
                       </article>
@@ -2163,7 +2184,7 @@ function ConnectedRoadmapPage() {
                     const progress = group.required > 0 ? Math.min(100, Math.round((group.earned / group.required) * 100)) : 0;
                     return (
                       <article className="requirement-summary-card" key={group.category} aria-label={`${group.category} ${group.required}학점 중 ${remaining}학점 남음`}>
-                        <div className="requirement-summary-head"><h3>{group.category}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
+                        <div className="requirement-summary-head"><h3 title={group.category}>{displayRequirementSummaryLabel(group.category)}</h3><strong className="requirement-credit-ratio">{group.earned}/{group.required}{remaining === 0 ? <Check size={14} aria-hidden="true" /> : null}</strong></div>
                         <div className="requirement-summary-progress" role="progressbar" aria-label={`${group.category} 이수율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>
                         <small>{remaining === 0 ? "요건 충족 완료" : `${remaining}학점 추가 이수 필요`}</small>
                       </article>
@@ -2199,6 +2220,7 @@ function ConnectedRoadmapPage() {
                       });
                       const chipClass = (course: CurriculumCourse) => {
                         const category = course.category ?? "";
+                        if (category.replace(/\s/g, "").includes("전공기초")) return "cmap-chip is-required";
                         if (category.includes("필수")) return "cmap-chip is-required";
                         if (category.includes("전공")) return "cmap-chip is-major";
                         return "cmap-chip";
@@ -2211,7 +2233,15 @@ function ConnectedRoadmapPage() {
                               <div className="cmap-sem" key={sem}>
                                 <span className="cmap-sem-head">{sem}학기</span>
                                 <ul>
-                                  {bySemester(sem).map((course) => (
+                                  {(() => {
+                                    const courses = bySemester(sem);
+                                    const listKey = `${group.grade}-${sem}`;
+                                    const isCollapsible = shouldCollapseCurriculumGroup(group.title) && courses.length > COLLAPSED_CURRICULUM_COURSE_COUNT;
+                                    const isExpanded = expandedCurriculumLists.has(listKey);
+                                    const visibleCourses = isCollapsible && !isExpanded ? courses.slice(0, COLLAPSED_CURRICULUM_COURSE_COUNT) : courses;
+                                    return (
+                                      <>
+                                        {visibleCourses.map((course) => (
                                     <li
                                       className={chipClass(course)}
                                       key={course.id}
@@ -2219,7 +2249,28 @@ function ConnectedRoadmapPage() {
                                     >
                                       {course.course_name}
                                     </li>
-                                  ))}
+                                        ))}
+                                        {isCollapsible ? (
+                                          <li className="cmap-more-item">
+                                            <button
+                                              type="button"
+                                              className="cmap-more-button"
+                                              onClick={() => {
+                                                setExpandedCurriculumLists((current) => {
+                                                  const next = new Set(current);
+                                                  if (next.has(listKey)) next.delete(listKey);
+                                                  else next.add(listKey);
+                                                  return next;
+                                                });
+                                              }}
+                                            >
+                                              {isExpanded ? "접기" : `더보기 ${courses.length - COLLAPSED_CURRICULUM_COURSE_COUNT}개`}
+                                            </button>
+                                          </li>
+                                        ) : null}
+                                      </>
+                                    );
+                                  })()}
                                 </ul>
                               </div>
                             ))}

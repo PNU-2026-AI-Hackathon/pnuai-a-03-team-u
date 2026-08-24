@@ -4031,16 +4031,22 @@ body.theme-dark .activity-tags span {
   background: var(--yellow);
 }
 
+.requirement-strip-shell,
 .requirement-strip-wrap {
   position: relative;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .requirement-strip {
   display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
   max-width: 100%;
-  padding: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 8px;
 }
 
 .requirement-strip::-webkit-scrollbar {
@@ -4108,10 +4114,10 @@ body.theme-dark .activity-tags span {
 }
 
 .requirement-strip article {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 0 148px;
+  min-width: 148px;
   min-height: 108px;
-  padding: 20px;
+  padding: 16px;
 }
 
 .requirement-summary-head {
@@ -4122,17 +4128,23 @@ body.theme-dark .activity-tags span {
 }
 
 .requirement-summary-head h3 {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  font-size: 15px;
+  font-size: 12px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .requirement-summary-head > strong {
   flex: 0 0 auto;
-  padding: 4px 6px;
+  padding: 4px 5px;
   border-radius: 6px;
   background: #e7f1ff;
   color: #276fc8;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .requirement-summary-card.completed .requirement-summary-head > strong {
@@ -9820,9 +9832,9 @@ body.theme-dark .timetable-course.is-conflict {
 .requirement-credit-ratio {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: var(--shell-accent);
-  font-size: 15px;
+  font-size: 12px;
 }
 
 body.theme-dark .roadmap-head-stats div {
@@ -9971,6 +9983,37 @@ body.theme-dark .roadmap-head-stats span {
   border-color: var(--blue-deep);
   background: var(--blue-deep);
   color: #fff;
+}
+
+.cmap-more-item {
+  list-style: none;
+}
+
+.cmap-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px dashed #aab8cc;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--blue-deep);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cmap-more-button:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.cmap-more-button:focus-visible {
+  outline: 3px solid rgba(51, 133, 255, 0.28);
+  outline-offset: 2px;
 }
 
 .cmap-legend {
