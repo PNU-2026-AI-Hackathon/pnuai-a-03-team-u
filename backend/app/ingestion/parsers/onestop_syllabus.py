@@ -48,6 +48,34 @@ _ACCESSIBILITY_TRIGGER_RE = re.compile(r"[(\[]?\s*[*·]?\s*(장애학생|Student
 _OBJECTIVES_BLOCK_LABEL_LINES = {"교수목표", "강의개요"}
 _TEACHING_EVAL_BLOCK_LABEL_LINES = {"수업방식", "평가방법"}
 
+# 경영대학류 템플릿(2026-08-25 실측: 경영학과 PDF 4건 전수, 같은 구조 확인) —
+# 표준 템플릿("교수목표"/"강의개요")과 라벨 이름 자체가 다르다:
+# "강의목표"(목표), "주요"+"학습내용"(핵심 내용, 두 조각짜리 라벨),
+# "강의개요"+"강의구성"(구성 — 여기선 "강의개요"가 사실상 빈 헤더고 진짜 내용은
+# "강의구성" 쪽에 있다). 게다가 선수과목/핵심역량 사이에 경영학 인증(AACSB류)
+# 전용 "OO 세부 학습성과 목표" 표(BL 1-1 등)가 끼어 있어서 표준 템플릿의
+# "지식 다음부터 핵심역량 전까지 = 교수목표+강의개요" 가정이 아예 안 맞는다.
+_BUSINESS_TEMPLATE_NOISE_RE = re.compile(
+    r"BL\s*\d+-\d+|밀접\(High\)|보통\(Medium\)|낮음\(Low\)|"
+    r"지구시민|소통협력|지식탐구|혁신도전|창의융합|부산대학교|5대\s*핵심역량|"
+    r"학습성과\s*목표|상관관계|교육방법|경영학\s*세부"
+)
+# "지구시민/소통협력/..." 헤더 줄 아래, 어느 역량에 해당하는지 O 표시만 있는 줄
+# (예: "  O     O    O      O     O") — 노이즈 키워드가 하나도 없어서 위 정규식으로
+# 못 잡는다.
+_BUSINESS_TEMPLATE_O_ROW_RE = re.compile(r"^\s*(O\s*)+$")
+_BUSINESS_TEMPLATE_LABEL_LINES = {"강의목표", "주요", "학습내용", "강의개요", "강의구성"}
+
+
+def _is_business_template(lines: list[str]) -> bool:
+    """"강의목표" 라벨이 있고 "교수목표" 라벨이 없으면 경영대학류 템플릿으로 본다 —
+    지금까지 실측한 표준 템플릿 샘플엔 "강의목표"가 나온 적이 없어 상호 배타적인
+    구분자로 쓸 만하다."""
+    return (
+        _find_label_line(lines, "강의목표") is not None
+        and _find_label_line(lines, "교수목표") is None
+    )
+
 
 def _strip_leading_label(line: str, labels: set[str]) -> str:
     for label in labels:
@@ -180,6 +208,49 @@ def _parse_objectives_and_overview(block_lines: list[str]) -> tuple[str | None, 
     return objectives, overview
 
 
+def _parse_business_template_objectives_and_overview(
+    lines: list[str], idx_competency_header_section: int | None
+) -> tuple[str | None, str | None]:
+    """경영대학류 템플릿 전용(모듈 상단 `_is_business_template` 주석 참고).
+
+    `course_objectives` = "강의목표" 셀. `course_overview` = "주요학습내용"+
+    "강의구성" 두 셀을 합친 것 — 표준 템플릿의 "강의개요" 하나가 여기선 이
+    두 개로 쪼개져 있어서, 이 파서가 담당하는 두 필드(objectives/overview)에
+    맞추려면 이렇게 합칠 수밖에 없다.
+
+    **"강의목표"↔"주요학습내용" 경계는 원문 자체에 뚜렷한 표시가 없다** — 둘 다
+    표 셀 세로 중앙 정렬 라벨이고, 실측(2026-08-25, 경영학과 4개 PDF 전수)
+    으로는 두 필드가 전환되는 정확한 줄에 빈 줄도 라벨도 없다. "주요" 라벨이
+    나오는 위치를 경계로 쓰는데, 이러면 주요학습내용 맨 앞 한두 줄이 강의목표
+    쪽으로 새어 들어갈 수 있다 — 완벽한 경계라고 주장하지 않는다(모듈
+    docstring과 같은 원칙, `raw_text`에 원문 전체가 그대로 남는다)."""
+    idx_goal = _find_label_line(lines, "강의목표")
+    idx_main_start = _find_label_line(lines, "주요", start=idx_goal) if idx_goal is not None else None
+    idx_overview_label = _find_label_line(lines, "강의개요", start=idx_main_start) if idx_main_start is not None else None
+    idx_teaching_mode = _find_label_line(lines, "수업방식", start=idx_overview_label) if idx_overview_label is not None else None
+
+    def _clean_block(block_lines: list[str]) -> str | None:
+        filtered = [
+            l for l in block_lines
+            if not _BUSINESS_TEMPLATE_NOISE_RE.search(l) and not _BUSINESS_TEMPLATE_O_ROW_RE.match(l)
+        ]
+        stripped = [
+            s for s in (_strip_leading_label(l.strip(), _BUSINESS_TEMPLATE_LABEL_LINES) for l in filtered)
+            if s
+        ]
+        return _join(stripped)
+
+    objectives = None
+    if idx_competency_header_section is not None and idx_main_start is not None:
+        objectives = _clean_block(lines[idx_competency_header_section + 1: idx_main_start])
+
+    overview = None
+    if idx_main_start is not None and idx_teaching_mode is not None:
+        overview = _clean_block(lines[idx_main_start: idx_teaching_mode])
+
+    return objectives, overview
+
+
 def _parse_core_competencies(lines: list[str], header_idx: int) -> list[str] | None:
     """"지구시민 소통협력 지식탐구 혁신도전 창의융합" 헤더 줄과, 그 아래 몇 줄 안에
     나오는 O 표시를 **글자 위치**로 맞춰서 어느 역량인지 찾는다. `pdftotext -layout`이
@@ -260,6 +331,15 @@ def parse_syllabus_text(raw_text: str) -> ParsedSyllabus:
     idx_prereq_start = _find_label_line(lines, "선수과목")
     idx_prereq_end = _find_label_line(lines, "지식", start=idx_prereq_start or 0) \
         if idx_prereq_start is not None else None
+    if idx_prereq_end is None and idx_prereq_start is not None:
+        # 선수과목 셀이 완전히 비어 있으면 "선수과목 및 지식" 세 단어가 통째로
+        # 두 줄에 걸쳐(예: "선수과목"/"및 지식") 쪼개진다 — "지식"이 줄 맨 앞이
+        # 아니라 "및" 뒤에 붙어 나오는 경우까지 다음 몇 줄 안에서 찾는다
+        # (실측: 경영대학류 템플릿, 2026-08-25 — 4개 PDF 전수 이 패턴).
+        for i in range(idx_prereq_start, min(idx_prereq_start + 4, len(lines))):
+            if "지식" in lines[i]:
+                idx_prereq_end = i
+                break
     idx_objectives = _find_label_line(lines, "교수목표", start=idx_prereq_end or 0) \
         if idx_prereq_end is not None else _find_label_line(lines, "교수목표")
     idx_competency_header_section = _find_label_line(lines, "교과목과 핵심역량과의 관계")
@@ -309,15 +389,24 @@ def parse_syllabus_text(raw_text: str) -> ParsedSyllabus:
         block = [first] + lines[idx_prereq_start + 1: idx_prereq_end]
         parsed.prerequisites_text = _join(block)
 
-    # 교수목표+강의개요: "지식" 레이블 다음부터, 핵심역량/교재 섹션 시작 전까지.
-    obj_end = idx_competency_header_section or idx_textbooks or idx_weekly
-    if idx_prereq_end is not None and obj_end is not None:
-        block = lines[idx_prereq_end + 1: obj_end]
-        parsed.course_objectives, parsed.course_overview = _parse_objectives_and_overview(block)
-    elif idx_objectives is not None and obj_end is not None:
-        # "선수과목 및/지식" 자체가 없는(=선수과목 섹션이 통째로 빈) 드문 케이스 대비.
-        block = lines[idx_objectives: obj_end]
-        parsed.course_objectives, parsed.course_overview = _parse_objectives_and_overview(block)
+    if _is_business_template(lines):
+        # 경영대학류 템플릿(모듈 상단 주석 참고) — "교수목표"/"강의개요" 라벨도,
+        # 그 사이 구간 가정("지식" 다음부터 핵심역량 전까지")도 안 맞는다.
+        # 전용 함수로 "강의목표"→course_objectives, "주요학습내용"+"강의구성"→
+        # course_overview를 따로 뽑는다.
+        parsed.course_objectives, parsed.course_overview = (
+            _parse_business_template_objectives_and_overview(lines, idx_competency_header_section)
+        )
+    else:
+        # 교수목표+강의개요: "지식" 레이블 다음부터, 핵심역량/교재 섹션 시작 전까지.
+        obj_end = idx_competency_header_section or idx_textbooks or idx_weekly
+        if idx_prereq_end is not None and obj_end is not None:
+            block = lines[idx_prereq_end + 1: obj_end]
+            parsed.course_objectives, parsed.course_overview = _parse_objectives_and_overview(block)
+        elif idx_objectives is not None and obj_end is not None:
+            # "선수과목 및/지식" 자체가 없는(=선수과목 섹션이 통째로 빈) 드문 케이스 대비.
+            block = lines[idx_objectives: obj_end]
+            parsed.course_objectives, parsed.course_overview = _parse_objectives_and_overview(block)
 
     if idx_competency_header_section is not None:
         header_idx = _find_label_line(
