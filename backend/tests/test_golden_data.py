@@ -34,6 +34,13 @@ TC01~TC06은 컴퓨터공학과 위주였다. TC07~TC09가 다양성을 보강�
 학과(간호학과)의 전 카테고리 기준학점 대조, TC09는 골든셋에 없던 부전공(minor)
 시나리오다. 셋 다 실 Supabase의 실제 department/major/학점 구성을 그대로 썼다
 (2026-08-23 조회 기준).
+
+TC10~TC11(2026-08-26 추가)은 엔진 코드에 이미 있던 두 방어 로직(major→department
+폴백, 중복 요건 행 경고)이 실제 프로덕션 인시던트(2026-08-13, `_find_requirement`/
+`_find_in_scope` docstring 참고)에서 나왔는데도 골든셋에 회귀 방지 장치가 전혀
+없던 사각지대를 메운다. 이 둘은 합성 데이터(`run_golden_tests.py`의 "테스트학과"/
+"미배정전공")로만 구성 — 실 Supabase 데이터를 흉내 낼 필요 없이 엔진의 두 분기
+자체를 트리거하기만 하면 된다.
 """
 
 GOLDEN_SCENARIOS = [
@@ -260,6 +267,56 @@ GOLDEN_SCENARIOS = [
             "minor": {
                 "requirement_found": True,
                 "satisfied": True,
+            },
+        },
+    },
+    {
+        "scenario_id": "TC10_MAJOR_FALLBACK_TO_DEPARTMENT",
+        "description": (
+            "산업공학과 소속 '미배정전공' 학생 — 그 전공만의 기준학점 행이 없어 "
+            "학과 단위(major_id IS NULL) 행으로 폴백해야 함. TC04(연도 폴백)와 다른 "
+            "폴백 경로라 curriculum_year는 학과 단위 행과 정확히 일치시켜(2024) "
+            "두 폴백이 섞이지 않게 한다. 2026-08-13 실제 사고(활성 학적 6건 중 3건이 "
+            "이 경로에 걸려 판정 자체가 안 됨) 재현 — 회귀 방지 장치가 없었다."
+        ),
+        "programs": [
+            {"type": "primary", "department": "산업공학과", "major": "미배정전공", "curriculum_year": "2024"},
+        ],
+        "courses": [
+            {"category": "전공필수", "credits": 20.0},
+        ],
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "categories": {"전공필수": True},
+                "warning_contains": "학과 단위 기준으로 판정",
+            },
+        },
+    },
+    {
+        "scenario_id": "TC11_DUPLICATE_REQUIREMENT_ROWS",
+        "description": (
+            "같은 조건(학과/전공/이수유형/교육과정연도)의 기준학점 행이 2개 존재 — "
+            "graduation_requirements에 unique 제약이 없어 데이터 정리 실수로 생길 수 "
+            "있다. 2026-08-13 실제 사고(간호학과 dual 2026 중복 2행 → 졸업요건 조회 "
+            "MultipleResultsFound로 500 에러) 재현. 500으로 죽지 않고 하나를 "
+            "결정적으로(id 오름차순) 골라 계산 + 경고를 남기는지 검증 — "
+            "회귀 방지 장치가 없었다."
+        ),
+        "programs": [
+            {"type": "primary", "department": "테스트학과", "major": None, "curriculum_year": "2026"},
+        ],
+        "courses": [
+            {"category": "전공필수", "credits": 30.0},
+        ],
+        "expected": {
+            "primary": {
+                "requirement_found": True,
+                "categories": {"전공필수": True},
+                # id가 더 작은(먼저 넣은) 행(30학점)이 결정적으로 선택돼야 한다 —
+                # 두 번째 행(35학점)이 골라졌다면 이 값이 안 맞는다.
+                "category_required_credits": {"전공필수": 30},
+                "warning_contains": "같은 조건의 기준학점 행이",
             },
         },
     },

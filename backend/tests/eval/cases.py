@@ -1226,6 +1226,16 @@ def case_tt_minor_student() -> EvalCase:
         expectations=[
             ExpectedBehavior("tool_called", "list_offered_courses"),
             ExpectedBehavior("schedules_count", (">=", 1)),
+            ExpectedBehavior(
+                "custom",
+                lambda r: None if 6502 in _schedule_offering_ids(r)
+                else f"부전공(전자) 필수과목 회로이론(offering 6502)이 조합에 없음: {r.schedules}",
+                reason="tool_called/schedules_count만으로는 '부전공 학과 과목을 넓게 "
+                       "검색했다'와 '실제로 부전공 필수과목을 채워 넣었다'를 구분 못 한다 "
+                       "— 부전공 필수(special_rules.groups)로 지정한 회로이론이 실제로 "
+                       "조합에 들어갔는지까지 확인해야 이 케이스의 이름값(부전공 필수과목 "
+                       "우선 검증)에 맞는다.",
+            ),
         ],
     )
 
