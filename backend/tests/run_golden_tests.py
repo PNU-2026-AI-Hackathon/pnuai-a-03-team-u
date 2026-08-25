@@ -41,7 +41,7 @@ def setup_hierarchy(db):
     db.add(college)
     db.commit()
 
-    for name in ("컴퓨터공학과", "수학과", "산업공학과", "간호학과", "경영학과"):
+    for name in ("컴퓨터공학과", "수학과", "산업공학과", "간호학과", "경영학과", "테스트학과"):
         dept = Department(college_id=college.id, name=name)
         db.add(dept)
         db.commit()
@@ -58,6 +58,14 @@ def setup_hierarchy(db):
     db.add(ai_track_major)
     db.commit()
     MAJOR_IDS["산업AI(SW융합트랙)"] = ai_track_major.id
+
+    # TC10 — 산업공학과 소속이지만 이 전공만의 기준학점 행은 없다(전공 요건 미등록
+    # 학과·전공 조합, 2026-08-13 발견된 실제 사고 패턴 — _find_requirement 폴백
+    # docstring 참고). 요건 행은 일부러 안 만든다.
+    fallback_major = Major(department_id=DEPT_IDS["산업공학과"], name="미배정전공")
+    db.add(fallback_major)
+    db.commit()
+    MAJOR_IDS["미배정전공"] = fallback_major.id
 
 
 def setup_requirements(db):
@@ -166,6 +174,27 @@ def setup_requirements(db):
                 program_type="minor",
                 curriculum_year="2026",
                 required_total_credits=21,
+            ),
+            # TC11 — 같은 조건(department/major/program_type/curriculum_year)의 기준학점
+            # 행이 2개(2026-08-13 실제 발견: 간호학과 dual 2026이 2행이라 조회가
+            # MultipleResultsFound로 500 에러 났었다 — _find_in_scope 폴백 docstring
+            # 참고). unique 제약이 없어 데이터 정리 실수로 또 생길 수 있다 — 500으로
+            # 죽지 않고 하나를 골라(id 오름차순) 계산 + 경고를 남기는지 검증한다.
+            GraduationRequirement(
+                department_id=DEPT_IDS["테스트학과"],
+                major_id=None,
+                program_type="primary",
+                curriculum_year="2026",
+                required_total_credits=130,
+                required_major_required=30,
+            ),
+            GraduationRequirement(
+                department_id=DEPT_IDS["테스트학과"],
+                major_id=None,
+                program_type="primary",
+                curriculum_year="2026",
+                required_total_credits=140,  # 위 행과 값이 달라 "어느 걸 골랐는지"가 실제로 드러남
+                required_major_required=35,
             ),
         ]
     )
