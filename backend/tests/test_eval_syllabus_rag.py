@@ -71,6 +71,17 @@ class JudgeRelevanceParsingTest(unittest.TestCase):
         result = _judge_relevance(client, "AI 엔지니어", candidates)
         self.assertEqual([False], result)
 
+    def test_bare_top_level_array_does_not_crash(self):
+        """독립 리뷰(2026-08-25) 지적·재현: response_format=json_object는 최상위가
+        반드시 object라 이론상 배열이 안 와야 하지만, 방어 코드가 `parsed.get(...)`
+        뒤에 있어서 parsed가 진짜 list면 그 get() 호출 자체가 AttributeError로
+        먼저 죽어 방어가 실행되기도 전에 크래시했다. isinstance 체크를 맨 앞으로
+        옮겨서 고쳤다 — 이 테스트가 없으면 이 방어 분기는 항상 죽은 코드다."""
+        client = self._client_returning('[{"index": 1, "relevant": true}]')
+        candidates = [{"course_name": "과목1", "evidence": ""}]
+        result = _judge_relevance(client, "AI 엔지니어", candidates)
+        self.assertEqual([True], result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,10 +104,14 @@ def _judge_relevance(client: OpenAI, career_goal: str, candidates: list[dict]) -
         return [False] * len(candidates)
     # response_format=json_object는 최상위가 반드시 object라 배열을 바로 못 돌려준다 —
     # "judgments" 키에 담아달라고 프롬프트로 요청했다. 혹시 모델이 다른 키를 쓰면 흔한
-    # 대안 키들도 흡수한다.
-    items = parsed.get("judgments") or parsed.get("results") or parsed.get("items") or []
-    if isinstance(parsed, list):  # 방어적 — json_object 모드에서 이론상 안 나오지만.
+    # 대안 키들도 흡수하고, 이론상 안 나오지만 최상위가 배열로 온 경우도 방어한다.
+    # (독립 리뷰 2026-08-25 지적: 예전엔 이 배열 방어가 `parsed.get(...)` 뒤에 있어서,
+    # parsed가 진짜 list면 그 get() 호출 자체가 AttributeError로 먼저 죽어 방어 코드가
+    # 실행되기 전에 크래시했다 — isinstance 체크를 맨 앞으로 옮겨서 실제로 방어되게 했다.)
+    if isinstance(parsed, list):
         items = parsed
+    else:
+        items = parsed.get("judgments") or parsed.get("results") or parsed.get("items") or []
     verdicts = [False] * len(candidates)
     for item in items:
         idx = item.get("index")
