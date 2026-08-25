@@ -10,7 +10,7 @@ RAG 담당자(#69, `agent/rag-pgvector-retrieval`)가 만든 검색 시스템. A
 **`use_vector` 기본값을 `false`로 바꿔서 구조화 DB 필터를 기본 경로로 삼기로 했다.**
 이유: `courses`/`graduation_requirements`는 애초에 학과/전공/학년/학기/이수구분이
 전부 정형 컬럼으로 있는 카탈로그 데이터라, 자유 텍스트 문서를 의미 기반으로
-찾아야 하는 전형적인 RAG 상황이 아니다. 정형 필터 + 진로 키워드 확장
+찾아야 하는 전형적인 RAG 상황이 아니다. 정형 필터 + 진로 목표 원문 토큰 랭킹
 (`career_keywords.py`)만으로 이미 "학과 스코프 정확히 좁히기 + 진로 관련 과목
 우선 랭킹"이 다 되는데, 그 위에 임베딩 검색 단계를 하나 더 얹는 건 비용(OpenAI
 API 호출)과 미검증 코드 경로(아래 2·3·4번 이슈)만 늘리고 실익이 크지 않다고
@@ -30,7 +30,7 @@ API 호출)과 미검증 코드 경로(아래 2·3·4번 이슈)만 늘리고 �
 - `app/ai/rag/curriculum_retriever.py` — `CurriculumRetriever`(과목 후보),
   `GraduationRequirementRetriever`(졸업요건). `use_vector=false`(기본)면 바로
   courses/graduation_requirements 테이블 구조화 필터 + 키워드 랭킹만 실행
-- `app/ai/rag/career_keywords.py` — 진로 키워드 확장(기본 경로의 키워드 랭킹용)
+- `app/ai/rag/career_keywords.py` — 진로 목표 원문 토큰화(기본 경로의 키워드 랭킹용)
 - `app/api/rag.py` — `POST /rag/curriculum/search`, `POST /rag/graduation-requirements/search`,
   `POST /rag/ingest`
 

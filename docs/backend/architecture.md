@@ -1,5 +1,9 @@
 # Plan-U Backend, DB, and Infra Architecture
 
+> **문서 상태:** 구현 전 작성한 설계 기록이다. 현재 구조·배포·AI 경계의 기준은
+> [README](../../README.md)와 `backend/app/` 소스이며, 이 문서의 예정 인프라·미구현
+> 기능 설명은 현재 동작을 뜻하지 않는다.
+
 ## Purpose
 
 This document records the backend, database, and deployment direction agreed for Plan-U before implementation starts.

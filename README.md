@@ -107,7 +107,7 @@ flowchart TB
 
     subgraph DATA["🗄️ Supabase PostgreSQL"]
         PG[("관계형 테이블<br/>학사 계층 · 강좌<br/>졸업요건 · 로드맵")]
-        VEC[("pgvector<br/>교육과정 임베딩 · RAG")]
+        VEC[("pgvector<br/>교육과정 임베딩 · 선택적 벡터 검색")]
     end
 
     subgraph EXT["🌐 외부 서비스"]
@@ -185,7 +185,7 @@ flowchart TB
 | Langfuse | AI 응답 품질, 지연 시간, 비용을 한곳에서 점검할 수 있다. | AI 실행 기록·모니터링 |
 | slowapi | 과도한 요청과 로그인 시도를 제한할 수 있다. | API 요청량 제한 |
 | bcrypt / python-jose | 비밀번호 보호와 로그인 토큰 검증에 널리 쓰이는 방식이다. | 비밀번호 해시·JWT 인증 |
-| PostgreSQL (Supabase) + pgvector | 학사 데이터와 검색용 임베딩을 하나의 DB에서 관리할 수 있다. | 데이터 저장·유사도 검색 |
+| PostgreSQL (Supabase) + pgvector | 학사 데이터와 검색용 임베딩을 하나의 DB에서 관리할 수 있다. | 데이터 저장·선택적 벡터 검색 |
 | Playwright | 로그인 후 표시되는 학생지원시스템 정보를 읽을 수 있다. | 학사 정보·수강편람 수집 |
 | BeautifulSoup | 수집한 페이지의 표 데이터를 가볍게 추출할 수 있다. | HTML 데이터 정리 |
 | APScheduler | 별도 서버 없이 반복 작업을 예약할 수 있다. | 정기 수집·보존기간 파기 예약 |
@@ -240,7 +240,7 @@ AI가 사용하는 기능은 요청한 학생의 데이터만 참조하며, AI�
 
 | 검증 구분 | 실행 방식 | 확인 항목 |
 |---|---|---|
-| 단위 테스트 | `pytest` | 도메인·API·크롤링·보안 등 656개 테스트 |
+| 단위 테스트 | `pytest` | 도메인·API·크롤링·보안 등 650개 이상 테스트 |
 | 규칙 엔진 골든테스트 | `run_golden_tests.py` | 졸업요건 판정 결과(TC01~TC09) |
 | AI 구조 검증 | `tests.eval.run_eval` | 로드맵·시간표 에이전트의 도구 호출과 기본 동작 |
 | LLM 응답 검증 | `tests.eval.run_eval --live` | 실제 응답의 과목·시간표·선수과목 조건 |
@@ -476,7 +476,7 @@ $ npm run dev                     # http://localhost:5173
 | `DATABASE_URL` | PostgreSQL 연결 문자열 (pgvector 확장 필요) |
 | `OPENAI_API_KEY` | LLM 에이전트 · RAG 임베딩용 |
 | `JWT_SECRET_KEY` | 로그인 토큰 서명 키 |
-| `CREDENTIAL_ENCRYPTION_KEY` | 포털 연동 자격증명 암호화(Fernet) 키 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 레거시 포털 자격증명 암호화(Fernet) 키 (현재 동기화 경로는 저장하지 않음) |
 | `SMTP_*` / `RESEND_API` | 비밀번호 재설정 메일 발송용 (미설정 시 발송을 건너뛰고 개발환경에서만 로그로 링크 확인) |
 | `PNU_LOGIN_ID` / `PNU_LOGIN_PW` | 수강편람·교과목개요 적재 스크립트용 포털 계정 (선택) |
 

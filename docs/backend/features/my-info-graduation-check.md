@@ -65,8 +65,8 @@
 
 ## DB 매핑 (`app/ingestion/normalizers/pnu_normalizer.py`)
 
-- `save_portal_credential` — 포털 계정 저장. 비밀번호는 평문 저장하지 않고
-  `app/core/security.py`의 Fernet 암호화(`encrypt_secret`)로 저장
+- `save_portal_credential` — 과거 암호화 저장을 위해 남아 있는 헬퍼. 현재
+  `POST /me/portal-sync` 경로에서는 호출하지 않으며, 포털 비밀번호는 요청 처리 중에만 사용한다.
 - `map_student_record` — 학적부 → `User`(이름/학번/department_id/major_id) 갱신 +
   `UserAcademicProgram`(주전공) upsert
 - `map_academic_program_registrations` — 졸업예정정보 테이블 0의 학적신청 행 →
