@@ -104,6 +104,13 @@ class SyllabusParserTest(unittest.TestCase):
         self.assertIn("과제물 30%", self.parsed.evaluation_method)
         self.assertIn("중간고사 30%", self.parsed.evaluation_method)
 
+    def test_evaluation_method_drops_accessibility_boilerplate_and_label(self):
+        """이 샘플의 평가방법 셀에는 실제 배점 뒤에 장애학생 안내문(원본 텍스트가
+        "...있습니\\n다."로 두 줄에 걸쳐 있음)이 붙어 있다 — 교수가 쓴 내용이
+        아니므로 남으면 안 된다."""
+        self.assertNotIn("장애학생", self.parsed.evaluation_method)
+        self.assertNotIn("평가방법", self.parsed.evaluation_method)
+
     def test_prerequisites_bracketed_by_two_line_label(self):
         self.assertEqual(
             "파이썬, C언어, java 중 최소 1개 언어를 배운 뒤 수강하시기 바랍니다.",
@@ -118,6 +125,12 @@ class SyllabusParserTest(unittest.TestCase):
         self.assertIn("강의는 해당 주차에", self.parsed.course_overview)
         self.assertIn("들으시길 권장합니다", self.parsed.course_overview)
         self.assertNotIn("5. 시의성 있는 문제를", self.parsed.course_overview)
+
+    def test_overview_drops_accessibility_boilerplate_and_label(self):
+        """"강의개요" 레이블 뒤에 장애학생 안내문이 붙어 있다 — 둘 다 교수가 쓴
+        실제 강의개요가 아니므로 남으면 안 된다."""
+        self.assertNotIn("장애학생", self.parsed.course_overview)
+        self.assertNotIn("강의개요", self.parsed.course_overview)
 
     def test_textbooks(self):
         self.assertIn("문병로", self.parsed.textbooks)
@@ -155,6 +168,88 @@ class SyllabusParserTest(unittest.TestCase):
     def test_raw_text_preserved_verbatim(self):
         """구조화 파싱이 뭘 놓치든, 원문 전체는 그대로 남아야 한다(모델 docstring 참고)."""
         self.assertEqual(_SAMPLE_TEXT, self.parsed.raw_text)
+
+
+
+class EmptyCellAccessibilityBoilerplateTest(unittest.TestCase):
+    """실제 One-Stop PDF(인공지능이해 FM2003112분반001, 2026-2학기, 2026-08-25
+    다운로드)를 그대로 옮긴 것 — 교수가 연락처/평가방법/교수목표/강의개요를 전부
+    비워둔 실제 사례. 예전엔 이 셀들이 비어 있으면 그 자리를 차지하는 장애학생
+    안내문(One-Stop 템플릿이 자동으로 넣는 문구, 교수가 쓴 게 아니다)이나
+    레이블 단어 자체가 실제 내용인 것처럼 그대로 저장됐다."""
+
+    def setUp(self):
+        self.parsed = parse_syllabus_text('                 2026학년도 2학기 교수계획표\n교과목명       인공지능이해      교과목번호        FM2003112     분반            001\n\n개설학과      미래모빌리티전공      개설학년          3학년       학점-이론-실습   2.0 - 2.0 - 0.0\n\n강의시간\n및 강의실\n                         연구실\n                                                 상담시간\n                      (상담가능장소)\n담당교수\n                        연락처                       이메일\n\n         ㆍ대면\n수업방식\n         ㆍ강의식\n\n\n\n평가방법\n         * 장애학생의 경우 시험기간의 연장이 가능하며, 대필이나 컴퓨터를 활용하여 시험에 응시할 수 있습니\n         다.\n선수과목 및\n  지식\n\n교수목표\n\n\n\n         * 장애학생의 경우 장애학습지원센터와 강의 및 과제에 대한 사전 협의가 가능합니다.\n강의개요\n\n\n\n                               교재 및 참고문헌\n\n\n직접입력     "밑바닥부터 시작하는 딥러닝"-사이토 고키 지음 한빛미디어 2017')
+
+    def test_empty_objectives_and_overview_become_none_not_boilerplate(self):
+        self.assertIsNone(self.parsed.course_objectives)
+        self.assertIsNone(self.parsed.course_overview)
+
+    def test_empty_evaluation_method_becomes_none_not_boilerplate(self):
+        self.assertIsNone(self.parsed.evaluation_method)
+
+    def test_teaching_mode_still_extracted_when_contact_info_is_blank(self):
+        """담당교수가 연락처/이메일을 아예 안 채운 경우, 예전엔 그 값 매치 실패로
+        수업방식 추출 자체가 통째로 None이 됐다(2026-08-25 실측) — 실제로 있는
+        "ㆍ대면"/"ㆍ강의식" 내용은 살아있어야 한다."""
+        self.assertIn("ㆍ대면", self.parsed.teaching_mode)
+        self.assertIn("ㆍ강의식", self.parsed.teaching_mode)
+        self.assertNotIn("수업방식", self.parsed.teaching_mode)
+
+    def test_contact_absent_is_none_not_crash(self):
+        self.assertIsNone(self.parsed.phone)
+        self.assertIsNone(self.parsed.email)
+
+
+class LabelAndBoilerplateSharingContentLineTest(unittest.TestCase):
+    """실제 One-Stop PDF(유기화학 AB2002371분반140, 2026-2학기, 2026-08-25
+    다운로드)를 그대로 옮긴 것. 두 가지 실제 함정을 같이 담고 있다:
+    (1) 이메일이 길어서 "담당교수"/"연락처" 표 셀 안에서 줄이 꺾여, "이메일"
+    레이블이 있는 줄 자체엔 값이 없고 가운데 줄에 앞부분, 그다음 줄에 한 글자
+    (`r`)만 잔재로 남는다 — 이 잔재를 수업방식 내용 시작으로 착각하면 안 된다.
+    (2) 장애학생 안내문(영문판 포함)과 레이블 단어가 교수가 실제로 쓴 내용과
+    같은 물리적 줄에 바로 이어 붙는다(예: "Attitude 10%, Attendance 10%, Exam
+    80% , * Students with disabilities can request...", "강의개요     After
+    learning...") — 실제 내용까지 통째로 버리면 안 되고, 레이블/안내문만 벗겨야
+    한다."""
+
+    def setUp(self):
+        self.parsed = parse_syllabus_text('                          2026학년도 2학기 교수계획표\n 교과목명            유기화학                   교과목번호            AB2002371               분반                   140\n\n 개설학과      첨단바이오공학전공                    개설학년               2학년             학점-이론-실습              3.0 - 3.0 - 0.0\n\n강의시간\n                                        월 10:30(75) 양산Y17-101, 수 10:30(75) 양산Y17-101\n및 강의실\n                                      연구실\n                                                                              상담시간\n                                   (상담가능장소)\n 담당교수             정상화\n                                                                                           sanghwa.jeong@pusan.ac.k\n                                         연락처                8539               이메일\n                                                                                                       r\n\n          ㆍ대면\n 수업방식\n          ㆍ강의식\n\n\n          Attitude 10%, Attendance 10%, Exam 80% , * Students with disabilities can request an extension of the\n 평가방법     exam hour, and they can take exams by getting writing assistance or by using a computer.\n          * 장애학생의 경우 시험기간의 연장이 가능하며, 대필이나 컴퓨터를 활용하여 시험에 응시할 수 있습니\n          다.\n선수과목 및\n          General Chemistry (I), (II)\n  지식\n          This lecture will cover the basic level of organic chemistry, and provide the important chemical reactio\n          ns for biomedical engineering applications.\n 교수목표     After learning organic chemistry, students may understand the fundamental properties of organic molecu\n          les such as solvent, drug, polymer, and biomaterials.\n\n          - Chemical bonding and resonance structures in organic molecules\n          - How the acid/base and nucleophile/electrophile is related with chemical reactivity\n          - Important conjugation chemistries in biomedical engineering\n          - Regiochemistry and stereochemistry of organic molecules\n 강의개요\n          * 장애학생의 경우 장애학습지원센터와 강의 및 과제에 대한 사전 협의가 가능합니다.\n\n\n\n\n                                           교과목과 핵심역량과의 관계\n\n               지구시민                     소통협력              지식탐구                  혁신도전                  창의융합\n 부산대학교\n5대 핵심역량\n                                                             O\n\n                                             교과목에 따른 핵심역량\n\n                       학과 핵심역량                                                         교육방법\n\n  01      지식탐구                                                       수업\n\n                                                교재 및 참고문헌\n\n\n 직접입력     (주교재)Atkins et al., Organic Chemistry:A brief course, 3rd Edition, McGraw-Hill')
+
+    def test_wrapped_email_fragment_does_not_become_teaching_mode(self):
+        self.assertIn("ㆍ대면", self.parsed.teaching_mode)
+        self.assertIn("ㆍ강의식", self.parsed.teaching_mode)
+        self.assertNotEqual("r", self.parsed.teaching_mode)
+
+    def test_evaluation_method_keeps_real_content_before_english_boilerplate(self):
+        self.assertIn("Attitude 10%, Attendance 10%, Exam 80%", self.parsed.evaluation_method)
+        self.assertNotIn("Students with disabilities", self.parsed.evaluation_method)
+        self.assertNotIn("장애학생", self.parsed.evaluation_method)
+        self.assertNotIn("평가방법", self.parsed.evaluation_method)
+
+    def test_overview_keeps_real_content_and_drops_leading_label_and_boilerplate(self):
+        self.assertIn("Chemical bonding and resonance structures", self.parsed.course_overview)
+        self.assertNotIn("강의개요", self.parsed.course_overview)
+        self.assertNotIn("장애학생", self.parsed.course_overview)
+
+    def test_textbooks_still_reached_after_all_the_above(self):
+        self.assertIn("Atkins", self.parsed.textbooks)
+
+
+class LabelWhitespaceInsensitiveTest(unittest.TestCase):
+    """"주별 강의계획"(공백 있음)과 "주별강의계획"(공백 없음) 둘 다 실제 PDF에서
+    나온다(2026-08-25 실측, 마케팅조사론 DB3000786분반091은 공백 없는 쪽) —
+    공백 하나 다르다고 라벨을 못 찾으면 그 뒤 섹션 경계가 통째로 무너져서
+    주별 강의계획 표 전체가 textbooks에 섞여 들어갔었다."""
+
+    def test_find_label_line_ignores_internal_whitespace_variance(self):
+        from app.ingestion.parsers.onestop_syllabus import _find_label_line
+
+        lines_with_space = ["아무 내용", "주별 강의계획", "표 내용"]
+        lines_without_space = ["아무 내용", "주별강의계획", "표 내용"]
+        self.assertEqual(1, _find_label_line(lines_with_space, "주별 강의계획"))
+        self.assertEqual(1, _find_label_line(lines_without_space, "주별 강의계획"))
+        self.assertEqual(1, _find_label_line(lines_with_space, "주별강의계획"))
 
 
 if __name__ == "__main__":
