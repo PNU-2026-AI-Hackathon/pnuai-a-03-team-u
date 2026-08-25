@@ -241,20 +241,41 @@ def _remaining_terms_until_graduation(db: Session, user_id: int) -> list[dict]:
     return out
 
 
-# PNU 학사 규정 기반 정규 학기 수강신청 학점 상한. 졸업기준학점(required_total_credits)만
-# 참고해서 판정한다 — 성적우수자 +3, 이월 +2, 학·석사 연계 +6 등 학생별 가변 요소는 로드맵
-# 계획 단계에서 확정할 수 없어 base cap만 강제한다(실제 신청 때 CAP 완화 여지가 있어도
-# 계획서에 미리 21학점 넘게 밀어넣지 않도록). 계절수업/도약수업은 정규 학기 상한과 별도라
-# 이 가드가 걸리지 않는다.
+# PNU 학사 규정 기반 정규 학기 수강신청 학점 상한. base cap(단과대학/학과 기준)만
+# 강제한다 — 성적우수자 +3(직전 학기 18학점 이상+평점평균 3.80 이상), 이월 +2(잔여
+# 학점 1회 이월, 직전 학기 수강취소 없어야 함), 학·석사연계과정 +6(6학기부터, 건축학
+# 전공은 8학기부터)은 사용자 지적(2026-08-25)으로 규정 전문을 확인했지만, 이월제는
+# 수강취소 이력을 이 시스템이 아예 안 쌓고(StudentCourseRecord는 이수 완료 기록만
+# 있음), 연계과정 여부도 UserAcademicProgram.program_type에 그런 값이 없어(학적
+# 크롤링이 구분 안 함) 지어내지 않고는 판정할 방법이 없다 — 이 셋은 여전히 미반영.
+# 성적우수자는 데이터가 있어 계산 가능하지만 학기별로 달라지는 값이라(직전 학기가
+# 매번 바뀜) 이 상수 기반 cap과 별도 설계가 필요해 이번엔 손 안 댔다. 계절수업/
+# 도약수업은 정규 학기 상한과 별도라 이 가드가 걸리지 않는다.
 _DEFAULT_TERM_CREDIT_CAP = 21
+
+# 단과대학/학과 단위로 base cap이 132/133학점 기준 19/21 이분법을 벗어나는 특수
+# 트랙(2026 PNU 학칙 "수강신청학점" 규정, 사용자 제공 원문 2026-08-25 기준).
+# 건축학과는 공과대학 소속이라 college만 보면(졸업기준학점도 133 이상이라)
+# 21학점이 될 대상이지만, 규정이 학과 단위로 19학점을 못박아 둬서 department
+# 오버라이드가 college 오버라이드보다 먼저 적용돼야 한다.
+_DEPARTMENT_CREDIT_CAP_OVERRIDES = {
+    "건축학과": 19,
+    "의예과": 23,
+    "의학과": 24,
+}
+_COLLEGE_CREDIT_CAP_OVERRIDES = {
+    "약학대학": 23,
+    # 의과대학은 의예과/의학과 상한이 서로 달라 department 오버라이드로만 잡는다 —
+    # 이 표에 의과대학을 넣으면 두 학과 모두 같은 값으로 뭉개진다.
+}
 
 
 def _per_term_credit_cap(required_total_credits: int | None) -> int:
-    """졸업기준학점을 기준으로 정규 학기당 최대 신청 학점을 리턴한다.
+    """졸업기준학점을 기준으로 정규 학기당 최대 신청 학점을 리턴한다(단과대학/학과별
+    특수 트랙은 호출부에서 `_DEPARTMENT_CREDIT_CAP_OVERRIDES`/`_COLLEGE_CREDIT_CAP_OVERRIDES`로
+    먼저 걸러진 뒤에만 이 일반 규칙으로 떨어진다).
     - 132학점 이하: 19학점
     - 133학점 이상: 21학점
-    (약대/의예/의학과 등 special track는 프로그램 유형이 다르므로 여기서는 커버하지 않는다 —
-    나중에 program_type 등 확장 시 추가)
     """
     if required_total_credits is None:
         return _DEFAULT_TERM_CREDIT_CAP
@@ -1871,7 +1892,21 @@ class _ToolContext:
         )
 
     def _term_credit_cap(self) -> int:
-        """이 학생의 정규 학기 학점 상한을 판정한다. primary 프로그램의 졸업기준학점 기반."""
+        """이 학생의 정규 학기 학점 상한을 판정한다.
+
+        먼저 학과/단과대학 단위 특수 트랙(건축학과/의예과/의학과/약학대학)인지 보고,
+        아니면 primary 프로그램의 졸업기준학점 기반 132/133학점 이분법으로 떨어진다."""
+        if self.user.department_id is not None:
+            from app.domains.academics.models import College as _College, Department as _Department
+
+            department = self.db.get(_Department, self.user.department_id)
+            if department is not None:
+                if department.name in _DEPARTMENT_CREDIT_CAP_OVERRIDES:
+                    return _DEPARTMENT_CREDIT_CAP_OVERRIDES[department.name]
+                college = self.db.get(_College, department.college_id)
+                if college is not None and college.name in _COLLEGE_CREDIT_CAP_OVERRIDES:
+                    return _COLLEGE_CREDIT_CAP_OVERRIDES[college.name]
+
         program = self.db.scalars(
             select(UserAcademicProgram).filter_by(user_id=self.user.id, program_type="primary")
         ).first()

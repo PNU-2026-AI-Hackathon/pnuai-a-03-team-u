@@ -520,6 +520,92 @@ class TermCreditCapGuardTest(unittest.TestCase):
         ctx = self.make_ctx(db, total_req=130)
         self.assertEqual(19, ctx._term_credit_cap())
 
+    def test_credit_cap_23_for_pharmacy_college_regardless_of_total_required(self):
+        """약학대학은 졸업기준학점이 133 이상이라도(=일반 로직이면 21) 규정상 23학점
+        상한이다 — college 오버라이드가 132/133 이분법보다 먼저 적용돼야 한다."""
+        db = self.make_db()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=100, school_id=1, name="약학대학"),
+        ])
+        user = User(id=2, email="pharm@example.com", password_hash="x", name="약대생",
+                    department_id=200, major_id=None)
+        db.add(user)
+        db.add(Department(id=200, college_id=100, name="약학과"))
+        db.add(UserAcademicProgram(user_id=2, program_type="primary",
+                                    department_id=200, major_id=None, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=200, major_id=None, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=160))
+        roadmap = CourseRoadmap(id=2, user_id=2)
+        db.add(roadmap)
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+        self.assertEqual(23, ctx._term_credit_cap())
+
+    def test_credit_cap_19_for_architecture_department_even_in_engineering_college(self):
+        """건축학과는 공과대학 소속이라 college만 보면(졸업기준학점도 133 이상이라)
+        21학점이 될 대상이지만, 규정이 학과 단위로 19학점을 못박아 둔다 — department
+        오버라이드가 college 오버라이드보다 먼저 확인돼야 한다."""
+        db = self.make_db()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=100, school_id=1, name="공과대학"),
+        ])
+        user = User(id=3, email="arch@example.com", password_hash="x", name="건축학생",
+                    department_id=201, major_id=None)
+        db.add(user)
+        db.add(Department(id=201, college_id=100, name="건축학과"))
+        db.add(UserAcademicProgram(user_id=3, program_type="primary",
+                                    department_id=201, major_id=None, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=201, major_id=None, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=140))
+        roadmap = CourseRoadmap(id=3, user_id=3)
+        db.add(roadmap)
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+        self.assertEqual(19, ctx._term_credit_cap())
+
+    def test_credit_cap_24_for_medicine_department(self):
+        db = self.make_db()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=100, school_id=1, name="의과대학"),
+        ])
+        user = User(id=4, email="med@example.com", password_hash="x", name="의대생",
+                    department_id=202, major_id=None)
+        db.add(user)
+        db.add(Department(id=202, college_id=100, name="의학과"))
+        db.add(UserAcademicProgram(user_id=4, program_type="primary",
+                                    department_id=202, major_id=None, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=202, major_id=None, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=200))
+        roadmap = CourseRoadmap(id=4, user_id=4)
+        db.add(roadmap)
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+        self.assertEqual(24, ctx._term_credit_cap())
+
+    def test_credit_cap_unaffected_department_falls_back_to_threshold(self):
+        """오버라이드 표에 없는 일반 학과는 여전히 132/133 이분법을 그대로 쓴다."""
+        db = self.make_db()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=100, school_id=1, name="정보의생명공학대학"),
+        ])
+        user = User(id=5, email="cs@example.com", password_hash="x", name="컴공생",
+                    department_id=203, major_id=None)
+        db.add(user)
+        db.add(Department(id=203, college_id=100, name="정보컴퓨터공학부"))
+        db.add(UserAcademicProgram(user_id=5, program_type="primary",
+                                    department_id=203, major_id=None, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=203, major_id=None, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=130))
+        roadmap = CourseRoadmap(id=5, user_id=5)
+        db.add(roadmap)
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+        self.assertEqual(19, ctx._term_credit_cap())
+
     def test_create_rejects_when_new_credit_exceeds_cap(self):
         db = self.make_db()
         ctx = self.make_ctx(db, total_req=133)  # cap=21
