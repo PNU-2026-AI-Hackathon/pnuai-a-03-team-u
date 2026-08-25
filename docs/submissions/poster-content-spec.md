@@ -253,8 +253,8 @@ JWT 인증                      · REST API                                + pgv
 
 | 항목 | 값 |
 |---|---|
-| 배포 서비스 URL | *(미정)* |
-| GitHub | *(미정)* |
+| 배포 서비스 URL | https://planu-pnu.netlify.app |
+| GitHub | https://github.com/PNU-2026-AI-Hackathon/pnuai-a-03-team-u |
 | 시연 영상 | *(미정)* |
 
 ---

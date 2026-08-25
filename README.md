@@ -476,7 +476,7 @@ $ npm run dev                     # http://localhost:5173
 | `DATABASE_URL` | PostgreSQL 연결 문자열 (pgvector 확장 필요) |
 | `OPENAI_API_KEY` | LLM 에이전트 · RAG 임베딩용 |
 | `JWT_SECRET_KEY` | 로그인 토큰 서명 키 |
-| `CREDENTIAL_ENCRYPTION_KEY` | 포털 연동 자격증명 암호화(Fernet) 키 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 레거시 포털 자격증명 암호화(Fernet) 키 (현재 동기화 경로는 저장하지 않음) |
 | `SMTP_*` / `RESEND_API` | 비밀번호 재설정 메일 발송용 (미설정 시 발송을 건너뛰고 개발환경에서만 로그로 링크 확인) |
 | `PNU_LOGIN_ID` / `PNU_LOGIN_PW` | 수강편람·교과목개요 적재 스크립트용 포털 계정 (선택) |
 
