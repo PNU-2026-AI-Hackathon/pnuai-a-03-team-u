@@ -1,0 +1,483 @@
+{
+  "judge_model": "gpt-4o-mini",
+  "mean_precision_at_10": 0.5285714285714286,
+  "mean_ndcg_at_10": 0.9030082575846141,
+  "personas": [
+    {
+      "label": "컴퓨터공학전공-AI엔지니어",
+      "career_goal": "AI 엔지니어",
+      "precision_at_10": 0.8,
+      "ndcg_at_10": 0.9670943502702474,
+      "results": [
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 16,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "데이터마이닝",
+          "course_id": 6498,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "R을활용한통계학개론",
+          "course_id": 1191,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "AI프로그래밍",
+          "course_id": 6468,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "자료구조",
+          "course_id": 6459,
+          "syllabus_sourced": true,
+          "relevant": false
+        },
+        {
+          "course_name": "데이터베이스",
+          "course_id": 6479,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "컴퓨터그래픽스",
+          "course_id": 6484,
+          "syllabus_sourced": true,
+          "relevant": false
+        },
+        {
+          "course_name": "로보틱스 AI PBL",
+          "course_id": 6190,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "생성형 AI PBL",
+          "course_id": 6191,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "온디바이스 AI PBL",
+          "course_id": 6192,
+          "syllabus_sourced": false,
+          "relevant": true
+        }
+      ]
+    },
+    {
+      "label": "컴퓨터공학전공-백엔드개발자",
+      "career_goal": "백엔드 개발자",
+      "precision_at_10": 0.2,
+      "ndcg_at_10": 0.8175295903539445,
+      "results": [
+        {
+          "course_name": "플랫폼기반프로그래밍",
+          "course_id": 6471,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "컴퓨터응용설계및실험",
+          "course_id": 6496,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "공학미적분학",
+          "course_id": 5997,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "대학영어",
+          "course_id": 1933,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "생명의료윤리",
+          "course_id": 5305,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "수학(I)",
+          "course_id": 1186,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "이산수학(I)",
+          "course_id": 6445,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 5204,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "인터넷과웹기초",
+          "course_id": 6453,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "일반물리학(I)",
+          "course_id": 6446,
+          "syllabus_sourced": false,
+          "relevant": false
+        }
+      ]
+    },
+    {
+      "label": "경영학과-마케팅기획자",
+      "career_goal": "마케팅 기획자",
+      "precision_at_10": 0.6,
+      "ndcg_at_10": 0.9651366671790967,
+      "results": [
+        {
+          "course_name": "경영정보처리",
+          "course_id": 5379,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "마케팅관리",
+          "course_id": 5382,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "유통관리론",
+          "course_id": 5400,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "기술경영",
+          "course_id": 5412,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "마케팅조사론",
+          "course_id": 5416,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "국제마케팅",
+          "course_id": 5428,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "마케팅애널리틱스",
+          "course_id": 5431,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "서비스마케팅",
+          "course_id": 5432,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "경영학원론",
+          "course_id": 5374,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "경제학원론",
+          "course_id": 5375,
+          "syllabus_sourced": false,
+          "relevant": false
+        }
+      ]
+    },
+    {
+      "label": "핀테크융합전공-핀테크개발자",
+      "career_goal": "핀테크 개발자",
+      "precision_at_10": 0.4,
+      "ndcg_at_10": 0.9493885684853096,
+      "results": [
+        {
+          "course_name": "디지털금융",
+          "course_id": 5463,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "핀테크실무세미나1",
+          "course_id": 5498,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "핀테크실무세미나2",
+          "course_id": 5505,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "공학미적분학",
+          "course_id": 5997,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "대학영어",
+          "course_id": 1933,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "생명의료윤리",
+          "course_id": 5305,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "수학(I)",
+          "course_id": 1186,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 5204,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "R을활용한통계학개론",
+          "course_id": 1191,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "건강과레포츠",
+          "course_id": 6,
+          "syllabus_sourced": false,
+          "relevant": false
+        }
+      ]
+    },
+    {
+      "label": "통계학과-데이터사이언티스트",
+      "career_goal": "데이터 사이언티스트",
+      "precision_at_10": 0.6,
+      "ndcg_at_10": 0.9045395669105327,
+      "results": [
+        {
+          "course_name": "R을활용한통계학개론",
+          "course_id": 1191,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 16,
+          "syllabus_sourced": true,
+          "relevant": false
+        },
+        {
+          "course_name": "통계프로그래밍언어(I)",
+          "course_id": 1189,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "AI와데이터사이언스입문",
+          "course_id": 1200,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "범주형자료분석입문",
+          "course_id": 1207,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "회귀분석(II)",
+          "course_id": 1211,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "데이터마이닝입문",
+          "course_id": 1212,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "빅데이터통계분석",
+          "course_id": 1217,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "AI기반창업마케팅",
+          "course_id": 6992,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "AI를활용한음악만들기",
+          "course_id": 7210,
+          "syllabus_sourced": false,
+          "relevant": false
+        }
+      ]
+    },
+    {
+      "label": "데이터사이언스전공-데이터분석가",
+      "career_goal": "데이터 분석가",
+      "precision_at_10": 0.9,
+      "ndcg_at_10": 0.9196461703481418,
+      "results": [
+        {
+          "course_name": "R을활용한통계학개론",
+          "course_id": 1191,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 16,
+          "syllabus_sourced": true,
+          "relevant": false
+        },
+        {
+          "course_name": "프로그래밍원리와실습",
+          "course_id": 6005,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "확률및통계",
+          "course_id": 6006,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "데이터사이언스입문",
+          "course_id": 6011,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "회귀분석과 통계학습",
+          "course_id": 6012,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "데이터사이언스수학",
+          "course_id": 6014,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "응용통계학",
+          "course_id": 6016,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "데이터베이스",
+          "course_id": 6018,
+          "syllabus_sourced": false,
+          "relevant": true
+        },
+        {
+          "course_name": "시계열데이터분석",
+          "course_id": 6020,
+          "syllabus_sourced": false,
+          "relevant": true
+        }
+      ]
+    },
+    {
+      "label": "사회학과-사회조사전문가",
+      "career_goal": "사회조사 분석사",
+      "precision_at_10": 0.2,
+      "ndcg_at_10": 0.7977228895450266,
+      "results": [
+        {
+          "course_name": "사회조사방법론",
+          "course_id": 647,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "공학미적분학",
+          "course_id": 5997,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "대학영어",
+          "course_id": 1933,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "사회사상사",
+          "course_id": 633,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "사회학개론(I)",
+          "course_id": 634,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "생명의료윤리",
+          "course_id": 5305,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "수학(I)",
+          "course_id": 1186,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "인공지능과디지털사고",
+          "course_id": 5204,
+          "syllabus_sourced": false,
+          "relevant": false
+        },
+        {
+          "course_name": "R을활용한통계학개론",
+          "course_id": 1191,
+          "syllabus_sourced": true,
+          "relevant": true
+        },
+        {
+          "course_name": "건강과레포츠",
+          "course_id": 6,
+          "syllabus_sourced": false,
+          "relevant": false
+        }
+      ]
+    }
+  ]
+}
