@@ -252,5 +252,49 @@ class LabelWhitespaceInsensitiveTest(unittest.TestCase):
         self.assertEqual(1, _find_label_line(lines_with_space, "주별강의계획"))
 
 
+
+class BusinessCollegeTemplateTest(unittest.TestCase):
+    """실제 One-Stop PDF(회계학 계열, DB3000929분반092, 2026-2학기, 2026-08-25
+    다운로드)를 그대로 옮긴 것 — 경영대학류 템플릿(모듈 상단 `_is_business_template`
+    주석 참고). "교수목표"/"강의개요" 대신 "강의목표"/"주요학습내용"/"강의구성"
+    라벨을 쓰고, 표준 템플릿엔 없는 경영학 인증(AACSB류) "OO 세부 학습성과 목표"
+    표가 선수과목과 핵심역량 표 사이에 끼어 있다. 이 템플릿을 실제 만나기 전엔
+    course_objectives/course_overview가 전부 None으로 빠졌었다(경영학과 73개
+    PDF 전수 확인, 2026-08-25)."""
+
+    def setUp(self):
+        self.parsed = parse_syllabus_text('                          2026학년도 2학기 교수계획표\n 교과목명           재무회계(II)        교과목번호       DB3000929            분반            092\n\n 개설학과            경영학과               개설학년      2학년               교과구분         전공선택\n\n                                강의시간\n  학점               3.0                        월 15:00(75), 수 15:00(75) 경영관 - 213 강의실\n                                및 강의실\n                                                                상담시간\n                                    연구실명                                     수업전후\n                                                                 (장소)\n 담당교수           서민근(책임)\n                                    연락처     01042947080         이메일     smgmg87@gmail.com\n\n 선수과목\n           회계원리\n 및 지식\n\n                                    교과목과 핵심역량과의 관계\n\n                     지구시민            소통협력       지식탐구             혁신도전          창의융합\n  부산대학교\n  5대 핵심역량\n                          O            O           O               O                 O\n\n                                경영학 세부 학습성과 목표                            상관관계\n\n\n                  BL 1-1 전문경영지식역량                                         밀접(High)\n\n  경영학 세부\n 학습성과 목표 및        BL 1-2 논리적사고력                                           밀접(High)\n   교육방법\n\n                  BL 1-3 정보처리분석력                                        보통(Medium)\n\n\n                  BL 2-2 실무수행능력                                         보통(Medium)\n\n                  본 강의는 재무회계Ⅰ에서 학습한 기초 개념을 바탕으로 중급 수준의 재무회계 이론과\n                  회계기준을 학습한다. 자산, 부채, 자본 및 손익에 관한 주요 회계처리와 재무제표 작성 원리를\n    강의목표          이해하고, 한국채택국제회계기준(K-IFRS)에 따른 회계처리 능력을 배양한다. 또한 다양한 사례와\n                  문제풀이를 통해 회계정보를 분석·해석하고 실무에 적용할 수 있는 능력을 함양하는 것을\n                  목표로 한다.\n                  본 강의에서는 K-IFRS를 기반으로 부채와 자본의 회계처리 원리를 학습하고, 복합금융상품의\n          주요      분류 및 측정, 종업원급여와 주식기준보상의 회계처리, 주당이익(Earnings per Share)의 산정 및\n         학습내용     공시에 관한 내용을 다룬다. 또한 다양한 사례와 문제풀이를 통해 관련 회계기준을 이해하고\n                  재무제표에 적용할 수 있는 실무적 역량을 함양한다.\n강의개요\n                  본 강의는 주요 회계이론의 이해를 바탕으로 K-IFRS 회계기준을 적용한 문제풀이 중심으로\n                  진행된다. 부채, 자본, 복합금융상품, 종업원급여, 주식기준보상 및 주당이익 등 핵심 주제를\n         강의구성\n                  중심으로 사례를 분석하고 다양한 연습문제를 해결함으로써 회계처리 능력과 실무 적용 역량을\n                  향상시키도록 구성한다.\n\n                  대면\n    수업방식\n                  강의식\n\n         중간고사     기말고사        과제물      퀴즈   발표            보고서   출석태도      기타         계 (%)\n\n\n 평가방법      40        40                                           20                     100\n(평가내용)\n\n\n\n         * 장애학생일 경우 시험시간의 연장이 가능하며, 대필이나 컴퓨터를 활용하여 시험에 응할 수 있습니다.\n\n                                      교재 및 참고문헌\n\x0c 직접입력     수업시간에 안내예정\n')
+
+    def test_detected_as_business_template(self):
+        from app.ingestion.parsers.onestop_syllabus import _is_business_template
+        self.assertTrue(_is_business_template(self.parsed.raw_text.split("\n")))
+
+    def test_objectives_comes_from_lecture_goal_label_not_professor_goal_label(self):
+        self.assertIn("재무회계", self.parsed.course_objectives)
+        self.assertIn("한국채택국제회계기준", self.parsed.course_objectives)
+
+    def test_objectives_drops_accreditation_table_noise(self):
+        """선수과목과 핵심역량 표 사이엔 실제 목표 내용이 없다 — 표 노이즈(BL
+        코드/밀접(High) 등급/O 표시 행/헤더)가 다 걸러지고 순수 강의목표 텍스트만
+        남아야 한다."""
+        noise_markers = ["BL 1-1", "밀접(High)", "지구시민", "소통협력", "경영학 세부"]
+        for marker in noise_markers:
+            self.assertNotIn(marker, self.parsed.course_objectives)
+
+    def test_overview_combines_main_content_and_course_structure(self):
+        """course_overview는 "주요학습내용"+"강의구성" 두 셀을 합친 것이어야 한다."""
+        self.assertIn("복합금융상품", self.parsed.course_overview)  # 주요학습내용 쪽
+        self.assertIn("문제풀이 중심으로", self.parsed.course_overview)  # 강의구성 쪽
+
+    def test_standard_template_labels_absent_from_output(self):
+        """"강의목표"/"강의구성"은 실제 문장에 잘 안 나오는 라벨성 단어라 남아있으면
+        안 된다. "주요"는 "주요 회계이론"처럼 실제 문장에도 흔히 나오는 일반 단어라
+        (실측: 이 샘플의 강의구성 내용 자체에 "주요 회계이론"이 들어있음) 라벨
+        누출 검사 대상에서 뺀다 — "학습내용"만 라벨 접두어로 확실히 제거됐는지 본다."""
+        self.assertNotIn("강의목표", self.parsed.course_objectives)
+        self.assertNotIn("학습내용", self.parsed.course_overview)
+        self.assertNotIn("강의구성", self.parsed.course_overview)
+
+
 if __name__ == "__main__":
     unittest.main()
