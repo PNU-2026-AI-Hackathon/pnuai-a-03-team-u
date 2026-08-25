@@ -30,6 +30,46 @@ _COMPETENCY_NAMES = ["지구시민", "소통협력", "지식탐구", "혁신도�
 
 _WEEK_LINE_RE = re.compile(r"제\s*(\d+)\s*주")
 _NUMBERED_ITEM_RE = re.compile(r"^\s*\d+[.)]\s*")
+# One-Stop 템플릿이 학과별 특정 셀에 자동으로 끼워 넣는 장애학생 지원 안내문
+# (평가방법/교수목표·강의개요 셀 근처에 흔함, 영문 강의계획서는 영문판 문구를 쓴다).
+# 교수가 실제로 쓴 내용이 아니라 PNU가 모든 강의계획서에 공통으로 넣는 문구라 어느
+# 필드에도 content로 남으면 안 된다(2026-08-25 실측: 교수가 셀을 비워두면 이
+# 안내문만 남아서 course_overview에 그대로 저장됨). 독립된 줄로 오는 경우도 있고,
+# 교수가 실제로 쓴 내용 뒤에 같은 줄로 바로 이어 붙는 경우도 있다(실측: "Attitude
+# 10%, Attendance 10%, Exam 80% , * Students with disabilities can request...").
+# `_strip_accessibility_boilerplate`가 트리거 지점부터 지우고(앞의 실제 내용은
+# 남긴다), 문장이 pdftotext 줄바꿈으로 다음 줄까지 이어지면(마침표로 안 끝나면)
+# 다음 줄도 같이 지운다.
+_ACCESSIBILITY_TRIGGER_RE = re.compile(r"[(\[]?\s*[*·]?\s*(장애학생|Students with disabilities)")
+# 교수목표/강의개요/수업방식/평가방법은 표 셀 레이블이 세로 중앙 정렬이라
+# (모듈 docstring 참고), 셀 내용이 비어 있으면 레이블 단어가 단독 줄로 남고,
+# 내용이 있으면 레이블이 그 내용과 같은 줄 맨 앞에 찍힌다(예: "평가방법     성적은
+# 출석...") — 두 경우 다 실제 내용이 아니므로 접두어만 벗겨낸다.
+_OBJECTIVES_BLOCK_LABEL_LINES = {"교수목표", "강의개요"}
+_TEACHING_EVAL_BLOCK_LABEL_LINES = {"수업방식", "평가방법"}
+
+
+def _strip_leading_label(line: str, labels: set[str]) -> str:
+    for label in labels:
+        if line.startswith(label):
+            return line[len(label):].strip()
+    return line
+
+
+def _strip_accessibility_boilerplate(lines: list[str]) -> list[str]:
+    """장애학생 안내문을 지운다(줄을 통째로 삭제하면 인덱스 기반 로직이 다 깨지므로
+    자리는 빈 줄로 남긴다). 트리거 앞에 실제 내용이 있으면 그 부분은 남기고, 트리거
+    뒤(같은 줄 나머지 + 문장이 안 끝났으면 다음 줄 전체)는 지운다."""
+    out = list(lines)
+    for i, line in enumerate(out):
+        m = _ACCESSIBILITY_TRIGGER_RE.search(line)
+        if not m:
+            continue
+        out[i] = line[: m.start()].rstrip()
+        removed_tail = line[m.start():].strip()
+        if not removed_tail.endswith(".") and i + 1 < len(out):
+            out[i + 1] = ""
+    return out
 
 
 @dataclass
@@ -55,10 +95,21 @@ def _pdf_to_text(pdf_path: Path) -> str:
     return result.stdout
 
 
+def _collapse_whitespace(s: str) -> str:
+    return re.sub(r"\s+", "", s)
+
+
 def _find_label_line(lines: list[str], label: str, start: int = 0) -> int | None:
-    """`label`로 시작하는(공백 무시) 줄의 인덱스. 못 찾으면 None."""
+    """`label`로 시작하는 줄의 인덱스. 못 찾으면 None.
+
+    라벨 내부 공백까지 없애고 비교한다 — 같은 라벨이 PDF마다 "주별 강의계획"/
+    "주별강의계획"처럼 공백 유무가 갈리는 게 실측됐다(2026-08-25, 경영학과
+    샘플). 공백 하나라도 다르면 매치가 안 돼서 `idx_weekly`가 None이 되고,
+    그 결과 `textbooks` 추출 범위가 문서 끝까지로 번져서 주별 강의계획 표
+    전체가 textbooks에 통째로 섞여 들어갔었다."""
+    target = _collapse_whitespace(label)
     for i in range(start, len(lines)):
-        if lines[i].strip().startswith(label):
+        if _collapse_whitespace(lines[i]).startswith(target):
             return i
     return None
 
@@ -75,12 +126,19 @@ def _join(lines: list[str]) -> str | None:
 def _parse_contact(lines: list[str]) -> tuple[str | None, str | None, int | None]:
     """"연락처   2299   이메일   lik@pusan.ac.kr" 같은 한 줄에서 뽑는다.
 
-    이 줄의 인덱스도 같이 돌려준다 — 수업방식 내용이 여기서부터 시작한다고 본다
-    (그 위는 담당교수/연구실/상담시간 행)."""
+    이 줄의 인덱스도 같이 돌려준다 — 수업방식/평가방법 내용이 여기서부터 시작한다고
+    본다(그 위는 담당교수/연구실/상담시간 행). 교수가 연락처/이메일을 아예 안 채운
+    경우도 흔한데(2026-08-25 실측), 예전엔 그때 값 매치 자체가 실패해서 인덱스도
+    None이 되는 바람에 실제로 있는 수업방식/평가방법 내용까지 통째로 못 뽑았다 —
+    "연락처"·"이메일" 레이블이 있는 줄인지만 보고, 값은 있으면 뽑고 없으면 None으로
+    둔다."""
     for i, line in enumerate(lines):
+        if "연락처" not in line or "이메일" not in line:
+            continue
         m = re.search(r"연락처\s+(\S+)\s+이메일\s+(\S+)", line)
         if m:
             return m.group(1), m.group(2), i
+        return None, None, i
     return None, None, None
 
 
@@ -97,8 +155,19 @@ def _find_blank_gap(lines: list[str], start: int, limit: int) -> int | None:
 
 
 def _parse_objectives_and_overview(block_lines: list[str]) -> tuple[str | None, str | None]:
-    """번호 매긴 목록이 끝나는 지점을 교수목표/강의개요 경계로 쓴다(모듈 docstring 참고)."""
-    stripped = [l.strip() for l in block_lines if l.strip()]
+    """번호 매긴 목록이 끝나는 지점을 교수목표/강의개요 경계로 쓴다(모듈 docstring 참고).
+
+    이 블록엔 "교수목표"/"강의개요" 레이블 단어 자체가 세로 중앙 정렬 때문에 섞여
+    들어온다 — 셀이 비어 있으면 레이블만 단독 줄로 남고, 셀에 내용이 있으면
+    레이블이 그 줄 맨 앞에 실제 내용과 같은 줄로 찍힌다(예: "강의개요     적용해
+    보는 기초적인 실습을...", 2026-08-25 실측 — 레이블 뒤 내용까지 통째로 버리면
+    안 된다). 두 경우 다 레이블 접두어만 벗겨낸다. 장애학생 안내문은
+    `parse_syllabus_text`가 호출 전에 이미 지워놨다."""
+    stripped = [
+        s for s in (
+            _strip_leading_label(l.strip(), _OBJECTIVES_BLOCK_LABEL_LINES) for l in block_lines
+        ) if s
+    ]
     last_numbered_idx = -1
     for i, line in enumerate(stripped):
         if _NUMBERED_ITEM_RE.match(line):
@@ -183,7 +252,7 @@ def parse_syllabus_pdf(pdf_path: Path) -> ParsedSyllabus:
 def parse_syllabus_text(raw_text: str) -> ParsedSyllabus:
     """`pdftotext -layout` 결과 텍스트를 직접 받는 버전 — 테스트에서 PDF/`pdftotext`
     바이너리 없이 이 함수만 고정 텍스트로 검증할 수 있게 분리했다."""
-    lines = raw_text.split("\n")
+    lines = _strip_accessibility_boilerplate(raw_text.split("\n"))
 
     parsed = ParsedSyllabus(raw_text=raw_text)
     parsed.phone, parsed.email, idx_contact = _parse_contact(lines)
@@ -203,21 +272,36 @@ def parse_syllabus_text(raw_text: str) -> ParsedSyllabus:
     # 담당교수 연락처 줄 다음부터 첫 빈 줄까지가 수업방식, 그다음부터 "선수과목"
     # 레이블 전까지가 평가방법이다(2026-08-24 실측 샘플 2건 모두 이 간격이 있었다).
     if idx_contact is not None and idx_prereq_start is not None:
-        # 연락처 줄 바로 다음 줄도 대개 빈 줄이다(표 행 사이 여백) — 그 첫 빈 줄을
-        # 구분자로 잘못 집지 않도록, 내용이 시작하는 지점부터 간격을 찾는다.
-        teaching_start = idx_contact + 1
-        while teaching_start < idx_prereq_start and not lines[teaching_start].strip():
-            teaching_start += 1
+        # 연락처 줄 다음은 종종 이메일이 길어서 다음 줄로 넘어간 나머지 조각처럼
+        # 실제 내용이 아닌 짧은 잔재가 남는다(실측: "sanghwa.jeong@pusan.ac.k" /
+        # "r"로 이메일이 두 줄에 걸침) — 그 잔재를 수업방식 내용 시작으로 잘못
+        # 집으면 안 된다. "연락처" 블록이 끝나는 첫 빈 줄까지는 전부 잔재로 보고
+        # 건너뛴 다음, 그 빈 줄 구간도 지나서 진짜 내용이 시작하는 지점을 찾는다.
+        i = idx_contact + 1
+        while i < idx_prereq_start and lines[i].strip():
+            i += 1
+        while i < idx_prereq_start and not lines[i].strip():
+            i += 1
+        teaching_start = i
         gap = _find_blank_gap(lines, teaching_start + 1, idx_prereq_start)
         if gap is not None:
-            parsed.teaching_mode = _join(lines[teaching_start:gap])
+            parsed.teaching_mode = _join([
+                _strip_leading_label(l.strip(), _TEACHING_EVAL_BLOCK_LABEL_LINES)
+                for l in lines[teaching_start:gap]
+            ])
             eval_start = gap
             while eval_start < idx_prereq_start and not lines[eval_start].strip():
                 eval_start += 1
-            parsed.evaluation_method = _join(lines[eval_start:idx_prereq_start])
+            parsed.evaluation_method = _join([
+                _strip_leading_label(l.strip(), _TEACHING_EVAL_BLOCK_LABEL_LINES)
+                for l in lines[eval_start:idx_prereq_start]
+            ])
         else:
             # 간격을 못 찾으면(다른 포맷) 최소한 전체를 수업방식 쪽에라도 담아서 잃지 않는다.
-            parsed.teaching_mode = _join(lines[idx_contact + 1: idx_prereq_start])
+            parsed.teaching_mode = _join([
+                _strip_leading_label(l.strip(), _TEACHING_EVAL_BLOCK_LABEL_LINES)
+                for l in lines[teaching_start: idx_prereq_start]
+            ])
 
     # 선수과목: "선수과목 및" 레이블 줄(레이블 제거) ~ "지식" 레이블 줄(제외) 사이.
     if idx_prereq_start is not None and idx_prereq_end is not None:
