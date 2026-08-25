@@ -41,8 +41,8 @@ from app.domains.planning.models import (
     TimetableChatSession,
 )
 from app.domains.planning.roadmap_chat import (
-    _build_llm, _compute_critical_missing_required, _compute_prereq_blocked,
-    _compute_retake_candidates, _safe_call,
+    _PROGRAM_TYPE_LABELS, _build_llm, _compute_critical_missing_required,
+    _compute_prereq_blocked, _compute_retake_candidates, _safe_call,
 )
 from app.domains.planning.timetable import (
     _completed_course_norms,
@@ -1222,21 +1222,31 @@ class _TimeTableToolContext:
         # 카테고리별 남은 학점을 노출 — LLM이 "전공필수 12학점 남음, 교양필수 3학점 남음"
         # 같은 breakdown을 보고 카테고리별로 훑도록 유도한다. 없으면 mini가 career_goal
         # 하나만 보고 좁게 검색해서 결국 소수 과목만 확정하는 문제가 있음(2026-08-10 관찰).
+        #
+        # 2026-08-25까지는 program_types={"primary"}만 넘겨서 부전공/복수전공 잔여
+        # 학점이 통째로 안 보였다 — non_primary_programs 규칙이 "부전공 학과 과목도
+        # 검색해라"라고만 지시하고 "부전공에 뭐가 얼마나 남았는지"는 못 줬다. roadmap
+        # 챗(get_graduation_progress)과 같은 program_types로 넓혀서 부전공/복수전공/
+        # 융합전공 카테고리도 program_type/program_label 태그를 붙여 같이 노출한다.
         remaining_by_category: list[dict] = []
         primary_curriculum_year: str | None = None
         try:
             progresses = compute_graduation_progress(
-                self.db, self.user.id, program_types={"primary"}
+                self.db, self.user.id,
+                program_types={"primary", "minor", "dual", "interdisciplinary"},
             )
-            if progresses:
-                p = progresses[0]  # 주전공만 노출 (시간표는 로드맵 독립이라 부전공까진 안 봄)
-                primary_curriculum_year = p.curriculum_year
+            for p in progresses:
+                if p.program_type == "primary":
+                    primary_curriculum_year = p.curriculum_year
+                program_label = _PROGRAM_TYPE_LABELS.get(p.program_type, p.program_type)
                 for c in p.categories:
                     if c.remaining_credits is None or c.remaining_credits <= 0:
                         continue
                     remaining_by_category.append({
                         "category": c.category_name,
                         "remaining_credits": float(c.remaining_credits),
+                        "program_type": p.program_type,
+                        "program_label": program_label,
                     })
         except Exception:  # noqa: BLE001 - 판정 실패 시 시간표 챗 자체가 죽으면 안 됨
             pass

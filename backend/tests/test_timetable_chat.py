@@ -768,6 +768,37 @@ class StudentContextTest(unittest.TestCase):
         self.assertNotIn("외국어", result["missing_liberal_areas"])
         self.assertNotIn("융복합", result["missing_liberal_areas"])
 
+    def test_get_student_context_uses_primary_curriculum_year_even_when_minor_listed_first(self):
+        """부전공이 있어도 교양 세대 판정은 반드시 주전공 curriculum_year를 써야 한다.
+
+        program_types가 {"primary"}에서 여러 프로그램으로 넓어진 뒤 progresses[0]을
+        무조건 주전공으로 가정하던 예전 코드가 되돌아오면, DB 조회 순서상 먼저 나온
+        부전공(2021체계, curriculum_year="2020")의 세대를 잘못 쓰게 된다 — 그래서
+        부전공을 주전공보다 먼저 add()해서 삽입 순서에 기대는 회귀를 잡는다.
+        """
+        db = _make_db()
+        user = _make_student(db)
+        db.add(UserAcademicProgram(user_id=user.id, program_type="minor",
+                                    department_id=101, curriculum_year="2020"))
+        db.add(UserAcademicProgram(user_id=user.id, program_type="primary",
+                                    department_id=100, curriculum_year="2026"))
+        db.add(StudentCourseRecord(
+            user_id=user.id, raw_course_name="글로벌커뮤니케이션", category="교양선택",
+            liberal_area="세계와 소통", credits=3.0,
+        ))
+        db.flush()
+
+        result = _TimeTableToolContext(
+            db, user, year="2026", semester="2학기"
+        ).get_student_context()
+
+        # 신체계(2026) 영역이 나와야 한다 — 부전공의 2020(구체계)을 잘못 썼다면
+        # "외국어"/"융복합" 같은 구체계 이름이 missing_liberal_areas에 섞여 나온다.
+        self.assertIn("세계와 소통", {i["area"] for i in result["completed_liberal_areas"]})
+        self.assertIn("인성과 사회봉사", result["missing_liberal_areas"])
+        self.assertNotIn("외국어", result["missing_liberal_areas"])
+        self.assertNotIn("융복합", result["missing_liberal_areas"])
+
     def test_get_student_context_supports_legacy_liberal_area_category(self):
         """마이그레이션 전 category에 남은 세부영역도 누락 없이 전달한다."""
         db = _make_db()
