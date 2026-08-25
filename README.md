@@ -170,99 +170,101 @@ flowchart TB
 | | APScheduler | 3.11 |
 | 배포 | Netlify (프론트엔드) · Railway (백엔드) | - |
 
-**선정 이유 및 역할**
+**기술 선정 및 역할**
 
-| 이름 | 선정 이유 | 우리 시스템에서의 역할 |
+| 기술 | 선정 이유 | 역할 |
 |:---|:---|:---|
-| React + TypeScript | 팀 전원이 익숙하고, TS로 백엔드 스키마와 타입을 맞춰 런타임 전에 오류를 잡는다. | 전체 화면 렌더링과 상태 관리 |
-| Vite | esbuild 기반이라 개발 서버 기동·HMR이 빨라 4인 팀의 반복 개발 속도에 유리하다. | 프론트 빌드·개발 서버 |
-| react-router-dom | 화면 5개를 인증 가드 하나로 감싸는 라우트 구조가 필요했다. | `/roadmap`·`/timetable` 등 화면 라우팅, `RequireAuth` 가드 |
-| axios | 요청/응답 인터셉터로 JWT 헤더 첨부·401 처리를 붙이기 쉽다. | 백엔드 API 호출 공통 레이어 |
-| react-markdown + remark-gfm | LLM 응답의 목록·표를 XSS 없이 그대로 렌더링해야 했다. | 로드맵/시간표 AI 채팅 응답을 마크다운으로 렌더링 |
-| FastAPI | 타입 힌트 기반 자동 검증·문서화(OpenAPI)가 비동기 크롤링·LLM 호출과 궁합이 좋다. | REST API 서버, 요청 검증, `/docs` 자동 문서 |
-| SQLAlchemy + Alembic | 복잡한 학사 계층 스키마를 ORM으로 관리하고 변경을 리비전으로 추적해야 했다. | 전체 도메인 모델 정의, DB 마이그레이션 |
-| LangChain + OpenAI SDK | 도구 호출·재시도·모델 스왑이 표준화돼 두 에이전트를 같은 패턴으로 구현했고, 임베딩만은 LangChain 없이 OpenAI SDK로 직접 호출한다. | LLM 에이전트 도구 호출 루프, RAG 임베딩 생성 |
-| Langfuse | 비결정적인 LLM 응답의 trace·지연시간·비용을 한곳에서 봐야 했고, 개인정보가 담긴 대화라 자체 호스팅으로 운영한다. | 로드맵/시간표 챗 실행마다 도구 호출·지연시간·비용 기록 |
-| slowapi | FastAPI에 기본 내장이 없는 요청량 제한으로 로그인 brute force와 챗 엔드포인트의 LLM 비용 폭탄을 막는다. | 엔드포인트별 레이트 리밋(로그인·챗 등) |
-| bcrypt / python-jose | 비밀번호를 단방향 해시로만 저장한다는 원칙(CLAUDE.md)에 맞는 표준 선택지다. | 비밀번호 해시, JWT 발급·검증 |
-| PostgreSQL (Supabase) + pgvector | 관계형 데이터와 임베딩을 같은 DB에서 다뤄 별도 벡터 DB 없이 RAG를 구현했다. | 전체 테이블 저장, RAG 임베딩 벡터 유사도 검색 |
-| Playwright | 로그인 후 JS로 렌더링되는 One-Stop 페이지는 실제 브라우저 자동화가 필요했다. | 학적·이수내역·수강편람 크롤링 |
-| BeautifulSoup | Playwright로 받은 HTML의 표 구조를 파싱하는 데 가볍고 충분하다. | 크롤링 결과 HTML 파싱 |
-| APScheduler | 별도 인프라 없이 프로세스 내에서 주기적 작업을 예약할 수 있어 팀 규모에 맞았다. | 정기 크롤링·보존기간 파기 스케줄 |
+| React + TypeScript | 팀의 개발 경험이 있고, 화면과 API 데이터의 타입 오류를 미리 확인할 수 있다. | 화면 구성·상태 관리 |
+| Vite | 빠른 개발 서버와 즉시 반영(HMR)으로 반복 개발에 적합하다. | 프론트엔드 빌드·개발 서버 |
+| react-router-dom | 로그인 여부에 따라 화면 접근을 일관되게 제어할 수 있다. | 화면 이동·인증 가드 |
+| axios | 인증 토큰과 오류 처리를 API 요청마다 공통으로 적용하기 쉽다. | 백엔드 API 통신 |
+| react-markdown + remark-gfm | AI 답변의 목록·표를 안전하게 보여줄 수 있다. | AI 답변 마크다운 표시 |
+| FastAPI | 요청 검증과 API 문서화가 내장돼 있고 비동기 작업에 적합하다. | REST API·요청 검증·API 문서 |
+| SQLAlchemy + Alembic | 학사 데이터 구조와 변경 이력을 안정적으로 관리할 수 있다. | 데이터 모델·DB 마이그레이션 |
+| LangChain + OpenAI SDK | AI 도구 호출을 체계화하고 임베딩을 직접 연동할 수 있다. | AI 상담·RAG 임베딩 |
+| Langfuse | AI 응답 품질, 지연 시간, 비용을 한곳에서 점검할 수 있다. | AI 실행 기록·모니터링 |
+| slowapi | 과도한 요청과 로그인 시도를 제한할 수 있다. | API 요청량 제한 |
+| bcrypt / python-jose | 비밀번호 보호와 로그인 토큰 검증에 널리 쓰이는 방식이다. | 비밀번호 해시·JWT 인증 |
+| PostgreSQL (Supabase) + pgvector | 학사 데이터와 검색용 임베딩을 하나의 DB에서 관리할 수 있다. | 데이터 저장·유사도 검색 |
+| Playwright | 로그인 후 표시되는 학생지원시스템 정보를 읽을 수 있다. | 학사 정보·수강편람 수집 |
+| BeautifulSoup | 수집한 페이지의 표 데이터를 가볍게 추출할 수 있다. | HTML 데이터 정리 |
+| APScheduler | 별도 서버 없이 반복 작업을 예약할 수 있다. | 정기 수집·보존기간 파기 예약 |
 <br/>
 
 #### 2.3. 보안
-본 서비스는 학생지원시스템에서 수집한 학적·이수내역, 자격증·어학 성적 등 민감한 학사 개인정보를 다룬다. 수집부터 파기까지 데이터 생애주기 단계별로 어떤 원칙을 어떻게 적용했는지 정리하면 다음과 같다.
+본 서비스는 학적·이수내역, 자격증·어학 성적 등 민감한 학사 정보를 다룬다. 필요한 정보만 수집하고, 본인만 접근하며, 외부 AI에는 개인을 식별할 수 있는 정보를 보내지 않는 것을 기본 원칙으로 한다.
 
-| 구분 | 원칙 | 적용 방식 |
+| 단계 | 보호 원칙 | 적용 내용 |
 |---|---|---|
-| 수집 | 필요한 항목만, 동의 후에만 (적용됨) | 회원가입 시 필수 체크박스로 동의를 받는다(서버 재검증, 미체크 시 422로 거부). `users.privacy_consent`/`privacy_consent_at`에 기록. |
-| 저장 | 포털 자격증명은 저장하지 않음 | 크롤링에 쓰는 학생지원시스템 학번·비밀번호는 동기화 요청 처리에만 사용하고 서버에 남기지 않는다. 추후 정보화본부와 협의해 크롤링을 학지시 API 연동으로 전환할 계획. |
-| 저장 | 비밀번호는 단방향 해시로만 | bcrypt로 해시해 저장 — 평문·가역 암호화 금지. |
-| 전송 | 구간 전체 HTTPS(TLS) (적용됨) | 프론트엔드는 Netlify, 백엔드는 Railway로 배포해 전송 구간을 보호. |
-| 접근 통제 | 본인 데이터에만 접근 | 계정 인증(JWT)으로 본인 데이터로만 접근을 제한. |
-| 외부 전달 | LLM·관측도구엔 비식별화 후 전달 | 직접 식별자(이름·학번·이메일)는 프롬프트에 넣지 않는다. 관측 도구(Langfuse)로 가는 trace는 정규식 마스킹 + 사용자 식별자 해시 처리(아래 상세). |
-| 보관·파기 | 탈퇴 시 즉시, 장기 미접속 시 정책적으로 | 회원 탈퇴 API로 계정과 학사 데이터를 즉시 파기. 장기 미접속(기본 24개월) 계정은 보존기간 정책에 따라 파기하며, 파기 도구는 구현돼 있고 자동 실행은 백업·복구 검증 후 활성화. |
-| 투명성 | 처리 내역을 문서로 공개 (적용됨) | `/privacy` 페이지에 수집 항목·목적·보유기간·OpenAI/Langfuse 위탁 범위를 실제 코드 감사 결과 그대로 명시. 회원가입 동의 체크박스에서 링크로 연결. |
+| 수집 | 최소 수집·사전 동의 | 회원가입 시 개인정보 처리 동의를 받고, 서비스에 필요한 학사 정보만 수집한다. |
+| 저장 | 자격증명 미보관 | 학생지원시스템 학번·비밀번호는 동기화할 때만 사용하고 저장하지 않는다. 서비스 비밀번호는 복원할 수 없는 해시 형태로 저장한다. |
+| 전송 | 암호화 통신 | 서비스 전 구간을 HTTPS(TLS)로 보호한다. |
+| 접근 | 본인 데이터만 조회 | 로그인 토큰(JWT)으로 다른 사용자의 학사 정보 접근을 제한한다. |
+| 외부 AI·관측 | 식별정보 제외·마스킹 | 이름·학번·이메일은 AI 프롬프트에 넣지 않는다. AI 실행 기록은 학번·이메일·전화번호를 가리고 사용자 식별자는 해시로 바꾼다. |
+| 보관·파기 | 탈퇴 즉시 삭제 | 탈퇴하면 계정과 학사 정보를 삭제한다. 24개월 이상 미접속 계정 파기는 백업·복구 검증 후 자동화할 예정이다. |
+| 안내 | 처리 기준 공개 | `/privacy`에서 수집 항목, 이용 목적, 보유기간, 외부 처리 범위를 확인할 수 있다. |
 
-**LLM에 무엇을 보내고 안 보내는가(코드 실측 기준).** 제품 런타임이 학생 개인정보를 다루는 챗 기능에 LLM을 쓰는 만큼, "무엇을 외부로 보내고 무엇을 막는가"를 코드 실측 기준으로 고정해뒀다. 상세 근거는 [`docs/backend/features/llm-privacy-audit.md`](docs/backend/features/llm-privacy-audit.md).
+**LLM 전달 정보 기준.** AI는 졸업요건과 수강계획을 설명하는 데 필요한 학사 정보만 받고, 학생을 직접 식별할 수 있는 정보는 받지 않는다. 상세 근거는 [`docs/backend/features/llm-privacy-audit.md`](docs/backend/features/llm-privacy-audit.md)에서 확인할 수 있다.
 
-외부로 나가는 경로는 두 개뿐이다:
-
-```mermaid
-flowchart LR
-    STUDENT[("학생 이수내역 · 성적<br/>학번 · 이름 · 이메일")]
-    CTX["시스템 프롬프트 조립<br/>_build_student_context_block()"]
-    LLM["🤖 OpenAI (gpt-5.4-nano)<br/>매 챗 요청마다"]
-    CB["langfuse_callback.py<br/>observe_agent_call()"]
-    MASK["mask_data() — 4패턴 정규식<br/>학번 · 이메일 · 휴대폰 · 유선전화"]
-    LANGFUSE["📊 Langfuse(자체 호스팅)<br/>langfuse-planu.xyz"]
-    TOOL["도구 호출(get_roadmap_items 등)<br/>_ToolContext(db, user, roadmap)"]
-
-    STUDENT -->|"이름·학번·이메일 제외<br/>(코드 실측, 아래 표)"| CTX
-    CTX --> LLM
-    LLM -.->|"도구 호출은 user_id를<br/>인자로 안 받음 → 타인 데이터<br/>조회 경로 자체가 없음"| TOOL
-    TOOL --> STUDENT
-    LLM --> CB
-    CB --> MASK
-    MASK -->|"마스킹된 trace만"| LANGFUSE
-
-    classDef ext fill:#fae8ff,stroke:#a21caf,color:#701a75
-    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef data fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    class LLM,LANGFUSE ext
-    class MASK,TOOL guard
-    class STUDENT data
-```
-
-| 보낸다 (학사 판단에 필수) | 안 보낸다 (코드로 확인) |
+| LLM 전달 정보 | LLM 제외 정보 |
 |---|---|
-| 학과명·전공명·program_type·교육과정연도 | 이름(`users.name`) |
-| 진로 목표(자유 입력 필드) | 학번(`users.student_id`) |
-| 이수기록(과목명 + 이수구분, 성적 등급 제외) | 이메일 |
-| 균형교양 세부영역별 이수 요약 | One-Stop 포털 비밀번호(애초에 저장 안 함) |
-| 도구 응답(남은 학점·로드맵 항목·검색 결과) | `user_id`는 내부 PK만, 필드명을 `student_id`로 두지 않아 LLM이 학번으로 오인해 답변에 노출하는 것도 차단 |
+| 학과·전공, 교육과정 연도 | 이름 |
+| 진로 목표 | 학번 |
+| 과목명·이수구분 등 이수 요약<br/>(성적 등급 제외) | 이메일 |
+| 균형교양 영역별 이수 현황 | 학생지원시스템 비밀번호 |
+| 남은 학점, 로드맵 항목, 강좌 검색 결과 | 사용자 내부 식별자(`user_id`) |
 
-원칙은 "학생을 특정할 수 있는 직접 식별자는 프롬프트에 넣지 않는다" — 학과·과목·학점 같은 quasi-identifier는 기능상 필수라 보내되, 그 자체로는 개인을 특정하지 못한다.
+학과·과목·학점처럼 추천에 필요한 정보만 전달하며, 이름·학번·이메일 같은 직접 식별정보는 전달하지 않는다.
 
-로드맵/시간표 에이전트가 호출하는 모든 도구는 `_ToolContext(db, user, roadmap)`에 요청 시작 시점에 바인딩된 `user`만 참조하고, **`user_id`를 LLM이 넘기는 인자로 받지 않는다.** 즉 프롬프트 인젝션으로 "다른 학번의 정보를 보여줘"라고 유도해도, 애초에 그런 값을 전달할 경로가 도구 시그니처에 없다. 이 성질을 깨는 변경(도구에 `user_id` 파라미터 추가)은 PR 체크리스트에서 금지 항목으로 명시돼 있다.
+AI가 사용하는 기능은 요청한 학생의 데이터만 참조하며, AI가 다른 사용자의 식별자를 입력해 조회할 수 있는 경로를 두지 않는다.
 
-관측 도구(Langfuse)로 나가는 trace에는 LLM 호출과 별개로 아래 4패턴이 재귀 적용된다(원본 LLM 호출에는 영향 없음 — trace 페이로드만 치환):
+관측 도구(Langfuse)에 남는 실행 기록에서는 아래 정보를 자동으로 가린다. 이 처리는 AI에 전달하는 내용이 아니라 기록 데이터에만 적용된다.
 
-| 패턴 | 대상 | 치환 |
+| 마스킹 항목 | 처리 방식 |
+|---|---|
+| 학번 | `<STUDENT_ID>`로 대체 |
+| 이메일 | `<EMAIL>`로 대체 |
+| 휴대전화·유선전화 | `<PHONE>`로 대체 |
+
+사용자 내부 식별자도 원문 대신 해시값 일부만 기록한다.
+
+**운영상 유의할 점**
+
+- 자유 입력란에는 주소·생년월일처럼 불필요한 개인정보를 입력하지 않도록 안내한다.
+- 탈퇴 시 서비스 DB는 삭제되지만, Langfuse에 남은 해시 식별자 기록은 별도 삭제 절차가 필요하다.
+- 자체 운영하는 Langfuse의 접근 권한과 네트워크 보안은 팀이 지속적으로 관리한다.
+<br/>
+
+#### 2.4. 품질 검증
+졸업요건 판정의 정확성과 AI 추천의 동작 품질을 분리해 검증한다. 판정은 규칙 엔진만 수행하고, LLM은 설명과 추천만 담당한다.
+
+| 검증 구분 | 실행 방식 | 확인 항목 |
 |---|---|---|
-| 학번 | `(19\|20)\d{2}` 연도 앵커 + 4~6자리 | `<STUDENT_ID>` |
-| 이메일 | 표준 `local@domain` | `<EMAIL>` |
-| 휴대전화 | `01X-XXXX-XXXX` | `<PHONE>` |
-| 유선전화 | `02`/`031~064` 대역 | `<PHONE>` |
+| 단위 테스트 | `pytest` | 도메인·API·크롤링·보안 등 656개 테스트 |
+| 규칙 엔진 골든테스트 | `run_golden_tests.py` | 졸업요건 판정 결과(TC01~TC09) |
+| AI 구조 검증 | `tests.eval.run_eval` | 로드맵·시간표 에이전트의 도구 호출과 기본 동작 |
+| LLM 응답 검증 | `tests.eval.run_eval --live` | 실제 응답의 과목·시간표·선수과목 조건 |
+| 주간 품질 관측 | GitHub Actions, 케이스별 3회 반복 | 응답 품질·지연 시간·비용 추이 |
 
-`user_id`는 원문 대신 `salt+sha256` 해시 앞 12자만 전송한다.
+실제 LLM 평가는 Langfuse에 기록해 추이를 확인하며, LLM의 확률적 특성상 자동 머지 차단에는 사용하지 않는다. 상세한 평가 기준은 [`docs/ai-usage.md`](docs/ai-usage.md)에서 확인할 수 있다.
 
-**알려진 한계(숨기지 않고 명시)**:
-- 마스킹은 Langfuse trace에만 적용된다. LLM 프로바이더로 가는 원본 프롬프트는 애초에 식별자를 안 넣는 게 1차 방어선이고, 마스킹은 사용자가 채팅창에 직접 학번을 입력하는 경우를 잡는 2차 방어선이다.
-- `career_goal`·채팅 메시지 같은 자유 입력 필드는 4패턴에 안 걸리는 식별정보(주소·생년월일 등)가 통과할 수 있다.
-- 계정 탈퇴는 DB만 지운다 — Langfuse에 남은 해시 user_id trace는 별도 삭제 절차가 필요하다.
-- Langfuse 자체 호스팅(`langfuse-planu.xyz`)은 접근 통제 책임이 팀 자신(로그인·TLS·방화벽 설정)으로 넘어왔다. 계정은 인스턴스 소유자가 팀원을 개별 초대하는 방식으로 운영 중이라고 확인받았다(2026-08-24, 소유자 진술 기준 — 코드·API로 독립 검증한 것은 아니다).
+#### 2.5. CI/CD
+PR을 열면 변경 범위에 맞는 자동 검사를 실행하고, 팀의 독립 리뷰를 거쳐 `main`에 반영한다. `main` 반영 후에는 Netlify와 Railway가 각각 자동 배포한다.
+
+| 구분 | 실행 시점 | 확인 내용 |
+|---|---|---|
+| 보안 검사 | 모든 push·PR, 매주 월요일 | 시크릿 노출, Python 의존성 취약점 |
+| AI 기능 검사 | AI·학사 관련 코드 변경 시 | AI 도구 호출과 골든 테스트 dry-run |
+| DB 검사 | 마이그레이션 변경 시 | 리비전 충돌·순환·다중 헤드 |
+| 정기 AI 평가 | 매주 화요일, 수동 실행 가능 | 실제 LLM 응답 품질 추이 |
+
+자동 검사는 결과를 공유하는 용도이며, 현재 필수 머지 차단 규칙으로 설정되어 있지 않다. 전체 단위 테스트와 졸업요건 골든 테스트는 PR 전 로컬에서 실행하고, 별도 세션의 독립 리뷰로 최종 확인한다.
+
+| 배포 대상 | 배포 방식 |
+|---|---|
+| 프론트엔드 | `main` 반영 후 Netlify가 빌드·배포 |
+| 백엔드 | `main` 반영 후 Railway가 빌드·배포 |
+
 <br/>
 
 <p align="right">(<a href="#목차">목차로 ↑</a>)</p>
@@ -480,125 +482,6 @@ $ npm run dev                     # http://localhost:5173
 
 </details>
 <br/>
-
-**품질 검증**
-
-이 프로젝트의 절대 원칙(1.3 참고)은 "졸업요건 충족·미충족 판정은 규칙 기반 엔진만 하고, LLM은 그 결과를 설명·추천만 한다"는 것이다. 이 경계가 코드 변경 중에 흐려지지 않았는지를 사람이 매번 눈으로 검토하는 대신, 실제 학과 데이터를 근거로 한 회귀 테스트로 고정해뒀다 — 그래서 "판정 로직을 건드렸는데 골든테스트를 안 돌렸다"는 곧 이 경계를 검증 없이 바꿨다는 뜻이 된다.
-
-```bash
-$ cd backend
-$ pip install pytest==9.1.1        # requirements.txt엔 없음 — 프로덕션 의존이 아니라 로컬/CI 전용
-$ pytest                           # 단위 테스트 650+ 케이스 (도메인 로직 · API · 크롤러 정규화 등)
-$ python tests/run_golden_tests.py # 졸업요건 규칙 엔진 골든 시나리오(TC01~TC09) — 판정 로직을 고치면 필수로 통과 확인
-```
-```bash
-$ cd frontend
-$ npm run build                    # tsc -b(타입체크) + vite build
-$ npm run lint                     # oxlint
-```
-
-<details>
-<summary>단위 테스트 656개, 무엇을 검증하는지 (영역별 분류)</summary>
-
-| 영역 | 케이스 수 | 예시 |
-|:---|:---:|:---|
-| AI 에이전트(로드맵·시간표 챗 + RAG) | 316 | 도구 호출 순서, human-in-the-loop 승인 흐름, 선수과목 판정 |
-| 크롤링·정규화(ingestion) | 106 | One-Stop/마이페이지 파서, 학과·전공 정규화, 강의계획서 파싱 |
-| 졸업요건 판정 엔진 | 92 | 카테고리별 학점 대조, 편입 학점 인정, AI융합트랙 판정 |
-| 보안·개인정보 | 73 | 레이트 리밋, 비밀번호 재설정, Langfuse 마스킹, 계정 파기 |
-| API·시드·마이그레이션 | 69 | 강좌 검색, 시간표 CRUD, 학사 계층 시드 |
-| **합계** | **656** | |
-
-</details>
-
-<details>
-<summary>골든 시나리오 TC01~TC09, 각각 무엇을 고정하는지</summary>
-
-| ID | 고정하는 것 |
-|:---|:---|
-| TC01 | 표준 주전공(컴퓨터공학과) — 6개 카테고리 전부 정확히 충족 |
-| TC02 | 전공선택 학점만 미달 — 해당 카테고리와 총계가 함께 미충족으로 잡혀야 함 |
-| TC03 | 요건 데이터 자체가 없는 학과×이수유형 — 판정 불가 상태로 명확히 남아야 함 |
-| TC04 | 학생 교육과정연도와 정확히 일치하는 기준학점이 없을 때 최신 이전 연도로 폴백 |
-| TC05 | `major_id`가 있으면 학과 레벨이 아니라 전공 레벨 기준학점을 써야 함 |
-| TC06 | 복수전공 병행 시 이수학점 집계가 프로그램별로 분리 안 되고 전체 이수내역을 공유하는 현재 엔진의 단순화를 고정(설계 그대로, 버그 아님) |
-| TC07 | AI융합트랙 대상 비SW 학과가 트랙 요건(21학점)을 채우면 `is_ai_track=True` |
-| TC08 | 전공필수 비중이 큰 비CS 학과(간호학과) — 전 카테고리 기준학점 대조 |
-| TC09 | 부전공(minor) — 카테고리 세분 없이 총학점만 있는 실제 요건 모양 재현 |
-
-</details>
-
-> ⚠️ 위 TC01~TC09는 **졸업요건 판정 엔진(`graduation_progress.py`)만** 검증한다. 로드맵·시간표 AI 에이전트는 이름은 비슷하지만 완전히 별도인 골든 데이터셋(`backend/tests/eval/cases.py`)으로 검증한다 — 로드맵 22건 · 시간표 10건, 각 케이스에 `agent="roadmap"`/`"timetable"` 태그가 붙어 하나의 파일로 관리된다. `python -m tests.eval.run_eval`(LLM 미호출 dry-run, `planning/`·`academics/` 경로 변경 시 CI로 자동 실행 — 아래 표 참고)과 매주 실제 LLM으로 도는 정기 관측(`golden-eval-weekly.yml`, Langfuse에 결과 적재)으로 나뉜다 — "판정 정확성"과 "AI 응답 품질"은 서로 다른 검증 라인이라는 뜻이다.
-
-```mermaid
-flowchart LR
-    A["코드 변경"] --> B["pytest 650+"]
-    B --> C["골든테스트 TC01~09"]
-    C --> D["PR 생성"]
-    D --> E["별도 세션 독립 리뷰<br/>작성자 주장을 안 믿고<br/>직접 재현·재검증"]
-    E -->|"결함 발견"| A
-    E -->|"통과"| F["머지"]
-
-    classDef test fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    classDef review fill:#fae8ff,stroke:#a21caf,color:#701a75
-    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
-    class B,C test
-    class D,E review
-    class F done
-```
-
-Claude Code·Cursor·Codex(개발 도구)와 Figma·Notion MCP 연동을 포함해 AI 도구를 개발에 활용한 범위, "AI가 작성했다는 사실만으로 신뢰하지 않는다"는 원칙을 실제로 어떻게 지켰는지(독립 리뷰로 결함을 잡아낸 사례 포함)는 [`docs/ai-usage.md`](docs/ai-usage.md)에 별도로 정리했다. LLM에 학생 개인정보를 어떻게 안 보내는지는 1.3절 참고.
-
-**CI/CD — PR을 열면 자동으로 도는 것, 머지하면 자동으로 배포되는 것**
-
-```mermaid
-flowchart TB
-    subgraph PR["PR 오픈 · push — GitHub Actions"]
-        direction TB
-        SEC["🔒 security-scan<br/>gitleaks(시크릿) · pip-audit(CVE)<br/>모든 push/PR"]
-        GOLD["🤖 golden-eval-dry<br/>AI 에이전트 골든셋 dry-run<br/>+ roadmap_chat·timetable_chat 268케이스<br/>planning/academics 경로 변경 시만"]
-        MIG["🧬 migration-graph<br/>alembic 리비전 그래프 정합성<br/>migrations/ 경로 변경 시만"]
-    end
-
-    HUMAN["👤 독립 리뷰(별도 세션)<br/>+ 로컬 pytest 650+ · 골든 TC01~09<br/>— CI 게이트 아님, 팀 관행"]
-    MERGE(["머지 (squash → main)"])
-
-    subgraph DEPLOY["main 반영 즉시 — Netlify/Railway 자체 Git 연동 (GH Actions 아님)"]
-        direction LR
-        NF["🌐 Netlify<br/>frontend/ · npm run build<br/>→ planu-pnu.netlify.app"]
-        RW["🚂 Railway<br/>backend/ · Dockerfile 빌드<br/>→ Railway 프로덕션"]
-    end
-
-    SEC --> HUMAN
-    GOLD --> HUMAN
-    MIG --> HUMAN
-    HUMAN --> MERGE
-    MERGE --> NF
-    MERGE --> RW
-
-    classDef gate fill:#fecaca,stroke:#dc2626,color:#7f1d1d
-    classDef report fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    classDef human fill:#fae8ff,stroke:#a21caf,color:#701a75
-    classDef deploy fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    class SEC gate
-    class GOLD,MIG report
-    class HUMAN,MERGE human
-    class NF,RW deploy
-```
-
-| 워크플로 | 트리거 | 하는 일 | 실패 시 |
-|:---|:---|:---|:---|
-| `security-scan` | 모든 push/PR + 매주 월요일 | gitleaks로 시크릿 스캔, pip-audit로 `constraints.txt` CVE 점검 | 워크플로 설계 의도는 "gitleaks 실패 = 머지 차단"이지만, 아래 명시했듯 GitHub 쪽에 required status check로 실제 등록돼 있진 않다 — 지금은 실패해도 버튼상 머지가 막히진 않는다. pip-audit는 애초에 Job Summary 보고용(무관한 PR을 CVE 하나로 막지 않으려는 설계) |
-| `golden-eval-dry` | `planning/`·`academics/`·`tests/eval/` 경로 또는 `requirements.txt`/`constraints.txt` 변경 시 | LLM 미호출로 AI 에이전트 도구 호출 하니스가 정상 구동하는지 스모크 + `roadmap_chat`/`timetable_chat` 유닛 268케이스 | 보고만 (별도 required-check 설정 없음) |
-| `migration-graph` | `migrations/` 경로 변경 시 | alembic 리비전 중복/사이클/멀티헤드 여부(`test_migrations.py`) | 보고만 |
-| `golden-eval-weekly` | 매주 화요일 03:00(KST) + 수동 | AI 에이전트 골든셋을 **실제 LLM**으로 N=3 반복 실행, Langfuse에 트렌드 적재 | 게이트 아님 — LLM 확률성 특성상 실패 자체가 이상 신호는 아니라, Langfuse UI에서 추세로 판단 |
-
-**중요한 한계 — 숨기지 않고 명시한다**: 위 표에 **전체 pytest(650+)와 졸업요건 판정 골든테스트(TC01~09)는 없다.** 이 둘은 CI가 자동으로 막는 게 아니라, PR을 올리기 전에 로컬에서 직접 돌려 통과를 확인하는 **사람(세션)의 절차**다(`docs/CHANGELOG.md`에 매 세션 기록). GitHub 쪽 브랜치 보호(`protect-main` 룰셋)도 PR 존재·강제 푸시 금지·선형 히스토리는 강제하지만 **필수 승인 수는 0, 필수 상태 체크도 지정돼 있지 않다** — 실질적인 품질 게이트는 CI가 아니라 "PR마다 독립 리뷰를 거친다"는 팀 관행(`docs/ai-usage.md` 3절)이 맡고 있다.
-
-**배포는 GitHub Actions가 안 한다** — Netlify(프론트)와 Railway(백엔드)가 각자 GitHub 저장소를 직접 구독하는 자체 연동이라, `main`에 뭔가 머지되는 즉시(별도 배포 워크플로 없이) 두 서비스가 독립적으로 빌드·배포한다. 그래서 "머지됐는데 배포가 안 됐다"가 발생해도 GitHub Actions 로그에는 아무 흔적이 안 남는다 — 원인 확인은 Netlify/Railway 각자의 대시보드에서 해야 한다.
-<br/>
-
-<p align="right">(<a href="#목차">목차로 ↑</a>)</p>
 
 ### 5. 소개 및 시연영상
 > 🎬 **추후 추가 예정** — 시연 영상 촬영 후 링크를 게시합니다.
