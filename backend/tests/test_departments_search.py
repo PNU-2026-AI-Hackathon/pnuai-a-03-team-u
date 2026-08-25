@@ -64,8 +64,9 @@ class DepartmentSearchTest(unittest.TestCase):
     def _names(self, q=""):
         return [item.name for item in search_departments(q=q, limit=50, db=self.db)]
 
-    def test_융합전공_학과는_후보에서_빠진다(self):
-        self.assertNotIn("핀테크융합전공", self._names())
+    def test_핀테크융합전공은_정식_학과_예외로_후보에_남는다(self):
+        self.assertIn("핀테크융합전공", self._names())
+        self.assertEqual(["핀테크융합전공"], self._names("핀테크"))
 
     def test_이름에_융합이_들어가는_정식_학과는_남는다(self):
         """'융합'만으로 거르면 이 학과들이 같이 사라진다."""
