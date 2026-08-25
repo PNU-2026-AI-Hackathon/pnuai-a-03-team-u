@@ -120,24 +120,28 @@ def _category_condition(category: str):
     return Course.category.in_((category, *aliases))
 
 
-def _program_course_scope_ids(
-    department_id: int,
-    major_id: int | None,
-    curriculum_year: int | str | None,
-):
+def _program_course_scope_ids(department_id: int, major_id: int | None):
     """프로그램이 타 학과 과목을 인정할 때 함께 검색할 course id 서브쿼리.
 
     핀테크융합전공처럼 학과 자체가 융합전공인 경우에도 ``major_id``는 NULL이다.
     따라서 이 경우에는 그 프로그램의 NULL 행만 연결한다. 단순히 학과의 모든
     ``program_courses``를 섞으면, 같은 학과 아래의 다른 트랙 과목까지 노출될 수 있다.
+
+    curriculum_year로 필터링하지 않는다 — GraduationRequirement(기준학점)와 달리
+    이 교차인정 관계는 "핀테크 학생이 경영학과 회계학원리를 인정받는다" 같은
+    교육과정 구조 자체를 나타내는 사실이라, 입학연도가 바뀐다고 매 기수 달라질
+    근거가 없다. 실제로 시드 스크립트(seed_fintech_cross_listed_courses.py)가
+    ``curriculum_year="2026"``으로 고정 하드코딩돼 있는데, 2026-08-26 기준
+    실재학생은 전원 2023/2024 교육과정이라 exact match를 강제하면 이 기능이
+    사실상 아무도 못 쓰는 죽은 기능이 된다(실측: curriculum_year='2024'로
+    검색하면 교차인정 과목이 결과에 전혀 안 나옴). GraduationRequirement처럼
+    "제일 가까운 연도로 폴백"할 근거 데이터도 없으므로(연도 무관 사실이므로),
+    아예 필터를 안 거는 게 맞다.
     """
-    conditions = [
+    return select(ProgramCourse.course_id).where(
         ProgramCourse.department_id == department_id,
         ProgramCourse.major_id == major_id,
-    ]
-    if curriculum_year is not None:
-        conditions.append(ProgramCourse.curriculum_year == _stringify(curriculum_year))
-    return select(ProgramCourse.course_id).where(and_(*conditions))
+    )
 
 
 def available_categories_for_scope(
@@ -240,13 +244,13 @@ class CurriculumRetriever:
             or_(
                 Course.department_id == department_id,
                 Course.department_id.is_(None),
-                Course.id.in_(_program_course_scope_ids(department_id, major_id, curriculum_year)),
+                Course.id.in_(_program_course_scope_ids(department_id, major_id)),
             ),
             # A cross-listed course belongs to its source department/major,
             # so applying the program's major filter to it would hide it.
             or_(
                 _major_scope_filter(Course, major_id),
-                Course.id.in_(_program_course_scope_ids(department_id, major_id, curriculum_year)),
+                Course.id.in_(_program_course_scope_ids(department_id, major_id)),
             ),
         ]
         if parsed_filters.grade is not None:
@@ -290,7 +294,7 @@ class CurriculumRetriever:
 
         program_course_ids = set(
             self.db.scalars(
-                _program_course_scope_ids(department_id, major_id, curriculum_year)
+                _program_course_scope_ids(department_id, major_id)
             ).all()
         )
         ranked = sorted(

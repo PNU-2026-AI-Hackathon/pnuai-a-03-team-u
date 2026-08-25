@@ -126,6 +126,14 @@ class RagRetrieverTest(unittest.TestCase):
 
         같은 이름의 자체 카탈로그 행이 분반 없이 있어도, 시간표 후보에는 실제 개설
         주체인 교차 인정과목이 먼저 와야 한다.
+
+        검색 curriculum_year(2024, 실재학생 기준)와 ProgramCourse.curriculum_year
+        (2026, 시드 스크립트가 고정하는 값)를 일부러 다르게 둔다 — 예전엔
+        `_program_course_scope_ids`가 curriculum_year exact match를 강제해서, 이
+        연도가 어긋나면 교차인정 자체가 통째로 안 잡혔다(2026-08-26 실측: 핀테크
+        융합전공 학생이 curriculum_year=2024로 검색하면 교차인정 과목이 결과에
+        전혀 안 나옴 — program_courses는 GraduationRequirement와 달리 입학연도에
+        따라 달라질 근거가 없는 교육과정 구조 사실이라 연도 필터 자체를 없앴다).
         """
         db = self.make_db()
         db.add_all([
@@ -141,7 +149,7 @@ class RagRetrieverTest(unittest.TestCase):
 
         results = CurriculumRetriever(db).search(
             query="머신러닝", department_id=10, major_id=None,
-            curriculum_year=2026, filters={"semester": "1학기"},
+            curriculum_year=2024, filters={"semester": "1학기"},
         )
 
         self.assertEqual([result["course_id"] for result in results], [2])
