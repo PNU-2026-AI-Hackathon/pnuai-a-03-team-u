@@ -359,8 +359,19 @@ class CurriculumRetriever:
         ]
         evidence = " ".join(part for part in parts if part)
         if course.description:
-            snippet = course.description if len(course.description) <= 150 else f"{course.description[:150]}…"
-            evidence = f"{evidence} — {snippet} (※ 과목명이 같은 개편 이전 자료 기반 설명, 현재 내용과 다를 수 있음)"
+            # 예전엔 150자로 잘랐다 — 강의계획서 크롤링(2026-08-24) 이후 description이
+            # 짧은 카탈로그 문구가 아니라 교수목표+강의개요 전문(수백 자)이라, 150자
+            # 컷은 키워드 매칭에 실제로 쓸 수 있는 내용의 대부분을 잘라버렸다. 자르지
+            # 않고 그대로 쓴다.
+            is_syllabus_sourced = bool(course.source_document) and "교수계획표" in course.source_document
+            disclaimer = (
+                "(※ 2026학년도 One-Stop 수강편람 교수계획표 기반 실제 설명)"
+                if is_syllabus_sourced
+                # 강의계획서 출처가 아닌 나머지는 여전히 학과 교육과정표 import 원문이라
+                # 개편 전 자료일 수 있다는 경고가 유효하다.
+                else "(※ 과목명이 같은 개편 이전 자료 기반 설명, 현재 내용과 다를 수 있음)"
+            )
+            evidence = f"{evidence} — {course.description} {disclaimer}"
         return evidence
 
 

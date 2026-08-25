@@ -2225,6 +2225,26 @@ class _ToolContext:
             )
         return payload
 
+    def _allowed_department_ids(self) -> set[int] | None:
+        """이 학생이 실제로 소속된 department_id 집합(주전공 + 활성 상태 부전공/복수전공/
+        연계전공). course_id 스코프 검증에 쓴다.
+
+        학생 소속을 하나도 모르면(department_id도 없고 활성 프로그램도 없음) None을
+        돌려준다 — 호출부가 이걸 "검증 근거 없음"으로 읽고 건너뛰게 한다(모르는 걸
+        위반으로 단정하지 않는다, `_career_looks_mismatched`와 같은 원칙)."""
+        ids: set[int] = set()
+        if self.user.department_id is not None:
+            ids.add(self.user.department_id)
+        programs = self.db.scalars(
+            select(UserAcademicProgram).filter_by(user_id=self.user.id).where(
+                UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES)
+            )
+        ).all()
+        for program in programs:
+            if program.department_id is not None:
+                ids.add(program.department_id)
+        return ids or None
+
     def propose_change(
         self,
         action: str,
@@ -2261,6 +2281,33 @@ class _ToolContext:
             course_obj = self.db.get(Course, course_id)
             if course_obj is None:
                 return {"error": f"course_id {course_id}는 존재하지 않는 과목입니다"}
+
+        if action in ("create", "update") and course_obj is not None and course_obj.department_id is not None:
+            # search_courses를 거치지 않고 LLM이 지어낸 course_id를 걸러낸다. search_courses의
+            # department 스코프(department_id == 학생 소속 or NULL)는 SQL WHERE 절이라
+            # 어떤 query/category/semester 조합으로도 우회가 안 되는데, propose_change는
+            # course_id를 db.get()으로 그대로 신뢰해서 이 스코프 밖 과목도 그냥 통과시켰다
+            # (2026-08-25 실측: gpt-5.4-nano가 컴퓨터공학전공 학생에게 심리학과 전공선택
+            # 3과목(사회심리학/신경과학입문/심리통계및실습(II))을 "AI/웹응용 계열로 선택"이라는
+            # 사실과 다른 사유와 함께 제안 — 이 학생 스코프로 search_courses를 아무리 다시
+            # 돌려봐도 그 3과목은 절대 나올 수 없었다, 즉 search_courses 결과를 실제로 보고
+            # 고른 게 아니라 course_id를 지어낸 것). 활성 상태인 프로그램(주전공 +
+            # 부전공/복수전공/연계전공)의 department_id 전부를 허용 범위로 본다.
+            # 학생 소속 자체를 하나도 모르면(department_id도 없고 활성 프로그램도 없음)
+            # "위반"으로 단정하지 않는다 — _career_looks_mismatched와 같은 원칙(모르는 걸
+            # mismatch/위반으로 단정하지 않는다).
+            allowed_dept_ids = self._allowed_department_ids()
+            if allowed_dept_ids is not None and course_obj.department_id not in allowed_dept_ids:
+                return {
+                    "error": (
+                        f"{course_obj.course_name!r}(course_id={course_id}, "
+                        f"department_id={course_obj.department_id})는 이 학생의 소속 범위 밖 "
+                        f"과목입니다(학생 소속 department_id={sorted(allowed_dept_ids)}). "
+                        "search_courses로 실제로 반환된 course_id만 제안해라 — 다른 학과 "
+                        "과목이 필요하면 그 학과의 부전공/복수전공/연계전공이 학적에 활성 "
+                        "상태로 등록돼 있는지부터 확인해라."
+                    )
+                }
 
         if action == "create" and course_obj is not None:
             # 계절수업/도약수업 전용 개설 과목을 정규 1/2학기 슬롯에 넣으려는 시도를 막는다.
