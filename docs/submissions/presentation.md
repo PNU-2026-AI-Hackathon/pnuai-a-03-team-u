@@ -52,7 +52,7 @@
 
 | 구분 | 스택 | 배포 |
 |---|---|---|
-| **Frontend** | React 19 + Vite + TypeScript, axios · JWT 인증 | **Vercel** |
+| **Frontend** | React 19 + Vite + TypeScript, axios · JWT 인증 | **Netlify** |
 | **Backend** | FastAPI + SQLAlchemy + Alembic | **Railway** |
 | **Database** | Supabase (Managed Postgres + pgvector) | 관리형 |
 
@@ -60,7 +60,7 @@
 
 ### AI 스택
 
-- **성장 로드맵 상담 에이전트** (기본 `gpt-4o`)
+- **성장 로드맵 상담 에이전트** (기본 `gpt-5.4-nano`)
   - **LangChain 기반 tool-calling agent**: 과목 검색 · 변경 제안(propose) · 승인 반영(confirm) · 졸업요건 현황 조회 도구를 LLM이 호출
   - **멀티 LLM 지원**: `init_chat_model` 추상화로 설정 한 줄만 바꿔 OpenAI/Anthropic/Google 프로바이더 교체 가능
   - **Human-in-the-loop**: DB 직접 수정 없이 항상 "제안 → 사용자 승인" 후에만 반영
@@ -97,7 +97,7 @@
 ## 6. AI 및 코딩 도구 활용 계획
 
 - **AI 페어 프로그래밍**(Claude Code / Codex 등)으로 크롤러·API·마이그레이션 등 반복 작업 생산성 향상
-- **AI를 실제 제품 기능으로 내재화**: gpt-4o 상담 에이전트가 로드맵 설계의 핵심 로직
+- **AI를 실제 제품 기능으로 내재화**: gpt-5.4-nano 상담 에이전트가 로드맵 설계를 보조
 - 실계정 기반 **엔드투엔드 검증**으로 크롤링→졸업요건 대조→로드맵 추천 전체 흐름 반복 테스트
 
 ---
@@ -120,7 +120,7 @@
 - **4가지 핵심 기능 구현**: 내 정보 확인 / 성장 로드맵 / 시간표 추천 / 다중전공자 지원
 - **디자인 및 프론트엔드 구현**
 - **DB 구축**: 2026 교육과정 기준 학과·과목 DB (우선 일부 학과 한정 세부 적용)
-- **배포**: 프론트엔드 → Vercel, 백엔드 → Railway
+- **배포**: 프론트엔드 → Netlify, 백엔드 → Railway
 
 ### 향후 보완 계획
 

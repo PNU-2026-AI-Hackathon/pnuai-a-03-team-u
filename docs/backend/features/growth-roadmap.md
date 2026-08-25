@@ -94,7 +94,7 @@ course_roadmap_items
 
 langchain tool-calling으로 로드맵 변경을 "제안"받는 채팅 기능. **멀티 LLM 프로바이더
 지원**: LLM 호출을 langchain `init_chat_model` + `bind_tools`로 추상화해서,
-`settings.ROADMAP_AGENT_MODEL`("provider:model", 예: `"openai:gpt-4o"`,
+`settings.ROADMAP_AGENT_MODEL`("provider:model", 기본 `"openai:gpt-5.4-nano"`,
 `"anthropic:claude-sonnet-4-5"`, `"google_genai:gemini-2.0-flash"`) 한 줄만 바꾸면
 프로바이더가 교체된다. tool 스키마(`_TOOLS`, OpenAI function-schema dict를 langchain이
 그대로 받음)·`_ToolContext` 로직·아래 tool 루프는 프로바이더 무관하게 그대로
@@ -131,10 +131,13 @@ LangGraph 같은 그래프 오케스트레이션은 쓰지 않는다 — tool �
 ### 스키마
 
 ```text
+course_roadmap_chat_sessions
+- id, roadmap_id, title
+  # "새 대화 시작"마다 생성되는 독립 대화 스레드
+
 course_roadmap_chat_messages
-- id, roadmap_id, role(user/assistant), content
-  # 로드맵당 하나의 연속 대화로 취급. 클라이언트가 매번 히스토리를 다시 보내는
-  # 대신 서버가 이 테이블에서 복원해 매 요청마다 LLM에 다시 넘긴다.
+- id, roadmap_id, session_id, role(user/assistant), content
+  # 서버가 같은 session_id의 히스토리만 복원해 LLM에 전달한다.
 
 pending_roadmap_changes
 - id, roadmap_id, item_id(update/delete 대상, null 가능)
@@ -166,7 +169,7 @@ pending_roadmap_changes
 
 ## 알려진 한계 / TODO
 
-- 기본 프로바이더는 `openai:gpt-4o`. Anthropic/Google로 바꾸려면 통합 패키지
+- 기본 프로바이더는 `openai:gpt-5.4-nano`. Anthropic/Google로 바꾸려면 통합 패키지
   설치가 필요하며(requirements.txt 주석 참고), 프로바이더별 tool-calling 동작
   차이(특히 병렬 tool call, `tool_choice` 강제 방식)는 각각 실계정으로 재검증할 것
 - `tool_choice="any"`를 매 턴 강제해서 왕복 횟수가 늘어나(항상 최소 1개 이상
@@ -174,5 +177,5 @@ pending_roadmap_changes
   튜닝할 여지 있음
 - 대화형 부분 수정("전공필수 먼저", "4학년은 가볍게" 등)은 시스템 프롬프트로만
   유도 — 실제 정확도는 검증 전
-- 시간표 추천(`course_plans`/`course_plan_items`, F-03)과의 연결 로직 미구현 —
-  로드맵 항목을 실제 개설 분반(`course_offerings`)으로 구체화하는 흐름 필요
+- 시간표 AI 상담은 독립 기능으로 제공한다. 로드맵 항목을 시간표 후보로 자동 변환하는
+  직접 연계는 아직 제공하지 않는다.

@@ -229,7 +229,7 @@
 **형식**: 가로형 아키텍처 다이어그램 + 기술 배지 줄
 
 ```
-[Frontend · Netlify(예정)]    [Backend · Railway(예정)]                [DB · Supabase]
+[Frontend · Netlify]           [Backend · Railway]                     [DB · Supabase]
 React 19 + Vite + TS   →     FastAPI + SQLAlchemy + Alembic      →    PostgreSQL 17
 JWT 인증                      · REST API                                + pgvector
                               · 규칙 기반 졸업요건 검증 엔진
@@ -237,16 +237,15 @@ JWT 인증                      · REST API                                + pgv
                               · Playwright 크롤러
 ```
 
-> ⚠ **배포는 아직 "예정" 상태**다 (README 기준 현재 로컬 구동). 배너에 "Vercel 배포 완료"처럼 쓰면 허위 기재가 된다.
-> 발표 전까지 실제 배포가 끝나면 `(예정)`을 떼고, 아니면 "배포 예정" 또는 스택 이름만 표기할 것.
+> 서비스는 Netlify(프론트엔드)와 Railway(백엔드)에 배포되어 있다.
 
 기술 배지 줄:
-`React 19` `Vite` `TypeScript` `FastAPI` `SQLAlchemy` `Alembic` `LangChain` `gpt-4o` `Supabase` `pgvector` `Playwright`
+`React 19` `Vite` `TypeScript` `FastAPI` `SQLAlchemy` `Alembic` `LangChain` `gpt-5.4-nano` `Supabase` `pgvector` `Playwright`
 
 보안 한 줄 (24pt):
 > **포털 자격증명 비저장**(동기화 처리에만 사용) · 로그인 비밀번호 **bcrypt 단방향 해시** · 외부 LLM 호출 시 개인 식별정보 **비식별화**
 
-> ⚠ **확인 필요**: README는 "포털 자격증명 비저장"이라고 명시하지만, 코드에는 `CREDENTIAL_ENCRYPTION_KEY`(Fernet) 설정과 `core/security` 모듈이 남아 있다. 실제 구현이 **비저장**인지 **암호화 저장**인지 조현우·이도원이 확인한 뒤 문구를 확정할 것. 보안 문구는 심사에서 가장 확인받기 쉬운 항목이다.
+> 학생지원시스템 자격증명은 동기화 요청 처리에만 사용하며 저장하지 않는다.
 
 ---
 
