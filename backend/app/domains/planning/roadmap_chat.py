@@ -241,17 +241,29 @@ def _remaining_terms_until_graduation(db: Session, user_id: int) -> list[dict]:
     return out
 
 
-# PNU 학사 규정 기반 정규 학기 수강신청 학점 상한. base cap(단과대학/학과 기준)만
-# 강제한다 — 성적우수자 +3(직전 학기 18학점 이상+평점평균 3.80 이상), 이월 +2(잔여
-# 학점 1회 이월, 직전 학기 수강취소 없어야 함), 학·석사연계과정 +6(6학기부터, 건축학
-# 전공은 8학기부터)은 사용자 지적(2026-08-25)으로 규정 전문을 확인했지만, 이월제는
-# 수강취소 이력을 이 시스템이 아예 안 쌓고(StudentCourseRecord는 이수 완료 기록만
-# 있음), 연계과정 여부도 UserAcademicProgram.program_type에 그런 값이 없어(학적
-# 크롤링이 구분 안 함) 지어내지 않고는 판정할 방법이 없다 — 이 셋은 여전히 미반영.
-# 성적우수자는 데이터가 있어 계산 가능하지만 학기별로 달라지는 값이라(직전 학기가
-# 매번 바뀜) 이 상수 기반 cap과 별도 설계가 필요해 이번엔 손 안 댔다. 계절수업/
-# 도약수업은 정규 학기 상한과 별도라 이 가드가 걸리지 않는다.
+# PNU 학사 규정 기반 정규 학기 수강신청 학점 상한. base cap(단과대학/학과 기준)에
+# 성적우수자/학점이월제 보너스를 더한다 — 학·석사연계과정 +6(6학기부터, 건축학
+# 전공은 8학기부터)은 여전히 미반영이다: UserAcademicProgram.program_type에 그런
+# 값이 없어(학적 크롤링이 구분 안 함) 연계과정 여부 자체를 판정할 방법이 없다.
+#
+# 성적우수자/이월제는 사용자 지적(2026-08-25)으로 규정 전문 확인 후 반영. 스코프는
+# 사용자 확정: (1) "바로 다음 학기"에만 적용 — 그 이후 학기는 base cap 그대로
+# (`_credit_cap_for_term`이 대상 학기가 next_plannable_term인지로 분기).
+# (2) 이월제의 "직전 학기 수강취소 과목이 없어야 한다" 조건은 이 시스템이 수강취소
+# 이력을 아예 안 쌓아서(StudentCourseRecord는 이수 완료 기록만 있음) 검증 불가 —
+# 사용자 확정대로 이 조건은 생략하고 계산한다(수강취소가 있었어도 이월을 내준다).
+# 계절수업/도약수업은 정규 학기 상한과 별도라 이 가드가 걸리지 않는다.
 _DEFAULT_TERM_CREDIT_CAP = 21
+
+# "학기별 최대 수강신청 학점은 이월 학점을 포함하여 24학점을 초과할 수 없다" — 보너스를
+# 다 더해도 이 값을 넘지 않는다.
+_ABSOLUTE_TERM_CREDIT_CAP = 24
+# 성적우수자: 직전 학기 취득학점 18학점 이상 + 평점평균(4.5 만점) 3.80 이상 → +3학점.
+_ACADEMIC_EXCELLENCE_MIN_CREDITS = 18
+_ACADEMIC_EXCELLENCE_MIN_GPA = 3.80
+_ACADEMIC_EXCELLENCE_BONUS = 3
+# 학점이월제: 직전 학기 상한 대비 미사용 학점을 최대 2학점까지 다음 학기로 이월.
+_CARRYOVER_MAX_BONUS = 2
 
 # 단과대학/학과 단위로 base cap이 132/133학점 기준 19/21 이분법을 벗어나는 특수
 # 트랙(2026 PNU 학칙 "수강신청학점" 규정, 사용자 제공 원문 2026-08-25 기준).
@@ -363,6 +375,9 @@ _CORE_PROMPT = """너는 부산대학교 학생의 4년 학사 로드맵을 함�
     가 같이 온다. 그 목록 중 새 과목과 **역할 겹치거나 우선순위 낮은 것**을 골라
     `propose_change(action='delete' 또는 'update')`로 먼저 빼거나 다른 학기로 옮긴 뒤,
     새 과목을 다시 create 하는 **대체(swap) 조합**을 사용자에게 제안해라.
+    `remaining_terms`의 각 학기별 `term_credit_cap`이 base cap보다 높으면(성적우수자
+    +3/학점이월제 +2 보너스가 붙은 "바로 다음 학기") 왜 그 학기만 상한이 높은지
+    간단히 언급해줘도 좋다 — 단, 사용자가 학점 상한을 직접 물었을 때만.
   - **대체 후보가 없을 때 "다음 학기로 미루자"고 아무렇게나 말하지 마라.** 학기 전용
     과목을 미뤄야 하면 **같은 학기의 다음 연도**(예: 3-2 → 4-2)로 제안해라. 계절수업은
     정규 상한과 별개.
@@ -1931,6 +1946,67 @@ class _ToolContext:
         total_req = req.required_total_credits if req and req.required_total_credits else None
         return _per_term_credit_cap(total_req)
 
+    def _next_term_bonus_credits(self, base_cap: int) -> int:
+        """"바로 다음 학기"(next_plannable_term)에만 적용되는 성적우수자(+3)/
+        학점이월제(+2) 보너스 학점. base_cap + 이 값이 `_ABSOLUTE_TERM_CREDIT_CAP`를
+        넘지 않도록 호출부(`_credit_cap_for_term`)에서 clamp한다.
+
+        "직전 학기"는 `_next_term(cy, cs)`(다음 학기)의 바로 앞 학기이므로, 오늘
+        날짜 기준 `_current_academic_term()`이 곧 직전 학기다. 그 학기의
+        StudentCourseRecord가 하나도 없으면(휴학·편입 직후 등 기준 학기 자체가
+        없는 경우) 조용히 보너스 0을 준다 — 없는 이수내역으로 자격을 지어내지 않는다.
+        """
+        cy, cs = _current_academic_term()
+        prev_records = self.db.scalars(
+            select(StudentCourseRecord).where(
+                StudentCourseRecord.user_id == self.user.id,
+                StudentCourseRecord.year == str(cy),
+                StudentCourseRecord.semester == f"{cs}학기",
+            )
+        ).all()
+        if not prev_records:
+            return 0
+
+        total_credits = sum(
+            float(r.credits) for r in prev_records if r.credits is not None
+        )
+        bonus = 0
+
+        # 성적우수자: 취득학점 18+ 이고, 평점 있는(P/F 제외) 과목 기준 평점평균 3.80+.
+        graded = [
+            (float(r.credits), float(r.grade_point))
+            for r in prev_records
+            if r.credits is not None and r.grade_point is not None
+        ]
+        if total_credits >= _ACADEMIC_EXCELLENCE_MIN_CREDITS and graded:
+            graded_credits = sum(c for c, _ in graded)
+            gpa = sum(c * g for c, g in graded) / graded_credits
+            if gpa >= _ACADEMIC_EXCELLENCE_MIN_GPA:
+                bonus += _ACADEMIC_EXCELLENCE_BONUS
+
+        # 학점이월제: 직전 학기 상한 대비 미사용 학점(최대 2학점).
+        carryover = max(0.0, min(_CARRYOVER_MAX_BONUS, base_cap - total_credits))
+        bonus += int(carryover)
+
+        return bonus
+
+    def _credit_cap_for_term(self, year: str | None, semester: str | None) -> int:
+        """특정 학기(year/semester)에 적용되는 수강신청 학점 상한.
+
+        base cap(`_term_credit_cap`)에, 그 학기가 "바로 다음 학기"(next_plannable_term)일
+        때만 성적우수자/학점이월제 보너스를 더한다 — 사용자 확정 스코프(2026-08-25):
+        보너스는 그 이후 학기에는 적용 안 함. year/semester가 없거나(계절수업 등
+        비정규 학기 호출) 정규 학기 표기가 아니면 base cap을 그대로 돌려준다.
+        """
+        base_cap = self._term_credit_cap()
+        if year is None or semester is None:
+            return base_cap
+        cy, cs = _current_academic_term()
+        ny, ns = _next_term(cy, cs)
+        if (year, semester) != (str(ny), f"{ns}학기"):
+            return base_cap
+        return min(base_cap + self._next_term_bonus_credits(base_cap), _ABSOLUTE_TERM_CREDIT_CAP)
+
     def _planned_credits_by_term(self, exclude_item_id: int | None = None) -> dict[tuple[str | None, str | None], float]:
         """(planned_year, planned_semester)별 이미 계획된 학점 합계.
         exclude_item_id는 update 시 자기 자신을 빼서 재배치 여지를 만들 때 쓴다.
@@ -2010,13 +2086,16 @@ class _ToolContext:
             self._remaining_terms_cache = _remaining_terms_until_graduation(
                 self.db, self.user.id
             )
-        cap = self._term_credit_cap()
         planned = self._planned_credits_by_term()
         out = []
         for term in self._remaining_terms_cache:
+            # 목록의 첫 항목이 항상 "바로 다음 학기"다(_remaining_terms_until_graduation이
+            # _next_term(현재 학기)부터 시작) — 그 학기만 성적우수자/이월 보너스가 붙는다.
+            cap = self._credit_cap_for_term(term["planned_year"], term["planned_semester"])
             used = planned.get((term["planned_year"], term["planned_semester"]), 0.0)
             out.append({
                 **term,
+                "term_credit_cap": cap,
                 "already_planned_credits": used,
                 "credits_left_in_term": max(cap - used, 0.0),
             })
@@ -2056,7 +2135,9 @@ class _ToolContext:
         ).all()
         cy, cs = _current_academic_term()
         ny, ns = _next_term(cy, cs)
-        credit_cap = self._term_credit_cap()
+        # next_plannable_term 바로 옆이라, "지금부터 몇 학점까지 신청 가능한가"라는
+        # 질문에 바로 답이 되도록 성적우수자/이월 보너스가 적용된 값을 노출한다.
+        credit_cap = self._credit_cap_for_term(str(ny), f"{ns}학기")
         planned = self._planned_credits_by_term()
         # 커리큘럼 학기 매핑 — 엇학기(휴학 이력) 학생은 달력 학기와 커리큘럼 학년/학기가
         # 어긋난다. 예: 한 학기 휴학한 학생의 커리큘럼 4-1이 실제로는 달력 2학기.
@@ -2481,7 +2562,7 @@ class _ToolContext:
                 exclude_item_id=item_id if action == "update" else None
             )
             existing_credits = planned.get((planned_year, planned_semester), 0.0)
-            cap = self._term_credit_cap()
+            cap = self._credit_cap_for_term(planned_year, planned_semester)
             if existing_credits + add_credits > cap:
                 # 그 학기에 이미 뭐가 계획돼 있는지 함께 알려준다. LLM이 무작정 거절
                 # 문구만 받고 끝내는 대신, 목록 중 이 과목과 대체 가능한 걸 골라
@@ -2626,7 +2707,6 @@ class _ToolContext:
             return {"error": f"program_type은 primary/minor/dual/interdisciplinary 중 하나여야 합니다: {program_type}"}
 
         self.term_plan_called = True
-        cap = self._term_credit_cap()
         term_results: list[dict] = []
         accepted_count = 0
         rejected_count = 0
@@ -2636,6 +2716,9 @@ class _ToolContext:
                 continue
             planned_year = term.get("planned_year")
             planned_semester = term.get("planned_semester")
+            # 실제 상한 강제는 propose_change 안에서 다시 계산해 걸린다(단일 소스) —
+            # 여기서는 결과 보고용 term_credit_cap 필드를 같은 값으로 채우기 위해 미리 구한다.
+            cap = self._credit_cap_for_term(planned_year, planned_semester)
             planned_grade = term.get("planned_grade")
             course_ids = term.get("course_ids") or []
             term_reason = term.get("reason") or reason or "졸업까지 남은 학기 일괄 계획"

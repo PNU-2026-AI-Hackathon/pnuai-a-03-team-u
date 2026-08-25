@@ -767,6 +767,147 @@ class TermCreditCapGuardTest(unittest.TestCase):
         self.assertNotIn("error", result)
 
 
+class TermCreditCapBonusTest(unittest.TestCase):
+    """PNU 학사 규정: 성적우수자(+3)/학점이월제(+2) 보너스는 "바로 다음 학기"에만
+    붙는다. 이월제의 "직전 학기 수강취소 없어야 함" 조건은 이 시스템이 수강취소
+    이력을 안 쌓아서 검증 불가 — 사용자 확정대로 생략하고 계산한다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db, total_req=133):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, major_id=20)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                    department_id=10, major_id=20, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=10, major_id=20, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=total_req))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_academic_excellence_bonus_applies_when_previous_term_qualifies(self):
+        """직전 학기 18학점 이상 + 평점평균 3.80 이상 → 다음 학기 +3학점."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="A", credits=9,
+                                 grade_point=4.5, year="2026", semester="1학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="B", credits=9,
+                                 grade_point=3.5, year="2026", semester="1학기"),
+        ])
+        db.flush()
+        # 평균 = (9*4.5 + 9*3.5)/18 = 4.0 ≥ 3.80, 취득학점 18 ≥ 18 → 성적우수자 +3.
+        # 이월도 min(2, 21-18)=2 붙어서 21+3+2=26이지만 24로 clamp된다.
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            cap = ctx._credit_cap_for_term("2026", "2학기")
+        self.assertEqual(24, cap)
+
+    def test_no_bonus_when_gpa_below_threshold(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        db.add_all([
+            StudentCourseRecord(user_id=1, raw_course_name="A", credits=10.5,
+                                 grade_point=3.0, year="2026", semester="1학기"),
+            StudentCourseRecord(user_id=1, raw_course_name="B", credits=10.5,
+                                 grade_point=3.0, year="2026", semester="1학기"),
+        ])
+        db.flush()
+        # 취득학점 21(≥18)이지만 평균 3.0 < 3.80 → 성적우수자 미달. 상한(21)을 이미
+        # 꽉 채워 들었으니 이월도 0 → 보너스 전혀 없음.
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            cap = ctx._credit_cap_for_term("2026", "2학기")
+        self.assertEqual(21, cap)
+
+    def test_carryover_bonus_from_unused_previous_term_credits(self):
+        """직전 학기에 상한만큼 못 채웠으면 미사용분을 최대 2학점까지 이월."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="A", credits=15,
+                                    grade_point=4.0, year="2026", semester="1학기"))
+        db.flush()
+        # 직전 학기 15학점만 사용 → 21-15=6, 이월 상한 2로 clamp → +2.
+        # 취득학점 15 < 18이라 성적우수자는 미달.
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            cap = ctx._credit_cap_for_term("2026", "2학기")
+        self.assertEqual(23, cap)
+
+    def test_bonus_capped_at_absolute_24_for_high_base_cap(self):
+        """base cap이 이미 23(약학대학 등)이면 보너스를 더해도 24를 넘지 않는다
+        ("이월 학점을 포함하여 24학점을 초과할 수 없다")."""
+        db = self.make_db()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=100, school_id=1, name="약학대학"),
+        ])
+        user = User(id=9, email="pharm2@example.com", password_hash="x", name="약대생2",
+                    department_id=209, major_id=None)
+        db.add(user)
+        db.add(Department(id=209, college_id=100, name="약학과"))
+        db.add(UserAcademicProgram(user_id=9, program_type="primary",
+                                    department_id=209, major_id=None, curriculum_year=2026))
+        db.add(GraduationRequirement(department_id=209, major_id=None, program_type="primary",
+                                      curriculum_year="2026", required_total_credits=160))
+        roadmap = CourseRoadmap(id=9, user_id=9)
+        db.add(roadmap)
+        db.add_all([
+            StudentCourseRecord(user_id=9, raw_course_name="A", credits=9,
+                                 grade_point=4.5, year="2026", semester="1학기"),
+            StudentCourseRecord(user_id=9, raw_course_name="B", credits=9,
+                                 grade_point=4.5, year="2026", semester="1학기"),
+        ])
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+        # base cap 23 + 성적우수자 3 + 이월 min(2, 23-18)=2 = 28 → 24로 clamp.
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            cap = ctx._credit_cap_for_term("2026", "2학기")
+        self.assertEqual(24, cap)
+
+    def test_bonus_only_applies_to_immediate_next_term_not_later_ones(self):
+        """"바로 다음 학기"만 보너스 대상이다 — 그 이후 학기는 base cap 그대로
+        (사용자 확정 스코프, 2026-08-25)."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        # 직전 학기 20학점, 평균 4.5 → 성적우수자 +3, 이월 min(2, 21-20)=1 → 총 +4,
+        # 21+4=25는 24로 clamp된다.
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="A", credits=20,
+                                    grade_point=4.5, year="2026", semester="1학기"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            next_term_cap = ctx._credit_cap_for_term("2026", "2학기")  # 바로 다음 학기
+            later_term_cap = ctx._credit_cap_for_term("2027", "1학기")  # 그 다음다음 학기
+        self.assertEqual(24, next_term_cap)
+        self.assertEqual(21, later_term_cap)
+
+    def test_no_bonus_without_any_previous_term_records(self):
+        """직전 학기 이수기록이 아예 없으면(편입 직후 등) 보너스 없이 base cap 그대로 —
+        없는 이수내역으로 자격을 지어내지 않는다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            cap = ctx._credit_cap_for_term("2026", "2학기")
+        self.assertEqual(21, cap)
+
+    def test_remaining_terms_and_get_roadmap_items_surface_the_bonus_cap(self):
+        """remaining_terms[0]와 get_roadmap_items의 term_credit_cap이 실제로
+        보너스 적용된 값을 노출해야 LLM이 그 근거로 더 많은 학점을 제안할 수 있다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db, total_req=133)  # base cap=21
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="A", credits=15,
+                                    grade_point=4.0, year="2026", semester="1학기"))
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.get_roadmap_items()
+        self.assertEqual(23, result["term_credit_cap"])
+        self.assertEqual(23, result["remaining_terms"][0]["term_credit_cap"])
+        # 그 다음 학기부터는 base cap.
+        self.assertEqual(21, result["remaining_terms"][1]["term_credit_cap"])
+
+
 class TransferStudentFallbackGuardTest(unittest.TestCase):
     """편입생에게 1·2학년 과목을 새로 추천하지 못하게 막는다.
 
@@ -2340,8 +2481,10 @@ class FullHorizonPlanningTest(unittest.TestCase):
         """편입 3학년(2026-1 재학)이면 남은 학기는 3-2, 4-1, 4-2 세 개다."""
         db = self.make_db()
         ctx = self.make_ctx(db, admission_type="transfer")
-        # 편입 첫 학기(3-1) 이수기록 — 커리큘럼 학년 환산의 기준점
-        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=3,
+        # 편입 첫 학기(3-1) 이수기록 — 커리큘럼 학년 환산의 기준점. 21학점 꽉 채워서
+        # 학점이월제 보너스(상한 대비 미사용분)가 안 붙게 한다 — 이 테스트는 학기
+        # 범위(horizon) 커버리지가 목적이지 신청학점 보너스 계산이 목적이 아니다.
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="이수A", credits=21,
                                    year="2026", semester="1학기", category="전공선택"))
         db.flush()
 
