@@ -170,6 +170,50 @@ class SyllabusParserTest(unittest.TestCase):
         self.assertEqual(_SAMPLE_TEXT, self.parsed.raw_text)
 
 
+class UnnumberedStandardTemplateObjectiveSplitTest(unittest.TestCase):
+    """세로 중앙 정렬 라벨 때문에 번호 없는 목표가 개요에 합쳐지던 실제 포맷."""
+
+    def test_goal_sentences_and_topic_list_are_separated(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "교수목표: 객체지향 개념에 바탕을 둔 C++ 프로그래밍",
+            "C++ 언어를 통해 객체지향 개념을 학습한다.",
+            "C++ 프로그램의 설계 능력과 구현 능력을 기른다.",
+            "C 언어의 확장",
+            "타입, 변수, 포인터 및 배열",
+            "강의개요     예외처리 기법(exception handling)",
+        ])
+
+        self.assertIn("객체지향", objectives)
+        self.assertIn("설계 능력", objectives)
+        self.assertNotIn("C 언어의 확장", objectives)
+        self.assertIn("C 언어의 확장", overview)
+        self.assertIn("예외처리", overview)
+        self.assertNotIn("강의개요", overview)
+
+    def test_blank_after_title_does_not_discard_following_goal_sentences(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "교수목표: 객체지향 개념에 바탕을 둔 Modern C++ 프로그래밍",
+            "",
+            "C++ 프로그래밍의 기본 개념을 학습한다.",
+            "교수목표",
+            "C++ 프로그램의 설계 능력과 구현 능력을 기른다.",
+            "C++ 문법과 표현을 집중적으로 훈련한다.",
+            "",
+            "C 언어의 확장",
+            "강의개요     예외 처리 기법(exception handling)",
+        ])
+
+        self.assertIn("Modern C++", objectives)
+        self.assertIn("설계 능력", objectives)
+        self.assertIn("집중적으로 훈련한다", objectives)
+        self.assertNotIn("C 언어의 확장", objectives)
+        self.assertIn("C 언어의 확장", overview)
+
+
 
 class EmptyCellAccessibilityBoilerplateTest(unittest.TestCase):
     """실제 One-Stop PDF(인공지능이해 FM2003112분반001, 2026-2학기, 2026-08-25

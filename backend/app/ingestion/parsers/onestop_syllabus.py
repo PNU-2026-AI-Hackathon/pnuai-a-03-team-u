@@ -201,8 +201,66 @@ def _parse_objectives_and_overview(block_lines: list[str]) -> tuple[str | None, 
         if _NUMBERED_ITEM_RE.match(line):
             last_numbered_idx = i
     if last_numbered_idx == -1:
-        # 번호 목록이 아예 없으면 전부 개요로 본다 — 목표를 굳이 지어내지 않는다.
-        return None, _join(stripped)
+        # 번호 목록이 없는 표준 템플릿도 많다. 이때 예전 구현은 목표+개요를 전부
+        # ``course_overview``에 넣었는데, C++프로그래밍처럼 목표 문장이 실제로 있는
+        # 강좌의 추천 근거가 뭉개졌다. 표 레이블이 세로 중앙에 있어 ``강의개요``
+        # 위치만으로는 경계가 불완전하므로, 다음의 보수적 규칙을 쓴다.
+        #
+        # - 교수목표 라벨 뒤의 연속된 '학습한다/기른다/이해한다' 문장을 목표로 잡고
+        # - 첫 비목표형 주제 나열(예: 'C 언어의 확장') 또는 빈 줄부터 개요로 넘긴다.
+        #
+        # 목표형 문장을 하나도 확인하지 못하면 목표를 지어내지 않고 기존처럼 전부
+        # 개요로 둔다. 원문은 raw_text에 보존되어 있어 이 규칙이 보수적이어도 손실은 없다.
+        objective_label_idx = next(
+            (i for i, line in enumerate(block_lines) if line.strip().startswith("교수목표")),
+            None,
+        )
+        if objective_label_idx is None:
+            return None, _join(stripped)
+
+        def clean(line: str) -> str:
+            value = _strip_leading_label(line.strip(), _OBJECTIVES_BLOCK_LABEL_LINES)
+            return value.lstrip(":：- ").strip()
+
+        def is_goal_outcome(line: str) -> bool:
+            return bool(re.search(
+                r"(?:학습한다|이해한다|습득한다|체득한다|배양한다|함양한다|기른다|"
+                r"익힌다|훈련한다|숙달한다|강화한다|향상한다|확립한다|목표로 한다|할 수 있다)[.!]?$",
+                line,
+            ))
+
+        objectives: list[str] = []
+        overview_start: int | None = None
+        saw_goal_outcome = False
+        for i in range(objective_label_idx, len(block_lines)):
+            raw = block_lines[i]
+            value = clean(raw)
+            if not value:
+                # 세로 중앙에 놓인 같은 필드 라벨은 목표 셀 한가운데에 다시
+                # 나타날 수 있다. 빈 줄과 달리 경계 신호가 아니다.
+                if raw.strip() in _OBJECTIVES_BLOCK_LABEL_LINES:
+                    continue
+                # 제목 다음의 빈 줄은 목표 목록 안에도 흔하다. 실제 목표형 문장을
+                # 아직 만나기 전에는 경계로 확정하지 않는다(Modern C++ 템플릿).
+                if objectives and saw_goal_outcome:
+                    overview_start = i + 1
+                    break
+                continue
+            # 강의개요 라벨이 목표 셀 안으로 세로 이동해도 그 줄 뒤 내용은 개요다.
+            if raw.strip().startswith("강의개요"):
+                overview_start = i
+                break
+            if saw_goal_outcome and not is_goal_outcome(value):
+                overview_start = i
+                break
+            objectives.append(value)
+            saw_goal_outcome = saw_goal_outcome or is_goal_outcome(value)
+
+        if not saw_goal_outcome:
+            return None, _join(stripped)
+        overview_lines = block_lines[overview_start:] if overview_start is not None else []
+        overview = _join(clean(line) for line in overview_lines)
+        return _join(objectives), overview
     objectives = _join(stripped[: last_numbered_idx + 1])
     overview = _join(stripped[last_numbered_idx + 1:])
     return objectives, overview

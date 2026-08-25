@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument("--skip-embeddings", action="store_true")
     parser.add_argument(
         "--target",
-        choices=["all", "curriculum", "graduation-requirements"],
+        choices=["all", "curriculum", "graduation-requirements", "syllabi"],
         default="all",
     )
     args = parser.parse_args()
@@ -35,6 +35,8 @@ def main() -> None:
             result = service.ingest_curriculum(**options)
         elif args.target == "graduation-requirements":
             result = service.ingest_graduation_requirements(**options)
+        elif args.target == "syllabi":
+            result = service.ingest_syllabi(**options)
         else:
             result = service.rebuild_all(**options)
     finally:

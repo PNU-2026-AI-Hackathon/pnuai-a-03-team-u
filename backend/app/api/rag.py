@@ -139,8 +139,10 @@ def ingest_rag_chunks(
         result = service.ingest_curriculum(**options)
     elif payload.target == "graduation-requirements":
         result = service.ingest_graduation_requirements(**options)
+    elif payload.target == "syllabi":
+        result = service.ingest_syllabi(**options)
     elif payload.target == "all":
         result = service.rebuild_all(**options)
     else:
-        raise HTTPException(status_code=400, detail="target은 all, curriculum, graduation-requirements 중 하나여야 합니다")
+        raise HTTPException(status_code=400, detail="target은 all, curriculum, graduation-requirements, syllabi 중 하나여야 합니다")
     return RagIngestionResponse(**result)

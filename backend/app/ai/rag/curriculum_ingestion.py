@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.ai.embeddings.openai_client import embed_texts
 from app.ai.rag.models import RagChunk
 from app.domains.academics.models import GraduationRequirement
-from app.domains.courses.models import Course
+from app.domains.courses.models import Course, CourseOffering, CourseSyllabus
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class RagChunkDraft:
 
 
 class CurriculumRagIngestionService:
-    """Builds RAG chunks from structured curriculum and graduation DB tables."""
+    """Builds RAG chunks from structured curriculum, graduation, and syllabus tables."""
 
     REQUIREMENT_FIELDS = {
         "총학점": "required_total_credits",
@@ -53,6 +53,7 @@ class CurriculumRagIngestionService:
         drafts = [
             *self._curriculum_course_drafts(curriculum_year=year),
             *self._graduation_requirement_drafts(curriculum_year=year),
+            *self._syllabus_drafts(curriculum_year=year),
         ]
         chunks = self._persist_drafts(drafts)
         embedded = self.embed_missing() if with_embeddings else 0
@@ -88,6 +89,22 @@ class CurriculumRagIngestionService:
         )
         chunks = self._persist_drafts(self._graduation_requirement_drafts(curriculum_year=year))
         embedded = self.embed_missing(document_type="graduation_requirement") if with_embeddings else 0
+        self.db.commit()
+        return {"chunks_created": len(chunks), "embeddings_created": embedded, "embedding_enabled": with_embeddings}
+
+    def ingest_syllabi(
+        self, *, curriculum_year: int | str = 2026, with_embeddings: bool = True
+    ) -> dict[str, int | bool]:
+        """One-Stop 교수계획표의 핵심 내용을 분반 단위 RAG 청크로 적재한다."""
+        year = str(curriculum_year)
+        self.db.execute(
+            delete(RagChunk).where(
+                RagChunk.curriculum_year == year,
+                RagChunk.document_type == "syllabus",
+            )
+        )
+        chunks = self._persist_drafts(self._syllabus_drafts(curriculum_year=year))
+        embedded = self.embed_missing(document_type="syllabus") if with_embeddings else 0
         self.db.commit()
         return {"chunks_created": len(chunks), "embeddings_created": embedded, "embedding_enabled": with_embeddings}
 
@@ -217,4 +234,79 @@ class CurriculumRagIngestionService:
                         },
                     )
                 )
+        return drafts
+
+    def _syllabus_drafts(self, *, curriculum_year: str) -> list[RagChunkDraft]:
+        """강의계획서에서 RAG에 의미 있는 필드만 라벨을 붙여 한 청크로 묶는다.
+
+        ``raw_text`` 전문은 파싱 재검증용 안전망으로 DB에 남긴다. 검색 청크에 그대로
+        넣으면 PDF 표 레이블과 서식 노이즈가 의미 신호를 압도하므로, 여기에는 검증된
+        구조화 필드(개요·목표·평가·선수과목·주차계획)만 넣는다.
+        """
+        rows = self.db.execute(
+            select(CourseSyllabus, CourseOffering, Course)
+            .join(CourseOffering, CourseOffering.id == CourseSyllabus.offering_id)
+            .join(Course, Course.id == CourseOffering.course_id)
+            .where(CourseOffering.year == curriculum_year)
+            .order_by(Course.department_id, Course.major_id, CourseOffering.semester, CourseSyllabus.id)
+        ).all()
+        drafts: list[RagChunkDraft] = []
+        for syllabus, offering, course in rows:
+            parts = [
+                f"강의개요: {syllabus.course_overview}" if syllabus.course_overview else None,
+                f"교수목표: {syllabus.course_objectives}" if syllabus.course_objectives else None,
+                f"선수과목/사전지식: {syllabus.prerequisites_text}" if syllabus.prerequisites_text else None,
+                f"수업방식: {syllabus.teaching_mode}" if syllabus.teaching_mode else None,
+                f"평가방법: {syllabus.evaluation_method}" if syllabus.evaluation_method else None,
+                f"교재: {syllabus.textbooks}" if syllabus.textbooks else None,
+                f"핵심역량: {', '.join(syllabus.core_competencies)}" if syllabus.core_competencies else None,
+            ]
+            if syllabus.weekly_plan:
+                weekly = "; ".join(
+                    f"{item.get('week')}: {item.get('content')}"
+                    for item in syllabus.weekly_plan
+                    if item.get("week") and item.get("content")
+                )
+                if weekly:
+                    parts.append(f"주차계획: {weekly}")
+            detail = "\n".join(part for part in parts if part)
+            if not detail:
+                # 연락처만 있는 빈 계획서는 검색 근거가 되지 않는다.
+                continue
+            term = offering.semester or "학기 미상"
+            professor = offering.professor or "교수 미상"
+            evidence = (
+                f"One-Stop 교수계획표 / {curriculum_year}년 {term} / "
+                f"{course.course_name} {offering.section or '분반 미상'}분반 / {professor}"
+            )
+            content = (
+                f"{evidence}. 과목명: {course.course_name}. "
+                f"과목코드: {course.course_code or '미상'}. {detail}"
+            )
+            drafts.append(
+                RagChunkDraft(
+                    document_type="syllabus",
+                    source_table="course_syllabi",
+                    source_id=syllabus.id,
+                    department_id=course.department_id,
+                    major_id=course.major_id,
+                    curriculum_year=curriculum_year,
+                    category=course.category,
+                    grade=course.year,
+                    semester=(term.replace("학기", "") if term in {"1학기", "2학기"} else term),
+                    course_id=course.id,
+                    title=f"{course.course_name} 강의계획서 ({offering.section or '분반 미상'})",
+                    content=content,
+                    evidence=evidence,
+                    source=f"course_syllabi:{curriculum_year}_{term}",
+                    chunk_metadata={
+                        "course_name": course.course_name,
+                        "course_code": course.course_code,
+                        "credits": course.credits,
+                        "offering_id": offering.id,
+                        "section": offering.section,
+                        "professor": offering.professor,
+                    },
+                )
+            )
         return drafts
