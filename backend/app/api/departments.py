@@ -37,13 +37,18 @@ router = APIRouter(prefix="/departments", tags=["departments"])
 # 정식 학과까지 사라진다. 반드시 뒤 단어까지 붙여서 판단한다.
 _HIDDEN_NAME_KEYWORDS = ("융합트랙", "연계전공", "융합전공")
 
+# 학과 자체가 하나의 정식 편제 단위이고 회원가입에서 직접 선택해야 하는 예외.
+# 핀테크융합전공은 departments 행과 부전공·복수전공 졸업요건을 모두 갖고 있으므로,
+# 이름 끝의 "융합전공"만 보고 숨기면 실제 선택 경로가 사라진다.
+_VISIBLE_NAME_EXCEPTIONS = ("핀테크융합전공",)
+
 
 def _visible_name(column):
     """이름에 부가 과정 키워드가 없는 행만 남기는 조건."""
     condition = column.notilike(f"%{_HIDDEN_NAME_KEYWORDS[0]}%")
     for keyword in _HIDDEN_NAME_KEYWORDS[1:]:
         condition = condition & column.notilike(f"%{keyword}%")
-    return condition
+    return condition | column.in_(_VISIBLE_NAME_EXCEPTIONS)
 
 
 class DepartmentSearchResult(BaseModel):
