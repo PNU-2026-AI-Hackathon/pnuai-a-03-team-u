@@ -29,7 +29,7 @@ from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.curriculum_retriever import CurriculumRetriever
 from app.core.config import settings
 from app.domains.academics.course_substitution import liberal_area_completions
-from app.domains.academics.models import StudentCourseRecord
+from app.domains.academics.models import ProgramCourse, StudentCourseRecord
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.planning.models import (
@@ -1095,10 +1095,22 @@ class _TimeTableToolContext:
                     or_(
                         Course.department_id == self.user.department_id,
                         Course.department_id.is_(None),
+                        Course.id.in_(
+                            select(ProgramCourse.course_id).where(
+                                ProgramCourse.department_id == self.user.department_id,
+                                ProgramCourse.major_id == self.user.major_id,
+                            )
+                        ),
                     ),
                     or_(
                         Course.major_id == self.user.major_id,
                         Course.major_id.is_(None),
+                        Course.id.in_(
+                            select(ProgramCourse.course_id).where(
+                                ProgramCourse.department_id == self.user.department_id,
+                                ProgramCourse.major_id == self.user.major_id,
+                            )
+                        ),
                     ),
                 )
                 .distinct()
