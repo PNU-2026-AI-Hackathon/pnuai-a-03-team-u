@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.api.courses import search_offerings
 from app.core.db import Base
-from app.domains.academics.models import College, Department, Major, School
+from app.domains.academics.models import College, Department, Major, ProgramCourse, School
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.users.models import User
 
@@ -45,6 +45,7 @@ class OfferingSearchTest(unittest.TestCase):
                 College.__table__,
                 Department.__table__,
                 Major.__table__,
+                ProgramCourse.__table__,
                 Course.__table__,
                 CourseOffering.__table__,
                 CourseTime.__table__,
@@ -53,7 +54,7 @@ class OfferingSearchTest(unittest.TestCase):
 
     def setUp(self):
         self.db = Session(self.engine)
-        for model in (CourseTime, CourseOffering, Course, Major, Department, College, School):
+        for model in (CourseTime, CourseOffering, ProgramCourse, Course, Major, Department, College, School):
             self.db.query(model).delete()
         self.db.commit()
 
@@ -64,6 +65,7 @@ class OfferingSearchTest(unittest.TestCase):
             # 실제 108번 학부처럼 모든 과목이 세부전공에 배정된 학부
             Department(id=108, name="정보컴퓨터공학부", college_id=1),
             Department(id=200, name="학부공통있는학부", college_id=1),
+            Department(id=300, name="핀테크융합전공", college_id=1),
         ])
         self.db.add_all([
             Major(id=36, name="컴퓨터공학전공", department_id=108),
@@ -95,9 +97,13 @@ class OfferingSearchTest(unittest.TestCase):
             Course(id=10, course_code="ZF0000003", course_name="영역미지정균형교양",
                    department_id=None, major_id=None, category="효원균형교양",
                    general_education_area=None, credits=3),
+            # 핀테크 자체 개설 과목은 둘뿐이지만, 컴퓨터공학전공 실제 개설 과목도
+            # program_courses로 교차인정한다.
+            Course(id=11, course_code="FC0000001", course_name="핀테크세미나",
+                   department_id=300, major_id=None, category="전공선택", credits=3),
         ])
         self.db.flush()
-        for course_id in (1, 2, 3, 4, 5, 6, 8, 9, 10):
+        for course_id in (1, 2, 3, 4, 5, 6, 8, 9, 10, 11):
             self.db.add(CourseOffering(id=course_id, course_id=course_id,
                                        year="2026", semester="2학기", section="001",
                                        professor="교수"))
@@ -111,6 +117,11 @@ class OfferingSearchTest(unittest.TestCase):
         self.db.flush()
         self.db.add(CourseOffering(id=7, course_id=7, year="2026", semester="1학기",
                                    section="001", professor="교수"))
+        self.db.add(ProgramCourse(
+            department_id=300, major_id=None, course_id=1,
+            requirement_group="핀테크융합전공 교차인정과목",
+            category="전공필수", curriculum_year="2026",
+        ))
         self.db.commit()
 
         self.user = User(id=1, email="probe@pusan.ac.kr", password_hash="x", name="테스트",
@@ -217,6 +228,13 @@ class OfferingSearchTest(unittest.TestCase):
         self.assertEqual(
             ["자료구조", "컴퓨터구조"],
             self._names(department_id=108, major="컴퓨터공학전공", category=["전공필수"]),
+        )
+
+    def test_융합전공은_공식_교차인정_타학과_개설도_보인다(self):
+        """핀테크 화면이 자체 개설 2건만 보여주지 않아야 한다."""
+        self.assertEqual(
+            ["자료구조", "핀테크세미나"],
+            self._names(department_id=300),
         )
 
     def test_전공_한_갈래는_기초_필수_선택을_모두_훑는다(self):
