@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
 from app.domains.academics.models import (
-    College, Department, GraduationRequirement, Major, School, StudentCourseRecord, StudentCourseSubstitution,
+    College, Department, GraduationRequirement, Major, ProgramCourse, School, StudentCourseRecord, StudentCourseSubstitution,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course, CourseOffering, CourseTime
@@ -35,7 +35,7 @@ _TABLES = [
     User.__table__, Course.__table__, CourseOffering.__table__, CourseTime.__table__,
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
-    StudentCourseRecord.__table__,
+    StudentCourseRecord.__table__, ProgramCourse.__table__,
     StudentCourseSubstitution.__table__,  # 추천 경로가 substituted_course_names를 조회한다
     TimetableChatSession.__table__, TimetableChatMessage.__table__,
     # 시간표 챗이 "사용자가 UI에서 직접 담아둔 강좌"를 읽는다 — 없으면 run_timetable_chat이
@@ -1359,6 +1359,40 @@ class NotOfferedSeparationTest(unittest.TestCase):
 
         self.assertIn("공학작문",
                       [x["course_name"] for x in r["matched_but_not_offered_this_term"]])
+
+
+class CrossListedProgramCourseTest(unittest.TestCase):
+    """융합전공이 인정한 타 학과 개설 과목도 시간표 후보가 되어야 한다."""
+
+    def test_cross_listed_source_course_is_returned_with_its_offering(self):
+        db = _make_db()
+        user = _make_student(db, department_id=100, major_id=None)
+        # 핀테크 카탈로그 자체 행은 이번 학기에 분반이 없고, 실제 분반은 컴퓨터공학전공
+        # 소속 행에만 있다고 가정한다. program_courses 연결이 없으면 후자가 스코프에서
+        # 빠져 "미개설"으로 잘못 안내된다.
+        db.add(Course(
+            id=1, course_name="머신러닝", category="전공선택", credits=3.0,
+            year="3", semester="2", department_id=100,
+        ))
+        db.add(Course(
+            id=2, course_name="머신러닝", category="전공선택", credits=3.0,
+            year="3", semester="2", department_id=999, major_id=888,
+        ))
+        db.add(CourseOffering(
+            id=102, course_id=2, year="2026", semester="2학기", section="001", professor="교수",
+        ))
+        db.add(ProgramCourse(
+            department_id=100, major_id=None, course_id=2,
+            requirement_group="핀테크융합전공 교차인정과목",
+            category="전공선택", curriculum_year="2026",
+        ))
+        db.flush()
+        ctx = _TimeTableToolContext(db, user, year="2026", semester="2학기")
+
+        result = ctx.list_offered_courses(query="머신러닝")
+
+        self.assertEqual([2], [row["course_id"] for row in result["results"]])
+        self.assertEqual([102], [section["offering_id"] for section in result["results"][0]["offered_sections"]])
 
 
 class TimeConstraintParseTest(unittest.TestCase):

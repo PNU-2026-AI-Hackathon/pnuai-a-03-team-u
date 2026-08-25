@@ -5,7 +5,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.ai.rag.curriculum_retriever import CurriculumRetriever, GraduationRequirementRetriever
 from app.core.db import Base
-from app.domains.academics.models import College, Department, GraduationRequirement, Major, School
+from app.domains.academics.models import (
+    College, Department, GraduationRequirement, Major, ProgramCourse, School,
+)
 from app.domains.courses.models import Course
 
 
@@ -21,6 +23,7 @@ class RagRetrieverTest(unittest.TestCase):
                 Major.__table__,
                 Course.__table__,
                 GraduationRequirement.__table__,
+                ProgramCourse.__table__,
             ],
         )
         session_factory = sessionmaker(bind=engine)
@@ -117,6 +120,31 @@ class RagRetrieverTest(unittest.TestCase):
         self.assertIn(1, course_ids)  # 전공별 과목도 포함돼야 함
         self.assertIn(2, course_ids)  # 학과 공통 과목도 포함
         self.assertNotIn(3, course_ids)  # 타학과는 여전히 제외
+
+    def test_curriculum_retriever_includes_and_prefers_cross_listed_program_course(self):
+        """융합전공은 타 학과 개설 과목도 program_courses로 인정한다.
+
+        같은 이름의 자체 카탈로그 행이 분반 없이 있어도, 시간표 후보에는 실제 개설
+        주체인 교차 인정과목이 먼저 와야 한다.
+        """
+        db = self.make_db()
+        db.add_all([
+            Course(id=1, course_name="머신러닝", department_id=10,
+                   category="전공선택", credits=3.0, year="4", semester="1"),
+            Course(id=2, course_name="머신러닝", department_id=99, major_id=88,
+                   category="전공선택", credits=3.0, year="3", semester="1"),
+            ProgramCourse(department_id=10, major_id=None, course_id=2,
+                          requirement_group="교차인정", category="전공선택",
+                          curriculum_year="2026"),
+        ])
+        db.commit()
+
+        results = CurriculumRetriever(db).search(
+            query="머신러닝", department_id=10, major_id=None,
+            curriculum_year=2026, filters={"semester": "1학기"},
+        )
+
+        self.assertEqual([result["course_id"] for result in results], [2])
 
     def test_graduation_requirement_retriever_returns_rag_shaped_requirements(self):
         db = self.make_db()

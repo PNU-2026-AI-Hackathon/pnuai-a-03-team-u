@@ -12,7 +12,7 @@ from app.ai.embeddings.openai_client import embed_text
 from app.ai.rag.career_keywords import expand_career_query
 from app.ai.rag.models import RagChunk
 from app.domains.academics.graduation_progress import COURSE_CATEGORY_TO_REQUIREMENT
-from app.domains.academics.models import GraduationRequirement
+from app.domains.academics.models import GraduationRequirement, ProgramCourse
 from app.domains.courses.models import Course
 
 
@@ -120,6 +120,26 @@ def _category_condition(category: str):
     return Course.category.in_((category, *aliases))
 
 
+def _program_course_scope_ids(
+    department_id: int,
+    major_id: int | None,
+    curriculum_year: int | str | None,
+):
+    """프로그램이 타 학과 과목을 인정할 때 함께 검색할 course id 서브쿼리.
+
+    핀테크융합전공처럼 학과 자체가 융합전공인 경우에도 ``major_id``는 NULL이다.
+    따라서 이 경우에는 그 프로그램의 NULL 행만 연결한다. 단순히 학과의 모든
+    ``program_courses``를 섞으면, 같은 학과 아래의 다른 트랙 과목까지 노출될 수 있다.
+    """
+    conditions = [
+        ProgramCourse.department_id == department_id,
+        ProgramCourse.major_id == major_id,
+    ]
+    if curriculum_year is not None:
+        conditions.append(ProgramCourse.curriculum_year == _stringify(curriculum_year))
+    return select(ProgramCourse.course_id).where(and_(*conditions))
+
+
 def available_categories_for_scope(
     db,
     department_id: int | None,
@@ -213,10 +233,21 @@ class CurriculumRetriever:
         # courses currently stores the imported 2026 curriculum rows, while
         # Course.year means recommended grade. Keep curriculum_year in the
         # public contract, but enforce the actual academic scope with
-        # department/major metadata here.
+        # department/major metadata here. ``program_courses`` adds the
+        # cross-listed courses recognised by a convergence program (for
+        # example, fintech students taking business/CS offerings).
         conditions = [
-            or_(Course.department_id == department_id, Course.department_id.is_(None)),
-            _major_scope_filter(Course, major_id),
+            or_(
+                Course.department_id == department_id,
+                Course.department_id.is_(None),
+                Course.id.in_(_program_course_scope_ids(department_id, major_id, curriculum_year)),
+            ),
+            # A cross-listed course belongs to its source department/major,
+            # so applying the program's major filter to it would hide it.
+            or_(
+                _major_scope_filter(Course, major_id),
+                Course.id.in_(_program_course_scope_ids(department_id, major_id, curriculum_year)),
+            ),
         ]
         if parsed_filters.grade is not None:
             # 학년 필터에 특정 학년(1~4)을 넣으면 courses.year가 정확히 그 값이거나
@@ -257,10 +288,19 @@ class CurriculumRetriever:
             .limit(max(max(parsed_filters.limit, 1) * 10, 100))
         ).all()
 
+        program_course_ids = set(
+            self.db.scalars(
+                _program_course_scope_ids(department_id, major_id, curriculum_year)
+            ).all()
+        )
         ranked = sorted(
             courses,
             key=lambda course: (
                 -_keyword_score(query, self._course_evidence(course)),
+                # 같은 이름·이수구분의 핀테크 자체 카탈로그 행과 실제 개설 주체 행이
+                # 함께 있을 때는, 프로그램이 명시적으로 인정한 타 학과 행을 먼저
+                # 돌려야 시간표 도구가 실제 offering을 붙일 수 있다.
+                -(course.id in program_course_ids),
                 course.year or "",
                 course.semester or "",
                 course.course_name,
