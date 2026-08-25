@@ -33,10 +33,14 @@ def career_alias_groups(query: str) -> tuple[str, ...]:
 
 
 def expand_career_query(query: str) -> tuple[str, ...]:
-    normalized = query.lower()
-    selected: list[str] = []
-    for key, aliases in CAREER_ALIASES.items():
-        if any(alias.lower() in normalized for alias in aliases):
-            selected.extend(CAREER_KEYWORDS[key])
-    selected.extend(term.strip() for term in query.replace("/", " ").split() if term.strip())
-    return tuple(dict.fromkeys(selected))
+    """진로 문구를 매칭용 토큰으로 쪼갠다.
+
+    예전엔 `CAREER_ALIASES`에 걸리면 그 진로군의 고정 키워드 목록(`CAREER_KEYWORDS`)을
+    덧붙였다 — 하지만 이 5개 진로군(ai/data/backend/security/bio)은 실제 학생들이
+    입력하는 진로 문구의 극히 일부만 커버하고("시스템 프로그래머"조차 안 걸림,
+    2026-08-25 실측), 걸렸을 때도 진로군 전체 키워드를 더하는 게 오히려 무관한
+    과목에 우연히 걸리는 노이즈를 늘렸다(`hits/len(terms)` 분모만 커지고 실제
+    관련성 신호는 안 늘어남). 지금은 원문 토큰만 쓴다 — 과목 설명(`_course_evidence`)이
+    실제 강의계획서 원문(교수목표/강의개요)이라 원문 토큰만으로도 직접 매칭된다.
+    """
+    return tuple(dict.fromkeys(term.strip() for term in query.replace("/", " ").split() if term.strip()))

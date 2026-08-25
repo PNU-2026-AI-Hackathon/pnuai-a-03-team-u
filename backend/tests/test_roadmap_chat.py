@@ -229,6 +229,104 @@ class SearchCoursesBrowsingTest(unittest.TestCase):
         self.assertIn("liberal_area", result["note"])
 
 
+class ProposeChangeDepartmentScopeGuardTest(unittest.TestCase):
+    """실제 사고(2026-08-25) 재현: gpt-5.4-nano가 컴퓨터공학전공 학생에게 심리학과
+    전공선택 과목 3개를 course_id로 직접 지어내 propose_change(action="create")했다.
+    search_courses는 department 스코프를 SQL WHERE로 강제해서 그 3과목을 절대
+    반환할 수 없었으니, LLM이 search_courses 결과를 실제로 안 보고 course_id를
+    지어낸 것 — propose_change가 course_id를 db.get()으로 그냥 신뢰해서 걸러내지
+    못했다. 이 가드가 그 자리에서 막아야 한다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def test_rejects_course_outside_student_department(self):
+        db = self.make_db()
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=108)
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.add(Course(id=691, course_name="사회심리학", department_id=18,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+
+        result = ctx.propose_change(
+            action="create", reason="AI/웹응용 계열로 선택", course_id=691,
+            planned_year="2026", planned_semester="2학기", planned_grade=3,
+        )
+
+        self.assertIn("error", result)
+        self.assertIn("소속 범위 밖", result["error"])
+        self.assertEqual(0, len(ctx.pending_changes))
+
+    def test_allows_course_in_own_department(self):
+        db = self.make_db()
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=108)
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.add(Course(id=6468, course_name="AI프로그래밍", department_id=108,
+                      category="전공선택", credits=3.0, year="2", semester="2"))
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+
+        result = ctx.propose_change(
+            action="create", reason="전공선택 추가", course_id=6468,
+            planned_year="2026", planned_semester="2학기", planned_grade=3,
+        )
+
+        self.assertNotIn("error", result)
+        self.assertEqual(1, len(ctx.pending_changes))
+
+    def test_allows_course_in_active_secondary_program_department(self):
+        """활성 상태인 부전공/복수전공/연계전공의 department도 허용 범위다."""
+        db = self.make_db()
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=108)
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(UserAcademicProgram(user_id=1, program_type="minor",
+                                    department_id=18, status="active", curriculum_year=2024))
+        db.add(roadmap)
+        db.add(Course(id=691, course_name="사회심리학", department_id=18,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+
+        result = ctx.propose_change(
+            action="create", reason="부전공(심리학과) 이수", course_id=691,
+            planned_year="2026", planned_semester="2학기", planned_grade=3,
+        )
+
+        self.assertNotIn("error", result)
+        self.assertEqual(1, len(ctx.pending_changes))
+
+    def test_unknown_student_scope_does_not_block(self):
+        """department_id도 없고 활성 프로그램도 없는(정보 자체가 없는) 학생은
+        모르는 걸 위반으로 단정하지 않는다 — _career_looks_mismatched와 같은 원칙."""
+        db = self.make_db()
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트")
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.add(Course(id=100, course_name="아무과목", department_id=99,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        ctx = _ToolContext(db, user, roadmap)
+
+        result = ctx.propose_change(
+            action="create", reason="추천", course_id=100,
+            planned_year="2026", planned_semester="2학기", planned_grade=3,
+        )
+
+        self.assertNotIn("error", result)
+
+
 class ProposeChangePastTermGuardTest(unittest.TestCase):
     """이미 지난 학기로 새 항목을 만들려는 시도는 create에서 거부돼야 한다.
 
