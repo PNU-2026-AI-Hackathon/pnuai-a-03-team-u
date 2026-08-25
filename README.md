@@ -64,6 +64,61 @@
 - 외부 LLM 호출 시 비식별화: 외부 API 호출 시 개인 식별정보를 직접 전송하지 않고 필요한 최소 정보만 전달한다. 관측 도구(Langfuse)로 보내는 대화는 학번·이메일·전화번호를 마스킹하고 사용자 식별자는 해시한다.
 - **개인정보처리방침 · LLM 처리위탁 고지(적용됨)**: `/privacy` 페이지에 수집 항목·목적·보유기간·OpenAI/Langfuse 위탁 범위를 실제 코드 감사 결과 그대로 명시했다. 회원가입 동의 체크박스에서 링크로 연결된다.
 
+**LLM에 무엇을 보내고 안 보내는가(코드 실측 기준).** 제품 런타임이 학생 개인정보를 다루는 챗 기능에 LLM을 쓰는 만큼, "무엇을 외부로 보내고 무엇을 막는가"를 코드 실측 기준으로 고정해뒀다. 상세 근거는 [`docs/backend/features/llm-privacy-audit.md`](docs/backend/features/llm-privacy-audit.md).
+
+외부로 나가는 경로는 두 개뿐이다:
+
+```mermaid
+flowchart LR
+    STUDENT[("학생 이수내역 · 성적<br/>학번 · 이름 · 이메일")]
+    CTX["시스템 프롬프트 조립<br/>_build_student_context_block()"]
+    LLM["🤖 OpenAI (gpt-5.4-nano)<br/>매 챗 요청마다"]
+    CB["langfuse_callback.py<br/>observe_agent_call()"]
+    MASK["mask_data() — 4패턴 정규식<br/>학번 · 이메일 · 휴대폰 · 유선전화"]
+    LANGFUSE["📊 Langfuse(자체 호스팅)<br/>langfuse-planu.xyz"]
+    TOOL["도구 호출(get_roadmap_items 등)<br/>_ToolContext(db, user, roadmap)"]
+
+    STUDENT -->|"이름·학번·이메일 제외<br/>(코드 실측, 아래 표)"| CTX
+    CTX --> LLM
+    LLM -.->|"도구 호출은 user_id를<br/>인자로 안 받음 → 타인 데이터<br/>조회 경로 자체가 없음"| TOOL
+    TOOL --> STUDENT
+    LLM --> CB
+    CB --> MASK
+    MASK -->|"마스킹된 trace만"| LANGFUSE
+
+    classDef ext fill:#fae8ff,stroke:#a21caf,color:#701a75
+    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef data fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    class LLM,LANGFUSE ext
+    class MASK,TOOL guard
+    class STUDENT data
+```
+
+| 보낸다 (학사 판단에 필수) | 안 보낸다 (코드로 확인) |
+|---|---|
+| 학과명·전공명·program_type·교육과정연도 | 이름(`users.name`) |
+| 진로 목표(자유 입력 필드) | 학번(`users.student_id`) |
+| 이수기록(과목명 + 이수구분, 성적 등급 제외) | 이메일 |
+| 균형교양 세부영역별 이수 요약 | One-Stop 포털 비밀번호(애초에 저장 안 함) |
+| 도구 응답(남은 학점·로드맵 항목·검색 결과) | `user_id`는 내부 PK만, 필드명을 `student_id`로 두지 않아 LLM이 학번으로 오인해 답변에 노출하는 것도 차단 |
+
+원칙은 "학생을 특정할 수 있는 직접 식별자는 프롬프트에 넣지 않는다" — 학과·과목·학점 같은 quasi-identifier는 기능상 필수라 보내되, 그 자체로는 개인을 특정하지 못한다.
+
+로드맵/시간표 에이전트가 호출하는 모든 도구는 `_ToolContext(db, user, roadmap)`에 요청 시작 시점에 바인딩된 `user`만 참조하고, **`user_id`를 LLM이 넘기는 인자로 받지 않는다.** 즉 프롬프트 인젝션으로 "다른 학번의 정보를 보여줘"라고 유도해도, 애초에 그런 값을 전달할 경로가 도구 시그니처에 없다. 이 성질을 깨는 변경(도구에 `user_id` 파라미터 추가)은 PR 체크리스트에서 금지 항목으로 명시돼 있다.
+
+관측 도구(Langfuse)로 나가는 trace에는 LLM 호출과 별개로 아래 4패턴이 재귀 적용된다(원본 LLM 호출에는 영향 없음 — trace 페이로드만 치환):
+
+| 패턴 | 대상 | 치환 |
+|---|---|---|
+| 학번 | `(19\|20)\d{2}` 연도 앵커 + 4~6자리 | `<STUDENT_ID>` |
+| 이메일 | 표준 `local@domain` | `<EMAIL>` |
+| 휴대전화 | `01X-XXXX-XXXX` | `<PHONE>` |
+| 유선전화 | `02`/`031~064` 대역 | `<PHONE>` |
+
+`user_id`는 원문 대신 `salt+sha256` 해시 앞 12자만 전송한다.
+
+알려진 한계(숨기지 않고 명시): 마스킹은 Langfuse trace에만 적용된다(LLM 프로바이더로 가는 원본 프롬프트는 애초에 식별자를 안 넣는 게 1차 방어선, 마스킹은 사용자가 채팅창에 직접 학번을 입력하는 경우를 잡는 2차 방어선) · `career_goal`·채팅 메시지 같은 자유 입력 필드는 4패턴에 안 걸리는 식별정보(주소·생년월일 등)가 통과할 수 있음 · 계정 탈퇴는 DB만 지우고 Langfuse에 남은 해시 user_id trace는 별도 삭제 절차가 필요함 · Langfuse 자체 호스팅(`langfuse-planu.xyz`)은 접근 통제 책임이 팀 자신(로그인·TLS·방화벽 설정)으로 넘어왔고, 계정은 인스턴스 소유자가 팀원을 개별 초대하는 방식으로 운영 중이라고 확인받았다(2026-08-24, 소유자 진술 기준 — 코드·API로 독립 검증한 것은 아니다).
+
 핵심 기능(본선 구현)은 졸업요건 분석(F-01), AI 수강 계획 추천(F-02), AI 기반 수강신청 시간표 추천(F-03)이며, 확장 기능(향후 개발)으로는 비교과·공모전 개인화 추천(F-04), 진로별 자격증·어학 준비 일정 추천(F-05), 통합 정보 캘린더(F-06), AI 기반 학사·진로 챗봇(F-07)을 계획하고 있다.
 <br/>
 
@@ -476,7 +531,7 @@ flowchart LR
     class F done
 ```
 
-Claude Code·Cursor·Codex(개발 도구)와 Figma·Notion MCP 연동을 포함해 AI 도구를 개발에 활용한 범위, "AI가 작성했다는 사실만으로 신뢰하지 않는다"는 원칙을 실제로 어떻게 지켰는지(독립 리뷰로 결함을 잡아낸 사례 포함), LLM에 학생 개인정보를 어떻게 안 보내는지는 [`docs/ai-usage.md`](docs/ai-usage.md)에 별도로 정리했다.
+Claude Code·Cursor·Codex(개발 도구)와 Figma·Notion MCP 연동을 포함해 AI 도구를 개발에 활용한 범위, "AI가 작성했다는 사실만으로 신뢰하지 않는다"는 원칙을 실제로 어떻게 지켰는지(독립 리뷰로 결함을 잡아낸 사례 포함)는 [`docs/ai-usage.md`](docs/ai-usage.md)에 별도로 정리했다. LLM에 학생 개인정보를 어떻게 안 보내는지는 1.3절 참고.
 
 **CI/CD — PR을 열면 자동으로 도는 것, 머지하면 자동으로 배포되는 것**
 
@@ -603,7 +658,7 @@ flowchart TB
 **저장소 문서**
 - [아키텍처 개요](docs/backend/architecture.md)
 - [개인정보·보안 계획](docs/backend/security-privacy-plan.md)
-- [AI 활용 내역](docs/ai-usage.md) - 활용한 AI 도구·선정 이유, AI 생성 코드 검증 방식, LLM 개인정보 보안 경계
+- [AI 활용 내역](docs/ai-usage.md) - 활용한 AI 도구·선정 이유, AI 생성 코드 검증 방식(LLM 개인정보 보안 경계는 1.3절 · [`llm-privacy-audit.md`](docs/backend/features/llm-privacy-audit.md) 참고)
 - [기능별 설계 문서](docs/backend/features/) - 학사 인증, 로드맵 RAG, 시간표 채팅, 편입 학점 인정 등
 - [프론트엔드 API 연동 가이드](docs/frontend/frontend-api-guide.md)
 - [개발 변경 이력](docs/CHANGELOG.md)
