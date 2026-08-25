@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
 from app.domains.academics.models import (
-    College, Department, GraduationRequirement, Major, School, StudentCourseRecord, StudentCourseSubstitution,
+    College, Department, GraduationRequirement, Major, ProgramCourse, School, StudentCourseRecord, StudentCourseSubstitution,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
@@ -31,7 +31,7 @@ _ROADMAP_TEST_TABLES = [
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
     CourseRoadmapChatSession.__table__, CourseRoadmapChatMessage.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
-    StudentCourseRecord.__table__,
+    StudentCourseRecord.__table__, ProgramCourse.__table__,
     StudentCourseSubstitution.__table__,  # 추천 경로가 substituted_course_names를 조회한다
 ]
 
