@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
-from app.domains.academics.models import Major
+from app.domains.academics.models import Major, ProgramCourse
 from app.domains.courses.models import Course, CourseOffering, CourseTime
 from app.domains.users.models import User
 
@@ -136,8 +136,17 @@ def search_offerings(
         .outerjoin(Major, Major.id == Course.major_id)
         .where(CourseOffering.year == year, CourseOffering.semester == semester)
     )
+    program_course_conditions = None
     if department_id is not None:
-        query = query.where(Course.department_id == department_id)
+        # 핀테크융합전공처럼 교육과정은 자기 학과에 있지만 실제 분반은 다른
+        # 개설 주체(경영학과·컴퓨터공학전공)에 있는 경우가 있다. 과목 추가 화면도
+        # ``program_courses``의 공식 교차인정 연결을 따라가야 실제로 담을 수 있다.
+        # 교육과정 연도는 수강편람 학년도와 맞춘다.
+        program_course_conditions = [
+            ProgramCourse.department_id == department_id,
+            ProgramCourse.curriculum_year == year,
+        ]
+    matched_major_ids = None
     if major and major.strip():
         major_query = select(Major.id).where(Major.name == major.strip())
         if department_id is not None:
@@ -146,7 +155,29 @@ def search_offerings(
         # 같은 이름의 전공이 여러 학부에 있을 수 있어 in_으로 받는다.
         # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한
         # 전공 과목까지 섞여 나온다.
-        query = query.where(Course.major_id.in_(matched_major_ids))
+        # 세부전공을 선택한 경우에도, 그 프로그램이 공식 인정한 타 학과 과목은
+        # 원 개설학과의 major_id가 달라도 남겨야 한다.
+        if program_course_conditions is not None:
+            program_course_conditions.append(ProgramCourse.major_id.in_(matched_major_ids))
+        else:
+            query = query.where(Course.major_id.in_(matched_major_ids))
+    if department_id is not None:
+        # 전공 미선택이면 학부 전체의 교차인정 과목을, 세부전공 선택이면 그
+        # 세부전공 프로그램의 교차인정 과목만 합친다.
+        program_course_ids = select(ProgramCourse.course_id).where(*program_course_conditions)
+        query = query.where(
+            or_(
+                Course.department_id == department_id,
+                Course.id.in_(program_course_ids),
+            )
+        )
+        if matched_major_ids is not None:
+            query = query.where(
+                or_(
+                    Course.major_id.in_(matched_major_ids),
+                    Course.id.in_(program_course_ids),
+                )
+            )
     wanted = [value.strip() for value in (category or []) if value.strip()]
     if wanted:
         # 부분 일치라 "전공" 하나로 전공기초·전공필수·전공선택을 함께 훑을 수 있다.
