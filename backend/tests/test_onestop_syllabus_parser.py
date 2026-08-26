@@ -170,6 +170,132 @@ class SyllabusParserTest(unittest.TestCase):
         self.assertEqual(_SAMPLE_TEXT, self.parsed.raw_text)
 
 
+class UnnumberedStandardTemplateObjectiveSplitTest(unittest.TestCase):
+    """세로 중앙 정렬 라벨 때문에 번호 없는 목표가 개요에 합쳐지던 실제 포맷."""
+
+    def test_goal_sentences_and_topic_list_are_separated(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "교수목표: 객체지향 개념에 바탕을 둔 C++ 프로그래밍",
+            "C++ 언어를 통해 객체지향 개념을 학습한다.",
+            "C++ 프로그램의 설계 능력과 구현 능력을 기른다.",
+            "C 언어의 확장",
+            "타입, 변수, 포인터 및 배열",
+            "강의개요     예외처리 기법(exception handling)",
+        ])
+
+        self.assertIn("객체지향", objectives)
+        self.assertIn("설계 능력", objectives)
+        self.assertNotIn("C 언어의 확장", objectives)
+        self.assertIn("C 언어의 확장", overview)
+        self.assertIn("예외처리", overview)
+        self.assertNotIn("강의개요", overview)
+
+    def test_blank_after_title_does_not_discard_following_goal_sentences(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "교수목표: 객체지향 개념에 바탕을 둔 Modern C++ 프로그래밍",
+            "",
+            "C++ 프로그래밍의 기본 개념을 학습한다.",
+            "교수목표",
+            "C++ 프로그램의 설계 능력과 구현 능력을 기른다.",
+            "C++ 문법과 표현을 집중적으로 훈련한다.",
+            "",
+            "C 언어의 확장",
+            "강의개요     예외 처리 기법(exception handling)",
+        ])
+
+        self.assertIn("Modern C++", objectives)
+        self.assertIn("설계 능력", objectives)
+        self.assertIn("집중적으로 훈련한다", objectives)
+        self.assertNotIn("C 언어의 확장", objectives)
+        self.assertIn("C 언어의 확장", overview)
+
+
+class CourseOverviewOutcomeTableTest(unittest.TestCase):
+    def test_removes_following_outcome_mapping_table_from_overview(self):
+        from app.ingestion.parsers.onestop_syllabus import _clean_overview_lines
+
+        overview = _clean_overview_lines([
+            "Systems of linear equations and matrix operations",
+            "교과목개요",
+            "·대면",
+            "수업방식",
+            "·강의식",
+            "No.                    교과목 목표              교육방법       평가방법       핵심역량",
+            "1                     행렬 연산을 이해한다      과제물",
+        ])
+
+        self.assertEqual(overview, "Systems of linear equations and matrix operations")
+
+    def test_keeps_content_on_same_line_as_course_overview_label(self):
+        from app.ingestion.parsers.onestop_syllabus import _clean_overview_lines
+
+        overview = _clean_overview_lines([
+            "교과목개요    학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.",
+        ])
+
+        self.assertEqual(overview, "학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.")
+
+    def test_does_not_treat_teaching_mode_before_outcome_table_as_overview(self):
+        from app.ingestion.parsers.onestop_syllabus import _clean_overview_lines
+
+        overview = _clean_overview_lines([
+            "·대면",
+            "수업방식",
+            "·강의식",
+            "No.                    교과목 목표              교육방법       평가방법       핵심역량",
+        ])
+
+        self.assertIsNone(overview)
+
+    def test_no_objective_label_still_removes_following_outcome_table(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "Systems of linear equations and matrix operations",
+            "교과목개요",
+            "·대면",
+            "수업방식",
+            "·강의식",
+            "No.                    교과목 목표              교육방법       평가방법       핵심역량",
+            "1                     행렬 연산을 이해한다      과제물",
+        ])
+
+        self.assertIsNone(objectives)
+        self.assertEqual(overview, "Systems of linear equations and matrix operations")
+
+    def test_removes_nursing_outcome_mapping_table(self):
+        from app.ingestion.parsers.onestop_syllabus import _clean_overview_lines
+
+        overview = _clean_overview_lines([
+            "학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.",
+            "학습성과(CO)              학습역량(CC)          교수학습법           평가방법",
+            "CC1. 임상 및 지역사회 간호문제를 분석한다.",
+        ])
+
+        self.assertEqual(overview, "학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.")
+
+    def test_nursing_education_objectives_are_separated_from_overview(self):
+        from app.ingestion.parsers.onestop_syllabus import _parse_objectives_and_overview
+
+        objectives, overview = _parse_objectives_and_overview([
+            "학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.",
+            "본 교과목을 이수한 학생은 다음을 수행할 수 있다.",
+            "교육목적 및   임상 간호문제를 분석하고 우선순위를 제시할 수 있다.",
+            "교육목표     팀원과 협력하여 프로젝트를 수행할 수 있다.",
+            "PO 연계성",
+            "학습성과(CO)              학습역량(CC)          교수학습법           평가방법",
+        ])
+
+        self.assertIn("임상 간호문제", objectives)
+        self.assertIn("프로젝트", objectives)
+        self.assertNotIn("PO 연계성", objectives)
+        self.assertEqual(overview, "학생들은 임상 현장의 문제를 탐색하고 해결안을 설계한다.")
+
+
 
 class EmptyCellAccessibilityBoilerplateTest(unittest.TestCase):
     """실제 One-Stop PDF(인공지능이해 FM2003112분반001, 2026-2학기, 2026-08-25

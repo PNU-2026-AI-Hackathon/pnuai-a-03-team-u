@@ -92,31 +92,34 @@
 
 ### 2. 상세설계
 #### 2.1. 시스템 구성도
+<p align="center">
+  <img src="docs/assets/planu-system-architecture.svg" alt="Plan-U 시스템 구성도" width="100%" />
+</p>
+
+<details>
+<summary>원본 Mermaid 시스템 구성도 보기</summary>
+
 ```mermaid
 flowchart TB
     subgraph FRONT["🖥️ 프론트엔드 — React SPA · Netlify"]
         FE["회원가입 · Home · 내 정보 · 성장 로드맵 · 시간표 작성"]
     end
-
     subgraph BACK["⚙️ 백엔드 — FastAPI · Railway"]
         API["REST API<br/>인증(JWT) · 프로필 · 로드맵<br/>시간표 · 학과/강좌 검색"]
         RULE["규칙 기반 검증 엔진<br/>졸업요건 판정<br/>시간표 충돌 검사"]
         AGENT["LLM 에이전트 · LangChain<br/>로드맵 상담 · 시간표 추천<br/>규칙 엔진을 도구로 호출"]
         CRAWL["Playwright 크롤러<br/>학적 · 이수내역<br/>수강편람 · 교과목개요"]
     end
-
     subgraph DATA["🗄️ Supabase PostgreSQL"]
         PG[("관계형 테이블<br/>학사 계층 · 강좌<br/>졸업요건 · 로드맵")]
         VEC[("pgvector<br/>교육과정 임베딩 · 선택적 벡터 검색")]
     end
-
     subgraph EXT["🌐 외부 서비스"]
         LLM["🤖 OpenAI API<br/>채팅 모델 · 임베딩"]
         PNU["🏫 PNU 학생지원시스템"]
         LANGFUSE["📊 Langfuse(자체 호스팅)<br/>LLM 트레이싱 · 평가"]
         MAIL["✉️ Resend<br/>비밀번호 재설정 메일"]
     end
-
     FE -->|HTTPS / JSON| API
     API --> RULE
     API --> AGENT
@@ -140,6 +143,8 @@ flowchart TB
     class LLM,PNU,LANGFUSE,MAIL ext
     class FRONT,BACK,DATA,EXT band
 ```
+</details>
+
 <br/>
 
 #### 2.2. 사용기술
@@ -273,6 +278,11 @@ PR을 열면 변경 범위에 맞는 자동 검사를 실행하고, 팀의 독�
 #### 3.1. 전체시스템 흐름도
 회원가입 직후 학사 정보 동기화까지는 온보딩 위저드가 순서대로 안내하지만(동기화는 건너뛰고 나중에 `내 정보`에서 해도 된다), 그다음 세 화면(졸업요건 분석·성장 로드맵·시간표 작성)은 **순서가 강제되지 않는 독립 화면**이다 — 로그인 후 아무 메뉴로나 바로 들어갈 수 있고, 동기화 전이면 각자 빈 상태 안내를 보여줄 뿐이다.
 
+<p align="center"><img src="docs/assets/planu-user-workflow-reference.png" alt="Plan-U 사용자 전체 흐름" width="100%" /></p>
+
+<details>
+<summary>원본 Mermaid 사용자 흐름도 보기</summary>
+
 ```mermaid
 flowchart TB
     SIGNUP["회원가입<br/>부산대 웹메일 도메인 확인 · 신입학/편입학 구분<br/>학과/전공 자동완성"]
@@ -292,6 +302,7 @@ flowchart TB
     class SIGNUP,SYNC,RULE rule
     class RM,TT agent
 ```
+</details>
 
 로드맵과 시간표는 서로 몰라도 되는 별개의 AI 기능이다 — 로드맵 없이 시간표만 써도 되고 그 반대도 된다. 둘 사이의 유일한 데이터 연결은 시간표 화면의 "로드맵에 반영" 버튼으로("담기"는 검색한 강좌를 열려 있는 시간표 초안에 넣고 빼는 별개 동작이다), 확정한 분반을 로드맵 항목으로도 즉시 저장하는 사용자 선택 액션이지 로드맵 쪽 AI 제안·승인 절차(3.2 참고)를 거치지 않는다. 두 기능 모두 AI 추천은 **human-in-the-loop** 구조다 — LLM은 제안만 쌓고, 사용자가 체크해 승인한 항목만 실제 데이터에 반영된다.
 <br/>
@@ -300,6 +311,11 @@ flowchart TB
 > **서비스 체험**: [Plan-U 배포 서비스](https://planu-pnu.netlify.app)에서 회원가입, 졸업요건 분석, 성장 로드맵, 시간표 작성 흐름을 직접 확인할 수 있다. 화면 캡처는 개인정보가 포함될 수 있어, 비식별화한 시연 이미지·영상이 준비되는 대로 5절에 추가한다.
 
 3.1이 화면 단위의 큰 흐름이라면, 아래는 그 흐름 안에서 **AI 에이전트가 실제로 어떤 도구를 몇 단계에 걸쳐 호출하는지**를 보여준다. Plan-U의 두 AI 기능(성장 로드맵 상담, 시간표 추천)은 LLM이 자유롭게 답을 지어내는 게 아니라, 정해진 도구(tool) 집합을 순서대로 호출하며 실제 DB 값을 확인한 뒤에만 답을 만든다 — 그리고 그 답은 하나도 자동으로 저장되지 않고, **사용자가 체크해서 승인한 것만** 반영된다. 두 에이전트는 **③에서 병렬로 갈라지는 독립 화면**이다 — 로드맵을 거치지 않고 바로 시간표 화면에서 AI 추천을 받아도 되고, 그 반대도 된다(3.1 참고).
+
+<p align="center"><img src="docs/assets/planu-ai-workflow-presentation.svg" alt="Plan-U AI 에이전트 도구 호출 흐름" width="100%" /></p>
+
+<details>
+<summary>원본 Mermaid AI 도구 호출 흐름 보기</summary>
 
 ```mermaid
 flowchart TB
@@ -315,7 +331,6 @@ flowchart TB
         RM4["propose_change / propose_term_plan<br/>학기별 변경(안) 제안"]
         RM1 --> RM2 --> RM3 --> RM4
     end
-
     subgraph TT["④' 시간표 추천 — LLM 에이전트 도구 호출 루프 (독립 화면)"]
         direction TB
         TT1["get_student_context<br/>남은 요건 · 진로 · 시간 제약 조회<br/>(로드맵은 사용자가 언급할 때만 참고)"]
@@ -323,7 +338,6 @@ flowchart TB
         TT3["build_timetable<br/>규칙 엔진이 시간 충돌 없는 조합 직접 생성"]
         TT1 --> TT2 --> TT3
     end
-
     APPROVE1{{"⑤ 사용자 승인<br/>제안 중 체크한 항목만<br/>실제 로드맵에 반영"}}
     APPROVE2{{"⑤' 사용자 승인<br/>체크한 분반만<br/>시간표에 반영"}}
     RESULT(["최종 결과물<br/>졸업까지 남은 학기별 로드맵 + 다음 학기 확정 시간표"])
@@ -344,6 +358,7 @@ flowchart TB
     class APPROVE1,APPROVE2 human
     class RESULT result
 ```
+</details>
 
 **단계별 역할**
 1. **회원가입** — 부산대 웹메일 인증과 학과·전공 자동완성으로 이후 모든 판정의 기준이 되는 학적 정보를 정확히 확정한다.

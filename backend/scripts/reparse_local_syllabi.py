@@ -37,11 +37,19 @@ from scripts.import_course_syllabi import resolve_semester_label, upsert_syllabu
 _FILENAME_RE = re.compile(r"^(?P<subj_no>[A-Za-z0-9]+)_(?P<class_no>\d+)_(?P<lang>[A-Za-z]+)\.pdf$")
 
 
-def reparse_local_syllabi(pdf_dir_str: str, year: int, semester_code: str, dry_run: bool = False) -> None:
+def reparse_local_syllabi(
+    pdf_dir_str: str,
+    year: int,
+    semester_code: str,
+    dry_run: bool = False,
+    start_index: int = 0,
+    max_files: int | None = None,
+) -> None:
     pdf_dir = Path(pdf_dir_str)
     semester = resolve_semester_label(semester_code)
-    pdfs = sorted(pdf_dir.glob("*.pdf"))
-    print(f"대상 PDF {len(pdfs)}개")
+    all_pdfs = sorted(pdf_dir.glob("*.pdf"))
+    pdfs = all_pdfs[start_index: start_index + max_files if max_files is not None else None]
+    print(f"대상 PDF {len(pdfs)}개 (전체 {len(all_pdfs)}개 중 {start_index}번부터)")
 
     db = SessionLocal()
     try:
@@ -101,5 +109,10 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--semester-code", required=True, help="0010=1학기, 0020=2학기")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--start-index", type=int, default=0, help="정렬된 PDF 목록에서 시작할 위치")
+    parser.add_argument("--max-files", type=int, help="이번 실행에서 처리할 PDF 수")
     args = parser.parse_args()
-    reparse_local_syllabi(args.pdf_dir, args.year, args.semester_code, dry_run=args.dry_run)
+    reparse_local_syllabi(
+        args.pdf_dir, args.year, args.semester_code,
+        dry_run=args.dry_run, start_index=args.start_index, max_files=args.max_files,
+    )

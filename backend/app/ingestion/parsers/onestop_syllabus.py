@@ -30,6 +30,12 @@ _COMPETENCY_NAMES = ["지구시민", "소통협력", "지식탐구", "혁신도�
 
 _WEEK_LINE_RE = re.compile(r"제\s*(\d+)\s*주")
 _NUMBERED_ITEM_RE = re.compile(r"^\s*\d+[.)]\s*")
+# 일부 단과대 템플릿은 강의개요 셀 바로 아래에 "No. / 교과목 목표 / 교육방법 /
+# 평가방법 / 핵심역량" 표를 이어 붙인다. 이 표는 개요가 아니라 성과 매핑표다.
+_OUTCOME_TABLE_HEADER_RE = re.compile(
+    r"^(?:No\.\s+.*(?:교과목\s*목표|교육방법|평가방법|핵심역량)|"
+    r".*학습성과\s*\(CO\).*학습역량\s*\(CC\).*교수학습법.*평가방법)"
+)
 # One-Stop 템플릿이 학과별 특정 셀에 자동으로 끼워 넣는 장애학생 지원 안내문
 # (평가방법/교수목표·강의개요 셀 근처에 흔함, 영문 강의계획서는 영문판 문구를 쓴다).
 # 교수가 실제로 쓴 내용이 아니라 PNU가 모든 강의계획서에 공통으로 넣는 문구라 어느
@@ -46,6 +52,7 @@ _ACCESSIBILITY_TRIGGER_RE = re.compile(r"[(\[]?\s*[*·]?\s*(장애학생|Student
 # 내용이 있으면 레이블이 그 내용과 같은 줄 맨 앞에 찍힌다(예: "평가방법     성적은
 # 출석...") — 두 경우 다 실제 내용이 아니므로 접두어만 벗겨낸다.
 _OBJECTIVES_BLOCK_LABEL_LINES = {"교수목표", "강의개요"}
+_EDUCATION_OBJECTIVE_LABEL_LINES = {"교육목적 및", "교육목표"}
 _TEACHING_EVAL_BLOCK_LABEL_LINES = {"수업방식", "평가방법"}
 
 # 경영대학류 템플릿(2026-08-25 실측: 경영학과 PDF 4건 전수, 같은 구조 확인) —
@@ -151,6 +158,55 @@ def _join(lines: list[str]) -> str | None:
     return text or None
 
 
+def _clean_overview_lines(lines: list[str]) -> str | None:
+    """개요 셀에 이어 붙은 성과 매핑표를 제외하고, 라벨만 제거한다.
+
+    `교과목개요` 라벨은 내용과 같은 줄에 올 수도(간호캡스톤) 있고, 내용이 끝난
+    뒤 다음 표의 앞머리로 단독으로 올 수도(일반물리/공학선형대수) 있다. 후자는
+    가까운 뒤쪽에 성과표 헤더가 있을 때만 경계로 판단해, 빈 라벨 뒤에 실제 개요가
+    시작하는 정상 양식을 잘라내지 않는다.
+    """
+    cleaned: list[str] = []
+    for index, raw in enumerate(lines):
+        value = _strip_leading_label(raw.strip(), _OBJECTIVES_BLOCK_LABEL_LINES)
+        follows_outcome_table = any(
+            _OUTCOME_TABLE_HEADER_RE.match(candidate.strip())
+            for candidate in lines[index + 1:index + 9]
+        )
+        # 실제 개요가 빈 경우에도 표의 수업방식 셀이 블록에 섞인다. 가까운 뒤에
+        # 성과표 헤더가 있으면 이 짧은 셀들은 개요가 아니므로 여기서 끝낸다.
+        if follows_outcome_table and (
+            value in {"수업방식", "평가방법"}
+            or bool(re.fullmatch(r"[·ㆍ]\s*[^\n]{1,20}", value))
+        ):
+            break
+        if value.startswith("교과목개요"):
+            value = value[len("교과목개요"):].lstrip(":：- ").strip()
+            if not value:
+                if follows_outcome_table:
+                    break
+                continue
+        if _OUTCOME_TABLE_HEADER_RE.match(value):
+            break
+        if value.startswith("PO 연계성"):
+            break
+        if value:
+            cleaned.append(value)
+    return _join(cleaned)
+
+
+def _clean_education_objective_lines(lines: list[str]) -> str | None:
+    """간호대 등 `교육목적 및 교육목표` 템플릿의 목표 문장만 남긴다."""
+    cleaned: list[str] = []
+    for raw in lines:
+        value = _strip_leading_label(raw.strip(), _EDUCATION_OBJECTIVE_LABEL_LINES)
+        if _OUTCOME_TABLE_HEADER_RE.match(value) or value.startswith("PO 연계성"):
+            break
+        if value:
+            cleaned.append(value)
+    return _join(cleaned)
+
+
 def _parse_contact(lines: list[str]) -> tuple[str | None, str | None, int | None]:
     """"연락처   2299   이메일   lik@pusan.ac.kr" 같은 한 줄에서 뽑는다.
 
@@ -201,10 +257,88 @@ def _parse_objectives_and_overview(block_lines: list[str]) -> tuple[str | None, 
         if _NUMBERED_ITEM_RE.match(line):
             last_numbered_idx = i
     if last_numbered_idx == -1:
-        # 번호 목록이 아예 없으면 전부 개요로 본다 — 목표를 굳이 지어내지 않는다.
-        return None, _join(stripped)
+        # 번호 목록이 없는 표준 템플릿도 많다. 이때 예전 구현은 목표+개요를 전부
+        # ``course_overview``에 넣었는데, C++프로그래밍처럼 목표 문장이 실제로 있는
+        # 강좌의 추천 근거가 뭉개졌다. 표 레이블이 세로 중앙에 있어 ``강의개요``
+        # 위치만으로는 경계가 불완전하므로, 다음의 보수적 규칙을 쓴다.
+        #
+        # - 교수목표 라벨 뒤의 연속된 '학습한다/기른다/이해한다' 문장을 목표로 잡고
+        # - 첫 비목표형 주제 나열(예: 'C 언어의 확장') 또는 빈 줄부터 개요로 넘긴다.
+        #
+        # 목표형 문장을 하나도 확인하지 못하면 목표를 지어내지 않고 기존처럼 전부
+        # 개요로 둔다. 원문은 raw_text에 보존되어 있어 이 규칙이 보수적이어도 손실은 없다.
+        objective_label_idx = next(
+            (i for i, line in enumerate(block_lines) if line.strip().startswith("교수목표")),
+            None,
+        )
+        if objective_label_idx is None:
+            education_objective_idx = next(
+                (
+                    i for i, line in enumerate(block_lines)
+                    if line.strip().startswith("교육목적 및")
+                    or line.strip().startswith("교육목표")
+                ),
+                None,
+            )
+            if education_objective_idx is not None:
+                # 라벨이 세로 중앙에 찍히므로 목표 첫 문장은 보통 라벨 한 줄 위에서
+                # 시작한다. 직전의 비어 있지 않은 줄부터 목표로 포함한다.
+                objective_start = education_objective_idx
+                if objective_start > 0 and block_lines[objective_start - 1].strip():
+                    objective_start -= 1
+                return (
+                    _clean_education_objective_lines(block_lines[objective_start:]),
+                    _clean_overview_lines(block_lines[:objective_start]),
+                )
+            # 교수목표 셀이 아예 없는 양식도 있다. 이 경우 전체를 개요로 쓰되,
+            # 성과 매핑표가 뒤따르는 변형은 동일하게 제거해야 한다.
+            return None, _clean_overview_lines(block_lines)
+
+        def clean(line: str) -> str:
+            value = _strip_leading_label(line.strip(), _OBJECTIVES_BLOCK_LABEL_LINES)
+            return value.lstrip(":：- ").strip()
+
+        def is_goal_outcome(line: str) -> bool:
+            return bool(re.search(
+                r"(?:학습한다|이해한다|습득한다|체득한다|배양한다|함양한다|기른다|"
+                r"익힌다|훈련한다|숙달한다|강화한다|향상한다|확립한다|목표로 한다|할 수 있다)[.!]?$",
+                line,
+            ))
+
+        objectives: list[str] = []
+        overview_start: int | None = None
+        saw_goal_outcome = False
+        for i in range(objective_label_idx, len(block_lines)):
+            raw = block_lines[i]
+            value = clean(raw)
+            if not value:
+                # 세로 중앙에 놓인 같은 필드 라벨은 목표 셀 한가운데에 다시
+                # 나타날 수 있다. 빈 줄과 달리 경계 신호가 아니다.
+                if raw.strip() in _OBJECTIVES_BLOCK_LABEL_LINES:
+                    continue
+                # 제목 다음의 빈 줄은 목표 목록 안에도 흔하다. 실제 목표형 문장을
+                # 아직 만나기 전에는 경계로 확정하지 않는다(Modern C++ 템플릿).
+                if objectives and saw_goal_outcome:
+                    overview_start = i + 1
+                    break
+                continue
+            # 강의개요 라벨이 목표 셀 안으로 세로 이동해도 그 줄 뒤 내용은 개요다.
+            if raw.strip().startswith("강의개요"):
+                overview_start = i
+                break
+            if saw_goal_outcome and not is_goal_outcome(value):
+                overview_start = i
+                break
+            objectives.append(value)
+            saw_goal_outcome = saw_goal_outcome or is_goal_outcome(value)
+
+        if not saw_goal_outcome:
+            return None, _join(stripped)
+        overview_lines = block_lines[overview_start:] if overview_start is not None else []
+        overview = _clean_overview_lines(overview_lines)
+        return _join(objectives), overview
     objectives = _join(stripped[: last_numbered_idx + 1])
-    overview = _join(stripped[last_numbered_idx + 1:])
+    overview = _clean_overview_lines(stripped[last_numbered_idx + 1:])
     return objectives, overview
 
 

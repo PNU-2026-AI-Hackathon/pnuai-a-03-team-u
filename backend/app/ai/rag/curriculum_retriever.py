@@ -335,12 +335,25 @@ class CurriculumRetriever:
         try:
             query_embedding = embed_text(" ".join(expand_career_query(query)))
             distance = RagChunk.embedding.cosine_distance(query_embedding)
+            program_course_ids = _program_course_scope_ids(
+                department_id, major_id, curriculum_year
+            )
             conditions = [
-                RagChunk.document_type == "curriculum",
+                # 교육과정 요약과 One-Stop 강의계획서 핵심내용을 함께 검색한다.
+                # syllabus는 분반 단위라 같은 과목이 여러 개 나올 수 있지만, 평가·주차
+                # 계획처럼 교육과정 행에 없는 근거를 설명에 사용할 수 있다.
+                RagChunk.document_type.in_(("curriculum", "syllabus")),
                 RagChunk.curriculum_year == _stringify(curriculum_year),
                 RagChunk.embedding.is_not(None),
-                or_(RagChunk.department_id == department_id, RagChunk.department_id.is_(None)),
-                _chunk_scope_filter(RagChunk, major_id),
+                or_(
+                    RagChunk.department_id == department_id,
+                    RagChunk.department_id.is_(None),
+                    RagChunk.course_id.in_(program_course_ids),
+                ),
+                or_(
+                    _chunk_scope_filter(RagChunk, major_id),
+                    RagChunk.course_id.in_(program_course_ids),
+                ),
             ]
             if filters.grade is not None:
                 conditions.append(RagChunk.grade == _normalize_grade(filters.grade))
