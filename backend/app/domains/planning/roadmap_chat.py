@@ -157,6 +157,19 @@ def _is_regular_planned_semester(planned_semester: str | None) -> bool:
     return planned_semester.strip() in _REGULAR_SEMESTER_VALUES
 
 
+# "1"/"1학기" 표기와 "2"/"2학기" 표기를 같은 학기로 취급하기 위한 정규화. 학기 무관
+# 개설('1,2'/'전학기')이나 계절수업 값은 None — 그 경우는 이 가드 대상이 아니다.
+def _regular_semester_digit(value: str | None) -> str | None:
+    if not value:
+        return None
+    v = value.strip()
+    if v in ("1", "1학기"):
+        return "1"
+    if v in ("2", "2학기"):
+        return "2"
+    return None
+
+
 def _curriculum_semester_for(
     db: Session, user_id: int, planned_year: str | None, planned_semester: str | None
 ) -> str | None:
@@ -2397,6 +2410,12 @@ class _ToolContext:
             course_obj = self.db.get(Course, course_id)
             if course_obj is None:
                 return {"error": f"course_id {course_id}는 존재하지 않는 과목입니다"}
+        if action == "update" and course_obj is None and item.course_id is not None:
+            # 학기/학년만 옮기는 update는 course_id를 안 넘긴다 — 그래도 이동 대상
+            # 과목이 실제로 그 학기에 개설되는지는 검증해야 한다. 안 채워두면 아래
+            # 계절수업·단일학기 가드가 update에서는 통째로 죽은 코드가 된다(2026-08-26
+            # 실측: 2학기 전용 과목이 1학기 슬롯으로 옮겨지는 걸 못 막음).
+            course_obj = self.db.get(Course, item.course_id)
 
         if action in ("create", "update") and course_obj is not None and course_obj.department_id is not None:
             # search_courses를 거치지 않고 LLM이 지어낸 course_id를 걸러낸다. search_courses의
@@ -2425,11 +2444,13 @@ class _ToolContext:
                     )
                 }
 
-        if action == "create" and course_obj is not None:
+        if action in ("create", "update") and course_obj is not None:
             # 계절수업/도약수업 전용 개설 과목을 정규 1/2학기 슬롯에 넣으려는 시도를 막는다.
             # 실제 관측 사고: 3학년 여름계절수업 개설 과목("로보틱스 AI PBL" 등)을
             # "다음 학기(=3학년 2학기)" 추천으로 propose한 사례. 여름/겨울 세션 과목은
             # 정규 학기에 개설되지 않으므로 planned_semester가 1/2학기면 잘못된 배치다.
+            # update는 학기를 안 바꾸는 호출도 있어서(planned_semester=None) 이 값이
+            # 없으면 그냥 통과시킨다 — 검증할 새 배치가 없기 때문이다.
             if _is_session_only_course_semester(course_obj.semester) and _is_regular_planned_semester(
                 planned_semester
             ):
@@ -2440,6 +2461,35 @@ class _ToolContext:
                         f"계절수업/도약수업은 정규 1·2학기와 별개 슬롯입니다 — 계절수업으로 "
                         f"제안하려면 planned_semester를 '{course_obj.semester}'로 명시하고, "
                         f"정규 학기 추천이 목적이면 이 과목은 제외하세요."
+                    )
+                }
+
+        if action in ("create", "update") and planned_grade is not None and planned_year:
+            # 같은 로드맵 안에서 같은 학년이 서로 다른 달력 연도를 쓰면 내부적으로
+            # 모순이다(예: 3학년 항목 하나가 2026년, 다른 하나가 2027년). 실제 사고
+            # (2026-08-26): "캡스톤디자인을 4학년 1학기로 옮겨줘" 처리 중 LLM이 같은
+            # 턴에서 3학년 항목에 4학년 연도(2027)를 잘못 붙인 update를 하나 더
+            # 만들어 승인까지 됐다 — 이미 이 로드맵에 확정된 학년↔연도 매핑과
+            # 어긋나면 그 자리에서 거절해 LLM이 바로잡게 한다.
+            conflicting = self.db.scalar(
+                select(CourseRoadmapItem).where(
+                    CourseRoadmapItem.roadmap_id == self.roadmap.id,
+                    CourseRoadmapItem.planned_grade == planned_grade,
+                    CourseRoadmapItem.planned_year.is_not(None),
+                    CourseRoadmapItem.planned_year != planned_year,
+                    CourseRoadmapItem.status != "completed",
+                    CourseRoadmapItem.id != (item_id if action == "update" else -1),
+                )
+            )
+            if conflicting is not None:
+                return {
+                    "error": (
+                        f"planned_grade={planned_grade}는 이 로드맵에서 이미 "
+                        f"planned_year={conflicting.planned_year!r}로 쓰이고 있는데(항목 "
+                        f"{conflicting.course_name!r}), 이번 제안은 planned_year={planned_year!r}"
+                        f"입니다. 같은 학년의 항목들은 같은 달력 연도를 써야 합니다 — "
+                        "get_roadmap_items의 remaining_terms에서 이 학년에 대응하는 "
+                        "planned_year를 확인해서 다시 제안하세요."
                     )
                 }
 
@@ -2515,6 +2565,30 @@ class _ToolContext:
                                 f"재수강이면 is_retake=True를 넘겨주세요. 아니면 로드맵에 다시 넣지 마세요."
                             )
                         }
+
+        if action in ("create", "update") and course_obj is not None:
+            # 정규 1학기 전용/2학기 전용 과목을 반대 학기에 넣으려는 시도를 막는다.
+            # 위 계절수업 가드와 짝인데 그건 "계절수업 과목→정규 슬롯"만 잡고
+            # "1학기 전용 과목→2학기 슬롯"(또는 반대) 같은 정규-정규 불일치는 안
+            # 잡았다 — 실제 사고(2026-08-26): update로 캡스톤디자인을 옮기면서
+            # 2학기 전용인 '딥러닝프로그래밍'이 같이 딸려가 1학기 슬롯에 꽂혔는데
+            # 이 가드가 없어서 통과됐다. update는 학기를 안 바꾸는 호출도 있어서
+            # planned_semester가 없으면(순수 학년 교정 등) 기존 배치를 그대로 쓴다.
+            # 이미 이수한 과목 가드보다 뒤에 둔다 — "이미 들었다"가 더 근본적인
+            # 문제라 그 메시지가 우선이어야 한다.
+            effective_semester = planned_semester
+            if effective_semester is None and action == "update":
+                effective_semester = item.planned_semester
+            course_digit = _regular_semester_digit(course_obj.semester)
+            target_digit = _regular_semester_digit(effective_semester)
+            if course_digit is not None and target_digit is not None and course_digit != target_digit:
+                return {
+                    "error": (
+                        f"{course_obj.course_name!r}는 정규 {course_obj.semester}학기 전용 개설이라 "
+                        f"{effective_semester}에는 배치할 수 없습니다(그 학기엔 아예 열리지 않습니다). "
+                        f"이 과목을 넣으려면 같은 {course_obj.semester}학기의 다른 연도 슬롯을 쓰세요."
+                    )
+                }
 
         if action == "create" and course_id is not None:
             # 이미 로드맵에 같은 course_id 항목이 있으면 create 거절.
