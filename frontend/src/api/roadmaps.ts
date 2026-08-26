@@ -11,6 +11,9 @@ export type CourseSearchResult = {
   credits: number | null;
   year: string | null;
   semester: string | null;
+  /** departmentId+majorId로 특정 프로그램을 골랐을 때만 온다 — 그 프로그램의
+   * program_courses 그룹명("필수"/"선택" 등). 그 외엔 null. */
+  requirement_group: string | null;
 };
 
 export type RoadmapItem = {
@@ -159,6 +162,9 @@ export async function getCurrentRoadmap() {
 export type CourseBrowseFilters = {
   departmentId?: number | null;
   major?: string | null;
+  /** major_id를 알고 있으면(주전공/복수전공/부전공/연계전공 빠른 선택 등) 이름 조회
+   * 없이 바로 좁힌다. major와 같이 오면 majorId가 우선한다(백엔드와 동일 규칙). */
+  majorId?: number | null;
   category?: string | null;
   limit?: number;
 };
@@ -177,6 +183,7 @@ export async function browseCourses(query: string, filters: CourseBrowseFilters 
       q: query,
       department_id: filters.departmentId ?? undefined,
       major: filters.major || undefined,
+      major_id: filters.majorId ?? undefined,
       category: filters.category || undefined,
       limit: filters.limit ?? 40,
     },

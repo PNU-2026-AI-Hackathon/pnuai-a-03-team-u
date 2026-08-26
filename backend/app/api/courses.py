@@ -38,6 +38,11 @@ class CourseSearchResult(BaseModel):
     # 개설 학기 안 맞는 과목이 로드맵에 잘못 꽂힌 실제 사고 이후 추가).
     year: str | None = None
     semester: str | None = None
+    # major_id로 좁혀서 조회했을 때만 채운다 — graduation_requirements.special_rules.groups의
+    # label과 맞춰서 program_courses에 등록된 과목이면 그 그룹명("필수"/"선택" 등)을 알려준다.
+    # 담기 화면이 "이 과목이 부전공 필수인지"를 필터링 없이도 보여줄 수 있게 하려고 추가
+    # (2026-08-27, 정보컴퓨터공학부 부전공 program_courses 오연결 수정 직후).
+    requirement_group: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -51,6 +56,10 @@ def search_courses(
     # 전공은 이름으로 받는다 — /departments/search가 전공을 이름 목록으로만
     # 주므로 search_offerings와 같은 관례를 따른다.
     major: str | None = None,
+    # 주전공/복수전공/부전공/연계전공처럼 이미 major_id를 알고 있는 호출(로드맵
+    # "빠른 선택" 버튼 등)은 이름 조회를 한 번 더 거칠 필요 없이 id로 바로 좁힌다.
+    # major와 둘 다 오면 major_id가 우선한다.
+    major_id: int | None = None,
     category: str | None = None,
     limit: int = Query(40, ge=1, le=200),
     current_user: User = Depends(get_current_user),
@@ -59,26 +68,66 @@ def search_courses(
     """과목명으로 검색하거나(q), 학과를 골라 훑어본다(department_id).
 
     로드맵 학기 카드에서 바로 여러 과목을 골라 담는 화면을 지원하려고
-    department_id/major/category 브라우징을 추가했다(2026-08-26). search_offerings의
-    program_courses 교차인정(핀테크융합전공처럼 다른 학과 개설 과목을 인정하는
-    경우)은 아직 여기 안 옮겼다 — 그런 과목은 이름 검색(q)으로는 여전히 찾힌다.
+    department_id/major/category 브라우징을 추가했다(2026-08-26). department_id가
+    있으면 program_courses 교차인정(핀테크융합전공처럼 다른 학과 개설 과목을
+    인정하는 경우)까지 함께 찾는다 — curriculum_year로는 거르지 않는다.
+    `ai/rag/curriculum_retriever.py`의 `_program_course_scope_ids`가 이미 실측으로
+    확인한 이유와 같다: 이 교차인정 관계는 교육과정 구조 자체를 나타내는 사실이라
+    입학연도별로 달라지지 않는데, 시드 데이터는 curriculum_year="2026"으로 고정
+    돼 있고 실제 학생은 대부분 2023/2024라(또는 UserAcademicProgram.curriculum_year
+    자체가 NULL인 경우도 흔함) 여기서 curriculum_year를 요구하면 실사용자에게는
+    사실상 항상 빈 결과가 나오는 죽은 기능이 된다.
     """
     q = q.strip()
-    if not q and department_id is None:
+    if not q and department_id is None and major_id is None:
         return []
 
     conditions = []
     if q:
         conditions.append(Course.course_name.ilike(f"%{q}%"))
+
+    program_course_conditions = None
     if department_id is not None:
-        conditions.append(Course.department_id == department_id)
-    if major and major.strip():
+        program_course_conditions = [ProgramCourse.department_id == department_id]
+
+    matched_major_ids: list[int] | None = None
+    if major_id is None and major and major.strip():
         major_query = select(Major.id).where(Major.name == major.strip())
         if department_id is not None:
             major_query = major_query.where(Major.department_id == department_id)
         # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한 전공
         # 과목까지 섞여 나온다(search_offerings와 동일 원칙).
-        conditions.append(Course.major_id.in_(list(db.scalars(major_query))))
+        matched_major_ids = list(db.scalars(major_query))
+
+    if program_course_conditions is not None:
+        # 세부전공(major_id)까지 좁혔으면 그 프로그램의 교차인정만, 학부만 골랐으면
+        # (major_id/major 둘 다 없음) 그 학부 아래 모든 프로그램의 교차인정을 합친다.
+        if major_id is not None:
+            program_course_conditions.append(ProgramCourse.major_id == major_id)
+        elif matched_major_ids is not None:
+            program_course_conditions.append(ProgramCourse.major_id.in_(matched_major_ids))
+        program_course_ids = select(ProgramCourse.course_id).where(*program_course_conditions)
+
+        if department_id is not None:
+            conditions.append(
+                or_(Course.department_id == department_id, Course.id.in_(program_course_ids))
+            )
+        if major_id is not None:
+            conditions.append(
+                or_(Course.major_id == major_id, Course.id.in_(program_course_ids))
+            )
+        elif matched_major_ids is not None:
+            conditions.append(
+                or_(Course.major_id.in_(matched_major_ids), Course.id.in_(program_course_ids))
+            )
+    else:
+        if department_id is not None:
+            conditions.append(Course.department_id == department_id)
+        if major_id is not None:
+            conditions.append(Course.major_id == major_id)
+        elif matched_major_ids is not None:
+            conditions.append(Course.major_id.in_(matched_major_ids))
+
     if category:
         conditions.append(Course.category == category)
 
@@ -93,6 +142,21 @@ def search_courses(
         .order_by(own_department_rank, own_major_rank, Course.year, Course.category, Course.course_name)
         .limit(limit)
     ).all()
+
+    # department_id+major_id로 특정 프로그램을 골랐을 때만 그룹 라벨을 붙인다 — 학부만
+    # 골랐거나(major_id 없음) 이름 검색만 했을 때는 "이 프로그램의 필수/선택"이라는
+    # 말 자체가 성립하지 않는다.
+    requirement_group_by_course_id: dict[int, str] = {}
+    if department_id is not None and major_id is not None:
+        for course_id, group in db.execute(
+            select(ProgramCourse.course_id, ProgramCourse.requirement_group).where(
+                ProgramCourse.department_id == department_id,
+                ProgramCourse.major_id == major_id,
+            )
+        ).all():
+            if group:
+                requirement_group_by_course_id[course_id] = group
+
     return [
         CourseSearchResult(
             id=course.id,
@@ -105,6 +169,7 @@ def search_courses(
             credits=course.credits,
             year=course.year,
             semester=course.semester,
+            requirement_group=requirement_group_by_course_id.get(course.id),
         )
         for course, major_name in rows
     ]
