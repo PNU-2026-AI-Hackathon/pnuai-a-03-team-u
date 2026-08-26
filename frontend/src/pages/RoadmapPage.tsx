@@ -1464,6 +1464,12 @@ function ConnectedRoadmapPage() {
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   /** 휴지통을 눌렀을 때 레일 안에 뜨는 삭제 확인 바. */
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  /** 학기 카드의 휴지통 아이콘으로 켜는 이수예정 다중 선택 삭제 모드. 전체 로드맵 편집(draftItems)과는 별개다. */
+  const [deleteModeTermKey, setDeleteModeTermKey] = useState<string | null>(null);
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState<Set<number>>(new Set());
+  const [isConfirmingItemDelete, setIsConfirmingItemDelete] = useState(false);
+  const [isDeletingItems, setIsDeletingItems] = useState(false);
+  const [itemDeleteError, setItemDeleteError] = useState("");
   // 로드맵 메타(제목·목표 졸업연도) 인라인 편집. 항목 편집(draftItems)과는 별개다.
   const [isMetaEditing, setIsMetaEditing] = useState(false);
   const [metaTitleDraft, setMetaTitleDraft] = useState("");
@@ -1748,6 +1754,10 @@ function ConnectedRoadmapPage() {
     setRoadmapEditError("");
     setActiveTab("semester");
     resetCoursePicker();
+    setDeleteModeTermKey(null);
+    setSelectedDeleteIds(new Set());
+    setIsConfirmingItemDelete(false);
+    setItemDeleteError("");
   }
 
   function cancelRoadmapEditing() {
@@ -1774,6 +1784,46 @@ function ConnectedRoadmapPage() {
   function removeDraftItem(item: RoadmapItem) {
     if (item.status === "completed") return;
     setDraftItems((current) => current?.filter((candidate) => candidate.id !== item.id) ?? null);
+  }
+
+  function toggleTermDeleteMode(termKey: string) {
+    setDeleteModeTermKey((current) => (current === termKey ? null : termKey));
+    setSelectedDeleteIds(new Set());
+    setIsConfirmingItemDelete(false);
+    setItemDeleteError("");
+  }
+
+  function toggleSelectedDeleteId(itemId: number) {
+    setSelectedDeleteIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
+  async function confirmDeleteSelectedItems() {
+    if (!roadmap || selectedDeleteIds.size === 0) return;
+    setIsDeletingItems(true);
+    setItemDeleteError("");
+    try {
+      await Promise.all([...selectedDeleteIds].map((id) => deleteRoadmapItem(roadmap.id, id)));
+      await reloadRoadmap();
+      setDeleteModeTermKey(null);
+      setSelectedDeleteIds(new Set());
+      setIsConfirmingItemDelete(false);
+    } catch (error) {
+      // Promise.all은 하나라도 실패하면 나머지 성공 여부를 알려주지 않는다.
+      // 어떤 항목이 실제로 지워졌는지 화면이 추측하지 않도록 로드맵을 다시
+      // 읽어와 서버 상태로 맞추고 선택 모드를 닫는다 (saveRoadmapEditing과 동일 패턴).
+      setItemDeleteError(getApiErrorMessage(error, "과목을 삭제하지 못했습니다."));
+      await reloadRoadmap().catch(() => undefined);
+      setDeleteModeTermKey(null);
+      setSelectedDeleteIds(new Set());
+      setIsConfirmingItemDelete(false);
+    } finally {
+      setIsDeletingItems(false);
+    }
   }
 
   function beginAddingCourse(termKey: string) {
@@ -2107,41 +2157,72 @@ function ConnectedRoadmapPage() {
               
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
+              {itemDeleteError ? <p className="roadmap-edit-feedback" role="alert">{itemDeleteError}</p> : null}
               <section className="semester-timeline">
                 {timeline.map((term) => (
                   <article className="semester-timeline-card" key={term.key}>
                     <div className="semester-timeline-head">
                       <div><span>{term.period}</span><h3>{term.term}</h3></div>
-                      <strong>{summarizeApiTerm(term.items)}</strong>
+                      <div className="semester-timeline-credit">
+                        <strong>{summarizeApiTerm(term.items)}</strong>
+                        {!isEditingRoadmap && term.items.some((item) => item.status !== "completed") ? (
+                          <button
+                            type="button"
+                            className={deleteModeTermKey === term.key ? "term-delete-toggle is-active" : "term-delete-toggle"}
+                            aria-label={deleteModeTermKey === term.key ? "이수예정 삭제 모드 닫기" : "이수예정 과목 삭제"}
+                            title={deleteModeTermKey === term.key ? "삭제 모드 닫기" : "이수예정 과목 삭제"}
+                            onClick={() => toggleTermDeleteMode(term.key)}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <ul className="semester-course-list">
-                      {term.items.map((item) => isEditingRoadmap ? (
-                        <li className="semester-course-edit-row api-roadmap-edit-row" key={item.id}>
-                          <div className="api-roadmap-course-copy"><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
-                          {item.status === "completed" ? (
-                            <span className="semester-course-status status-completed">이수 완료</span>
-                          ) : (
-                            <>
-                              <label><span>배치 학기</span><select value={term.key} onChange={(event) => moveDraftItem(item.id, event.target.value)}>{timeline.filter((candidate) => candidate.grade && candidate.curriculumSemester).map((candidate) => <option value={candidate.key} key={candidate.key}>{candidate.term}</option>)}</select></label>
-                              <button className="delete-roadmap-item-button" type="button" aria-label={`${item.course_name ?? "과목"} 삭제`} title="과목 삭제" onClick={() => removeDraftItem(item)}><Trash2 size={16} aria-hidden="true" /></button>
-                            </>
-                          )}
-                        </li>
-                      ) : (
-                        <Fragment key={item.id}>
-                          {term.items[0]?.id === item.id ? (
-                            <li className="semester-group-head">
-                              <span className="semester-group-dot is-course" aria-hidden="true" />
-                              <h4>교과 활동</h4>
-                              <strong>{term.items.length}과목</strong>
+                      {term.items.map((item) => {
+                        if (isEditingRoadmap) {
+                          return (
+                            <li className="semester-course-edit-row api-roadmap-edit-row" key={item.id}>
+                              <div className="api-roadmap-course-copy"><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
+                              {item.status === "completed" ? (
+                                <span className="semester-course-status status-completed">이수 완료</span>
+                              ) : (
+                                <>
+                                  <label><span>배치 학기</span><select value={term.key} onChange={(event) => moveDraftItem(item.id, event.target.value)}>{timeline.filter((candidate) => candidate.grade && candidate.curriculumSemester).map((candidate) => <option value={candidate.key} key={candidate.key}>{candidate.term}</option>)}</select></label>
+                                  <button className="delete-roadmap-item-button" type="button" aria-label={`${item.course_name ?? "과목"} 삭제`} title="과목 삭제" onClick={() => removeDraftItem(item)}><Trash2 size={16} aria-hidden="true" /></button>
+                                </>
+                              )}
                             </li>
-                          ) : null}
-                          <li className="semester-course-row">
-                            <div><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
-                            <span className={`semester-course-status ${item.status === "completed" ? "status-completed" : "status-planned"}`}>{item.status === "completed" ? "이수 완료" : "이수 예정"}</span>
-                          </li>
-                        </Fragment>
-                      ))}
+                          );
+                        }
+
+                        const isSelectable = deleteModeTermKey === term.key && item.status !== "completed";
+                        return (
+                          <Fragment key={item.id}>
+                            {term.items[0]?.id === item.id ? (
+                              <li className="semester-group-head">
+                                <span className="semester-group-dot is-course" aria-hidden="true" />
+                                <h4>교과 활동</h4>
+                                <strong>{term.items.length}과목</strong>
+                              </li>
+                            ) : null}
+                            <li className="semester-course-row">
+                              <div><strong>{item.course_name ?? "과목명 없음"}</strong><span>{displayCategory(item.category)} · {item.credits ?? 0}학점</span></div>
+                              {isSelectable ? (
+                                <input
+                                  className="semester-course-select-badge"
+                                  type="checkbox"
+                                  checked={selectedDeleteIds.has(item.id)}
+                                  aria-label={`${item.course_name ?? "과목"} 삭제 선택`}
+                                  onChange={() => toggleSelectedDeleteId(item.id)}
+                                />
+                              ) : (
+                                <span className={`semester-course-status ${item.status === "completed" ? "status-completed" : "status-planned"}`}>{item.status === "completed" ? "이수 완료" : "이수 예정"}</span>
+                              )}
+                            </li>
+                          </Fragment>
+                        );
+                      })}
                       {!isEditingRoadmap && term.year && (activityTermMap.get(`${term.year}-${term.semester}`)?.length ?? 0) > 0 ? (
                         <>
                           <li className="semester-group-head">
@@ -2158,6 +2239,43 @@ function ConnectedRoadmapPage() {
                         </>
                       ) : null}
                     </ul>
+                    {deleteModeTermKey === term.key ? (
+                      isConfirmingItemDelete ? (
+                        <div className="timetable-delete-confirm" role="alertdialog" aria-label="이수예정 과목 삭제 확인">
+                          <p>
+                            선택한 과목 <strong>{selectedDeleteIds.size}개</strong>를 로드맵에서 삭제할까요?
+                            <span>되돌릴 수 없습니다.</span>
+                          </p>
+                          <div>
+                            <button type="button" disabled={isDeletingItems} onClick={() => setIsConfirmingItemDelete(false)}>취소</button>
+                            <button
+                              className="timetable-delete-confirm-button"
+                              type="button"
+                              autoFocus
+                              disabled={isDeletingItems}
+                              onClick={() => void confirmDeleteSelectedItems()}
+                            >
+                              {isDeletingItems ? <LoaderCircle size={13} aria-hidden="true" /> : <Trash2 size={13} aria-hidden="true" />} 삭제
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="term-delete-bar">
+                          <span>{selectedDeleteIds.size > 0 ? `${selectedDeleteIds.size}개 선택됨` : "삭제할 과목을 선택하세요"}</span>
+                          <div className="term-delete-bar-actions">
+                            <button type="button" onClick={() => toggleTermDeleteMode(term.key)}>취소</button>
+                            <button
+                              className="term-delete-bar-delete"
+                              type="button"
+                              disabled={selectedDeleteIds.size === 0}
+                              onClick={() => setIsConfirmingItemDelete(true)}
+                            >
+                              <Trash2 size={13} aria-hidden="true" /> 삭제
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : null}
                     {isEditingRoadmap && term.grade && term.curriculumSemester ? (
                       addingTerm === term.key ? (
                         <div className="add-roadmap-item-form api-course-picker">

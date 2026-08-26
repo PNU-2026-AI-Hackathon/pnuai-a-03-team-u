@@ -205,6 +205,7 @@ def crawl_syllabi_for_course_names(
     semester_code: str,
     out_dir: Path,
     lang: str = "KOR",
+    allowed_course_codes: set[str] | None = None,
 ) -> list[SyllabusCrawlResult]:
     """과목명 목록을 순회하며 검색→(PRT_KOR 있는 분반만) PDF 저장까지 한 세션에서 처리한다.
 
@@ -243,8 +244,19 @@ def crawl_syllabi_for_course_names(
                 continue
 
             for offering in offerings:
+                # 동명 과목이 전교에 여러 개 있을 때는 교육과정에서 확인한 코드만 받는다.
+                if allowed_course_codes is not None and offering.subj_no not in allowed_course_codes:
+                    continue
                 if not offering.has_kor:
                     results.append(SyllabusCrawlResult(offering=offering, pdf_path=None))
+                    continue
+
+                pdf_name = f"{offering.subj_no}_{offering.class_no}_{lang}.pdf"
+                out_path = out_dir / pdf_name
+                # 재실행은 누락분 보완 용도다. 이미 받은 원본을 다시 열고 저장하면
+                # OneStop 부하와 실행 시간만 늘어나므로 그대로 재사용한다.
+                if out_path.exists():
+                    results.append(SyllabusCrawlResult(offering=offering, pdf_path=out_path))
                     continue
 
                 # 팝업 DOM 누적을 피하려고 분반마다 검색 페이지를 새로 띄운다(위
@@ -265,8 +277,6 @@ def crawl_syllabi_for_course_names(
                         raise RuntimeError(
                             f"재검색 결과에서 {offering.subj_no}/{offering.class_no}를 못 찾음"
                         )
-                    pdf_name = f"{offering.subj_no}_{offering.class_no}_{lang}.pdf"
-                    out_path = out_dir / pdf_name
                     download_syllabus_pdf(page, fresh_offering, out_path, lang=lang)
                     results.append(SyllabusCrawlResult(offering=offering, pdf_path=out_path))
                 except Exception as exc:  # noqa: BLE001 - 한 분반 실패로 나머지를 막지 않는다
@@ -288,6 +298,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--course-names", nargs="+", required=True)
     parser.add_argument(
+        "--allowed-course-codes", nargs="+", default=None,
+        help="동명 타 학과 과목을 제외할 교과목코드 목록 (선택)",
+    )
+    parser.add_argument(
         "--output-dir", type=Path, default=Path("raw_data/crawled_data/onestop_syllabus")
     )
     return parser.parse_args()
@@ -296,7 +310,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     results = crawl_syllabi_for_course_names(
-        args.course_names, args.year, args.semester_code, args.output_dir
+        args.course_names, args.year, args.semester_code, args.output_dir,
+        allowed_course_codes=set(args.allowed_course_codes) if args.allowed_course_codes else None,
     )
     summary = {
         "total_offerings": len(results),

@@ -385,7 +385,6 @@ export function AuthPage() {
                   <span>이름 입력</span>
                   <input
                     type="text"
-                    placeholder="예 : 안선주"
                     value={signupName}
                     onChange={(event) => setSignupName(event.target.value)}
                     disabled={isSignupReview}
@@ -397,7 +396,6 @@ export function AuthPage() {
                   <input
                     type="text"
                     inputMode="numeric"
-                    placeholder="예 : 202366247"
                     value={studentId}
                     onChange={(event) => setStudentId(event.target.value)}
                     disabled={isSignupReview}
@@ -476,7 +474,6 @@ export function AuthPage() {
               </div>
               <FieldAutocomplete
                 label="학과 또는 학부 입력"
-                placeholder="예 : 의생명융합공학부"
                 value={department}
                 onChange={(next) => {
                   setDepartment(next);
@@ -489,7 +486,6 @@ export function AuthPage() {
               />
               <FieldAutocomplete
                 label="세부전공 입력 (선택)"
-                placeholder="예 : 데이터사이언스전공"
                 value={primaryMajor}
                 onChange={setPrimaryMajor}
                 options={primaryMajorOptions}
@@ -525,7 +521,6 @@ export function AuthPage() {
                 <span>진로 입력</span>
                 <input
                   type="text"
-                  placeholder="예 : 데이터사이언티스트"
                   value={careerGoal}
                   onChange={(event) => setCareerGoal(event.target.value)}
                   disabled={isSignupReview}
@@ -550,7 +545,6 @@ export function AuthPage() {
                   <div className="auth-program-grid" id="additional-program-fields">
                     <FieldAutocomplete
                       label="부전공 학과 또는 학부 입력"
-                      placeholder="예 : 의류학과"
                       value={minorDepartment}
                       onChange={(next) => {
                         setMinorDepartment(next);
@@ -561,7 +555,6 @@ export function AuthPage() {
                     />
                     <FieldAutocomplete
                       label="부전공 세부전공 입력 (선택)"
-                      placeholder="예 : 패션디자인전공"
                       value={minorMajor}
                       onChange={setMinorMajor}
                       options={minorMajorOptions}
@@ -575,7 +568,6 @@ export function AuthPage() {
                     />
                     <FieldAutocomplete
                       label="복수전공 학과 또는 학부 입력"
-                      placeholder="예 : 정보컴퓨터공학부"
                       value={dualDepartment}
                       onChange={(next) => {
                         setDualDepartment(next);
@@ -586,7 +578,6 @@ export function AuthPage() {
                     />
                     <FieldAutocomplete
                       label="복수전공 세부전공 입력 (선택)"
-                      placeholder="예 : 컴퓨터공학전공"
                       value={dualMajor}
                       onChange={setDualMajor}
                       options={dualMajorOptions}
