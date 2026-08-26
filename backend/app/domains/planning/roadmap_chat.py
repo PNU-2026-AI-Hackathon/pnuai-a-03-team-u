@@ -1327,6 +1327,12 @@ def _compute_critical_missing_required(
     for name in substituted_course_names(db, user.id):
         completed_norms.add(_norm(name))
     if roadmap_id is not None:
+        # 이름만 보고 커버됐다고 친다 — 그 planned 항목이 실제로 이 과목이 열리는
+        # 학기에 정확히 배치돼 있는지는 여기서 다시 확인하지 않는다. propose_change
+        # 경로(챗)는 계절수업/단일학기 가드가 create·update 둘 다 막아주지만(2026-08-26,
+        # PR #271), roadmaps.py의 수동 항목 생성/수정 API는 그 가드를 안 거친다 —
+        # 사용자가 화면에서 직접 잘못된 학기에 끌어다 놓으면, 그 항목이 여기서
+        # 조용히 "이수 커버됨"으로 잡혀 진짜 졸업 위험 경고를 가릴 수 있다.
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
@@ -1407,6 +1413,8 @@ def _compute_missing_required_available(
     for name in substituted_course_names(db, user.id):
         completed_norms.add(_norm(name))
     if roadmap_id is not None:
+        # 이름만으로 커버 여부를 본다 — 실제 배치 학기 검증은 안 한다.
+        # _compute_critical_missing_required의 같은 자리 주석 참고.
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
