@@ -493,7 +493,7 @@ $ npm run dev                     # http://localhost:5173
 | 이도원 | 조현우 | 안선주 | 한고은 | 이민석 |
 |:-------:|:-------:|:-------:|:-------:|:-------:|
 | ldwlee03@gmail.com | blackest21@gmail.com | pusanju83@pusan.ac.kr | hge7317@naver.com | leems060811@gmail.com |
-| 백엔드 · PM · 팀장 | 백엔드 · AI 기능 구현 | UI/UX 디자인 | 프론트엔드 | 프론트엔드 |
+| 백엔드 · PM · 팀장 | 백엔드 · AI 기능 구현 | UI/UX 디자인 | 프론트엔드 · 기획 | 프론트엔드 · 데이터분석 |
 <br/>
 
 <p align="right">(<a href="#목차">목차로 ↑</a>)</p>
