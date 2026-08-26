@@ -1688,6 +1688,38 @@ class CriticalMissingRequiredTest(unittest.TestCase):
         result = ctx._critical_missing_required(next_planned_semester="2학기")
         self.assertEqual(0, len(result))
 
+    def test_skips_planned_from_roadmap_items(self):
+        """로드맵 status='planned'(미래 학기에 이미 계획) 항목도 위험 아님으로 본다.
+
+        고치기 전엔 status=='completed'만 봐서, 이미 4학년 1학기에 계획해 둔 필수를
+        상담 턴마다 '아직 미이수'라며 다시 위험 경고·재추천했다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=107, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=107,
+                                  course_name="자료구조", planned_grade=4,
+                                  planned_year="2028", planned_semester="1학기",
+                                  status="planned"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_still_flags_dropped_from_roadmap_items(self):
+        """status='dropped'(취소/제외)까지 이수로 쳐주면 안 된다 — != 'dropped'로
+        고쳤지 상태 검사 자체를 없앤 게 아니라는 걸 고정한다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=108, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=108,
+                                  course_name="자료구조", planned_grade=2,
+                                  status="dropped"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(1, len(result))
+        self.assertEqual("자료구조", result[0]["course_name"])
+
     def test_skips_all_semester_courses(self):
         """전학기·1,2 개설(계절수업 등)은 다음 학기든 언제든 미룰 수 있어 위험 아님."""
         db = self.make_db()
