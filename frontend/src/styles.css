@@ -7948,6 +7948,14 @@ body.theme-dark .topnav .theme-mode-button {
   background: var(--panel);
 }
 
+/* 복수전공 입력은 펼침 영역의 마지막 줄이라 자동완성 목록이 부모 아래로 나간다.
+   닫힌 상태에서만 내용을 잘라내고, 펼친 동안에는 후보 목록이 가려지지 않게 한다. */
+.auth-program-options.is-open {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+
 .auth-program-toggle {
   display: flex;
   align-items: center;
