@@ -1757,6 +1757,7 @@ function ConnectedRoadmapPage() {
     setDeleteModeTermKey(null);
     setSelectedDeleteIds(new Set());
     setIsConfirmingItemDelete(false);
+    setItemDeleteError("");
   }
 
   function cancelRoadmapEditing() {
@@ -1812,7 +1813,14 @@ function ConnectedRoadmapPage() {
       setSelectedDeleteIds(new Set());
       setIsConfirmingItemDelete(false);
     } catch (error) {
+      // Promise.all은 하나라도 실패하면 나머지 성공 여부를 알려주지 않는다.
+      // 어떤 항목이 실제로 지워졌는지 화면이 추측하지 않도록 로드맵을 다시
+      // 읽어와 서버 상태로 맞추고 선택 모드를 닫는다 (saveRoadmapEditing과 동일 패턴).
       setItemDeleteError(getApiErrorMessage(error, "과목을 삭제하지 못했습니다."));
+      await reloadRoadmap().catch(() => undefined);
+      setDeleteModeTermKey(null);
+      setSelectedDeleteIds(new Set());
+      setIsConfirmingItemDelete(false);
     } finally {
       setIsDeletingItems(false);
     }
@@ -2149,6 +2157,7 @@ function ConnectedRoadmapPage() {
               
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
+              {itemDeleteError ? <p className="roadmap-edit-feedback" role="alert">{itemDeleteError}</p> : null}
               <section className="semester-timeline">
                 {timeline.map((term) => (
                   <article className="semester-timeline-card" key={term.key}>
@@ -2267,7 +2276,6 @@ function ConnectedRoadmapPage() {
                         </div>
                       )
                     ) : null}
-                    {itemDeleteError && deleteModeTermKey === term.key ? <p className="roadmap-edit-feedback" role="alert">{itemDeleteError}</p> : null}
                     {isEditingRoadmap && term.grade && term.curriculumSemester ? (
                       addingTerm === term.key ? (
                         <div className="add-roadmap-item-form api-course-picker">
