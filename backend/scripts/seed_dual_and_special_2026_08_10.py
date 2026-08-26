@@ -87,20 +87,22 @@ FINTECH_DEPT_ID = 97
 
 FINTECH_MINOR_SPECIAL = {
     "total_credits": 21,
-    "notes": "핀테크융합전공 부전공. 2024년부터 1학기 1회 선발. 전공기초 불인정.",
+    "notes": (
+        "핀테크융합전공 부전공. 2024년부터 1학기 1회 선발. 전공기초 불인정. "
+        "전공필수 5과목 중 3개(9학점) 필수 선택 + 전공선택으로 나머지 채워 총 21학점. "
+        "라벨은 interdisciplinary(연계전공)와 같은 program_courses 행을 공유한다 — "
+        "department_id/major_id만으로 키가 잡혀 program_type 컬럼이 없어서, 라벨이 "
+        "달라지면(예전 '전공필수 중 3개 택') 그 그룹만 후보 0개로 조용히 깨진다"
+        "(2026-08-27 발견·수정). '전공필수+전공선택 합계' 그룹도 제거함 — 여러 라벨을"
+        " 합산하는 기능이 evaluate_program에 없어 애초에 매칭될 수 없었고, 위쪽"
+        " total_credits(21)이 이미 같은 걸 검사한다."
+    ),
     "groups": [
         {
             "type": "min_courses",
-            "label": "전공필수 중 3개 택",
-            "required_n": 3,
-            "required_credits": 9,
+            "label": "전공필수 (5과목)",
+            "n": 3,
             "notes": "전공필수 5과목 중 3개 선택하여 9학점 이수.",
-        },
-        {
-            "type": "min_credits",
-            "label": "전공필수+전공선택 합계",
-            "required_credits": 21,
-            "notes": "전공필수(위) + 전공선택 합쳐 최소 21학점. 전공기초는 인정하지 않는다.",
         },
     ],
     "exclude_categories": ["전공기초"],
