@@ -4225,7 +4225,7 @@ body.theme-dark .activity-tags span {
 
 .semester-timeline-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 14px;
@@ -4256,6 +4256,39 @@ body.theme-dark .activity-tags span {
   color: var(--ink);
   font-size: 20px;
   font-weight: 700;
+}
+
+.semester-timeline-credit {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.term-delete-toggle {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  padding: 0;
+  border: 1px solid var(--gray-line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: #637084;
+  cursor: pointer;
+}
+
+.term-delete-toggle:hover {
+  border-color: #f4c2c2;
+  color: var(--red);
+}
+
+.term-delete-toggle.is-active {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
 }
 
 .semester-course-list {
@@ -4347,6 +4380,85 @@ body.theme-dark .activity-tags span {
 .semester-course-status.status-preparing {
   background: #fff3df;
   color: #a86313;
+}
+
+.semester-course-select-badge {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #c7ced9;
+  border-radius: 7px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.semester-course-select-badge:hover {
+  border-color: var(--red);
+}
+
+.semester-course-select-badge:checked {
+  border-color: var(--red);
+  background: var(--red);
+}
+
+.semester-course-select-badge:checked::after {
+  content: "";
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.term-delete-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--gray-line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.term-delete-bar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.term-delete-bar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.term-delete-bar-delete {
+  border-color: var(--red) !important;
+  background: var(--red) !important;
+  color: #fff !important;
+}
+
+.term-delete-bar-delete:disabled {
+  border-color: var(--gray-line) !important;
+  background: var(--gray-soft) !important;
+  color: var(--muted) !important;
+  cursor: default;
 }
 
 .roadmap-edit-feedback {
