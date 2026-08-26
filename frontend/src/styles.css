@@ -5610,6 +5610,45 @@ body.theme-dark .semester-course-status.status-completed {
   color: #a86716;
 }
 
+.info-state-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #f1c7c7;
+  border-radius: 10px;
+  background: #fff6f6;
+  color: #a43a3a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.info-state-error button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.info-state-error button:hover {
+  text-decoration: underline;
+}
+
+body.theme-dark .info-state-error {
+  border-color: #5b3036;
+  background: #2a1b1e;
+  color: #ff9d9d;
+}
+
 /* 졸업요건 카드에 붙는 균형교양 세부영역 요약. 별도 카드처럼 떠 보이지 않도록
    부모 카드의 좌우·아래 padding을 되감아 한 덩어리로 연결한다. */
 .liberal-area-summary {

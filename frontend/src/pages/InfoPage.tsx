@@ -392,6 +392,9 @@ export function InfoPage() {
   const [graduationEditError, setGraduationEditError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isGraduationLoading, setIsGraduationLoading] = useState(false);
+  const [graduationLoadError, setGraduationLoadError] = useState("");
+  const [courseLoadError, setCourseLoadError] = useState("");
+  const [academicLoadAttempt, setAcademicLoadAttempt] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   // 직전 동기화가 남긴 1회성 경고(주로 my.pusan 실패). 리로드를 건너온 값이다.
   const [syncWarning, setSyncWarning] = useState(() => {
@@ -431,22 +434,59 @@ export function InfoPage() {
   useEffect(() => {
     if (!isAuthenticated && !isMockStudentDataEnabled) return;
 
+    let cancelled = false;
     setIsGraduationLoading(true);
-    Promise.all([getCourseRecords(), getGraduationProgress(true)])
-      .then(([courseRecords, data]) => {
-        const storedOverride = isMockStudentDataEnabled ? readGraduationOverride() : null;
-        const fetchedGraduation = data.programs.find((program) => program.program_type === "primary") ?? data.programs[0] ?? null;
-        setCourses(courseRecords);
-        setGraduation(storedOverride ?? fetchedGraduation);
-        setAdditionalGraduationPrograms(data.programs.filter((program) => program.program_type !== "primary"));
+    setGraduationLoadError("");
+    setCourseLoadError("");
+
+    void Promise.allSettled([getCourseRecords(), getGraduationProgress(true)])
+      .then(([courseResult, graduationResult]) => {
+        if (cancelled) return;
+
+        // 교과 이력과 졸업요건은 서로 다른 API이므로 한쪽의 일시적 실패가
+        // 정상적으로 받은 다른 쪽 데이터까지 지우지 않도록 독립적으로 처리한다.
+        if (courseResult.status === "fulfilled") {
+          setCourses(courseResult.value);
+        } else {
+          setCourses([]);
+          setCourseLoadError(getErrorMessage(
+            courseResult.reason,
+            "교과 활동을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          ));
+        }
+
+        if (graduationResult.status === "fulfilled") {
+          const data = graduationResult.value;
+          const storedOverride = isMockStudentDataEnabled ? readGraduationOverride() : null;
+          const fetchedGraduation = data.programs.find((program) => program.program_type === "primary")
+            ?? data.programs[0]
+            ?? null;
+          setGraduation(storedOverride ?? fetchedGraduation);
+          setAdditionalGraduationPrograms(
+            data.programs.filter((program) => program.program_type !== "primary"),
+          );
+          if (!fetchedGraduation && !storedOverride) {
+            setGraduationLoadError(
+              "등록된 학적 프로그램이 없어 졸업요건을 계산할 수 없습니다. 내 정보에서 학과·전공을 확인해 주세요.",
+            );
+          }
+        } else {
+          setGraduation(null);
+          setAdditionalGraduationPrograms([]);
+          setGraduationLoadError(getErrorMessage(
+            graduationResult.reason,
+            "졸업요건을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          ));
+        }
       })
-      .catch(() => {
-        setCourses([]);
-        setGraduation(null);
-        setAdditionalGraduationPrograms([]);
-      })
-      .finally(() => setIsGraduationLoading(false));
-  }, [isAuthenticated]);
+      .finally(() => {
+        if (!cancelled) setIsGraduationLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [academicLoadAttempt, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1270,7 +1310,18 @@ export function InfoPage() {
               </div>
             ) : null}
             {isGraduationLoading ? <p className="info-state">졸업요건을 불러오는 중입니다.</p> : null}
-            {!isGraduationLoading && !displayedGraduation ? <p className="info-state">교과 활동을 불러오면 졸업요건을 확인할 수 있습니다.</p> : null}
+            {!isGraduationLoading && graduationLoadError ? (
+              <div className="info-state-error" role="alert">
+                <span>{graduationLoadError}</span>
+                <button type="button" onClick={() => setAcademicLoadAttempt((attempt) => attempt + 1)}>
+                  <RotateCcw size={13} aria-hidden="true" />
+                  다시 시도
+                </button>
+              </div>
+            ) : null}
+            {!isGraduationLoading && !displayedGraduation && !graduationLoadError ? (
+              <p className="info-state">교과 활동을 불러오면 졸업요건을 확인할 수 있습니다.</p>
+            ) : null}
             {isProfileEditing && displayedGraduation ? (
               <>
                 <div className="graduation-total-editor">
@@ -1507,7 +1558,17 @@ export function InfoPage() {
               <div><span>전체 총평점</span><strong>{formatGpa(overallGpa)}</strong><small>/ 4.50</small></div>
               <div><span>전체 전공평점</span><strong>{formatGpa(overallMajorGpa)}</strong><small>/ 4.50</small></div>
             </div>
-            {gradeTerms.length === 0 ? <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p> : null}
+            {courseLoadError ? (
+              <div className="info-state-error" role="alert">
+                <span>{courseLoadError}</span>
+                <button type="button" onClick={() => setAcademicLoadAttempt((attempt) => attempt + 1)}>
+                  <RotateCcw size={13} aria-hidden="true" />
+                  다시 시도
+                </button>
+              </div>
+            ) : gradeTerms.length === 0 ? (
+              <p className="info-state">교과 활동을 불러오면 학기별 수강 과목이 표시됩니다.</p>
+            ) : null}
             <div className="grade-term-list">
               {gradeTerms.map(({ label: term, courses: termCourses }) => {
                 const termGpa = calculateGpa(termCourses);
