@@ -1314,7 +1314,9 @@ def _compute_critical_missing_required(
         s = "".join(roman.get(ch, ch) for ch in n)
         return s.replace("(", "").replace(")", "").replace(" ", "").strip()
 
-    # 이수 완료 세트: student_course_records + 로드맵의 status='completed' (있으면)
+    # 이수 완료/예정 세트: student_course_records + 로드맵에서 빠지지 않은 항목.
+    # 로드맵 상담에서는 이미 미래 학기에 계획한 필수도 다시 "미이수"로 추천하면 안 된다.
+    # timetable 챗은 roadmap_id=None이라 기존처럼 실제 이수기록만 본다.
     completed_norms: set[str] = set()
     for r in db.scalars(
         select(StudentCourseRecord).where(StudentCourseRecord.user_id == user.id)
@@ -1328,7 +1330,7 @@ def _compute_critical_missing_required(
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
-                CourseRoadmapItem.status == "completed",
+                CourseRoadmapItem.status != "dropped",
             )
         ).all():
             completed_norms.add(_norm(it.course_name))
@@ -1408,7 +1410,7 @@ def _compute_missing_required_available(
         for it in db.scalars(
             select(CourseRoadmapItem).where(
                 CourseRoadmapItem.roadmap_id == roadmap_id,
-                CourseRoadmapItem.status == "completed",
+                CourseRoadmapItem.status != "dropped",
             )
         ).all():
             completed_norms.add(_norm(it.course_name))
