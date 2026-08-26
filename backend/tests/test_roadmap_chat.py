@@ -476,6 +476,178 @@ class ProposeChangePastTermGuardTest(unittest.TestCase):
         self.assertNotIn("error", result)
 
 
+class ProposeChangeUpdateSemesterGuardTest(unittest.TestCase):
+    """실제 사고(2026-08-26) 재현: 캡스톤디자인을 4학년 1학기로 옮기는 update 요청을
+    처리하며, 2학기 전용 개설인 '딥러닝프로그래밍'이 같이 딸려가 1학기 슬롯에
+    꽂혔는데 아무 가드도 안 걸렸다. update는 course_id를 안 넘기는 게 보통이라
+    (이미 있는 항목의 학기만 옮기므로) course_obj가 항상 None이었고, 그래서
+    create만 쓰던 계절수업/단일학기 가드가 update에서는 통째로 죽어 있었다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트")
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_update_into_wrong_semester_for_single_semester_course_is_rejected(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=708, course_name="딥러닝프로그래밍", department_id=10,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        item = CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=708,
+                                 course_name="딥러닝프로그래밍", planned_grade=3,
+                                 planned_year="2026", planned_semester="2학기",
+                                 status="planned")
+        db.add(item)
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="update", reason="캡스톤디자인 이동에 딸려간 실수",
+                item_id=item.id, planned_grade=4,
+                planned_year="2027", planned_semester="1학기",
+            )
+        self.assertIn("error", result)
+        self.assertIn("정규 2학기 전용", result["error"])
+
+    def test_update_into_matching_semester_for_single_semester_course_is_allowed(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=708, course_name="딥러닝프로그래밍", department_id=10,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        item = CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=708,
+                                 course_name="딥러닝프로그래밍", planned_grade=3,
+                                 planned_year="2026", planned_semester="2학기",
+                                 status="planned")
+        db.add(item)
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="update", reason="4학년 2학기로 정확히 이동",
+                item_id=item.id, planned_grade=4,
+                planned_year="2027", planned_semester="2학기",
+            )
+        self.assertNotIn("error", result)
+
+    def test_update_without_semester_change_falls_back_to_existing_placement(self):
+        """학년 표기만 고치는 update(planned_semester 없음)는 기존 배치 기준으로
+        검사한다 — 이미 맞는 학기에 있으면 통과해야 한다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=709, course_name="데이터과학입문", department_id=10,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        item = CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=709,
+                                 course_name="데이터과학입문", planned_grade=2,
+                                 planned_year="2027", planned_semester="1학기",
+                                 status="planned")
+        db.add(item)
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="update", reason="학년 표기 교정", item_id=item.id, planned_grade=4,
+            )
+        self.assertNotIn("error", result)
+
+
+class ProposeChangeGradeYearConsistencyGuardTest(unittest.TestCase):
+    """실제 사고(2026-08-26) 재현: "캡스톤디자인을 4학년 1학기로 옮겨줘" 처리 중
+    LLM이 같은 턴에서 3학년 항목 하나에 4학년 연도(2027)를 잘못 붙인 update를
+    하나 더 만들어 승인까지 됐다(pending_roadmap_changes id=498). planned_grade와
+    planned_year는 매 호출마다 LLM이 따로 계산해서 넘기는 값이라 서로 어긋나도
+    아무도 걸러내지 않았다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def make_ctx(self, db):
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트")
+        db.add(user)
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def test_update_year_conflicting_with_sibling_same_grade_is_rejected(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="캡스톤디자인",
+                                  planned_grade=4, planned_year="2027",
+                                  planned_semester="1학기", status="planned"))
+        # 3학년 2학기 배치의 다른 항목 — 이 학생의 "3학년=2026년" 매핑을 이미 확정해둔
+        # 시빌. 이게 없으면 딥러닝프로그래밍 하나만 있어서 그 항목 자신 말고는 비교
+        # 대상이 없다(실제 사고에서는 같은 2026-2학기 묶음 항목 여럿이 이 역할이었다).
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="논리회로설계및실험",
+                                  planned_grade=3, planned_year="2026",
+                                  planned_semester="2학기", status="planned"))
+        item = CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="딥러닝프로그래밍",
+                                 planned_grade=3, planned_year="2026",
+                                 planned_semester="2학기", status="planned")
+        db.add(item)
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="update", reason="사용자 요청에 따라 캡스톤디자인을 4학년 1학기로 이동",
+                item_id=item.id, planned_grade=3,
+                planned_year="2027", planned_semester="2학기",
+            )
+        self.assertIn("error", result)
+        self.assertIn("이미", result["error"])
+
+    def test_update_year_matching_sibling_same_grade_is_allowed(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="캡스톤디자인",
+                                  planned_grade=4, planned_year="2027",
+                                  planned_semester="1학기", status="planned"))
+        item = CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="딥러닝프로그래밍",
+                                 planned_grade=3, planned_year="2026",
+                                 planned_semester="2학기", status="planned")
+        db.add(item)
+        db.flush()
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="update", reason="4학년 1학기로 정확히 이동",
+                item_id=item.id, planned_grade=4,
+                planned_year="2027", planned_semester="2학기",
+            )
+        self.assertNotIn("error", result)
+
+    def test_no_sibling_with_same_grade_means_no_conflict(self):
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        course_id = _seed_generic_course(db)
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="첫 항목", course_id=course_id, planned_grade=3,
+                planned_year="2026", planned_semester="1학기",
+            )
+        self.assertNotIn("error", result)
+
+    def test_completed_sibling_with_different_year_is_ignored(self):
+        """완료된(status='completed') 항목은 실제 이수 기록이라 학년↔연도가 어긋나
+        보여도(예: 재수강/편입 이력) 이 가드의 비교 대상에서 뺀다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_name="이수한과목",
+                                  planned_grade=3, planned_year="2025",
+                                  planned_semester="1학기", status="completed"))
+        course_id = _seed_generic_course(db)
+        with patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)):
+            result = ctx.propose_change(
+                action="create", reason="test", course_id=course_id, planned_grade=3,
+                planned_year="2026", planned_semester="1학기",
+            )
+        self.assertNotIn("error", result)
+
+
 class TermCreditCapGuardTest(unittest.TestCase):
     """PNU 학사 규정: 정규 학기당 수강신청 학점 상한(졸업기준학점 133 이상=21학점,
     이하=19학점). 로드맵에 이 상한을 넘겨 create/update되는 걸 도구 단에서 막는다.
