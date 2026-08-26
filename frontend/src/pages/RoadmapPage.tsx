@@ -27,6 +27,8 @@ import { searchDepartments } from "../api/departments";
 import type { DepartmentSearchResult } from "../api/departments";
 import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
+import { listEnrolledTracks, listTrackAiCommonCourses } from "../api/tracks";
+import type { EnrolledTrack } from "../api/tracks";
 import { isMockAuthEnabled, visibleGrades } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import { useAuth } from "../auth/AuthContext";
@@ -107,6 +109,14 @@ const timelineCategoryOptions = ["전공 기초", "전공 필수", "전공 선�
 
 /** 학기 카드의 "+ 과목 담기" 브라우징 이수구분 칩. courses.category 원 표기(공백 없음)와 맞춘다. */
 const COURSE_BROWSE_CATEGORIES = ["전공기초", "전공필수", "전공선택", "교양필수", "교양선택", "일반선택"];
+
+/** 담기 패널의 "빠른 선택" 버튼 순서·라벨. InfoPage.tsx의 programTypeLabels와 맞춘다. */
+const PROGRAM_QUICK_SELECT_ORDER: { type: string; label: string }[] = [
+  { type: "primary", label: "주전공" },
+  { type: "dual", label: "복수전공" },
+  { type: "minor", label: "부전공" },
+  { type: "interdisciplinary", label: "연계·융합전공" },
+];
 const timelineStatusOptions: TimelineStatus[] = ["수강 중", "이수 예정", "준비 중"];
 const emptyTimelineItem: NewTimelineItem = { name: "", category: "전공 선택", status: "이수 예정" };
 
@@ -1287,6 +1297,17 @@ function normalizeCourseName(name: string | null | undefined): string {
   return romanized.replace(/[()\s]/g, "");
 }
 
+/** 담기 목록의 학년/학기 태그. "전학년"/"전학기"·"여름계절수업" 같은 값은 이미
+ * 완결된 표현이라 그대로 쓰고, "1"/"2" 같은 숫자만 "N학년"/"N학기"를 붙인다. */
+function formatCourseYearTag(year: string | null): string | null {
+  if (!year) return null;
+  return /^\d+$/.test(year) ? `${year}학년` : year;
+}
+function formatCourseSemesterTag(semester: string | null): string | null {
+  if (!semester) return null;
+  return /^\d+$/.test(semester) ? `${semester}학기 개설` : `${semester} 개설`;
+}
+
 const COLLAPSED_CURRICULUM_COURSE_COUNT = 6;
 
 function shouldCollapseCurriculumGroup(title: string) {
@@ -1492,6 +1513,9 @@ function ConnectedRoadmapPage() {
   const [addCourseCollege, setAddCourseCollege] = useState("");
   const [addCourseDepartment, setAddCourseDepartment] = useState<DepartmentSearchResult | null>(null);
   const [addCourseMajor, setAddCourseMajor] = useState("");
+  // 빠른 선택(주전공/복수전공/...) 버튼으로 골랐을 때만 채운다 — id가 있으면
+  // 이름 조회 없이 바로 좁힐 수 있어서다. 수동으로 단과대/학부/전공을 다시 고르면 비운다.
+  const [addCourseMajorId, setAddCourseMajorId] = useState<number | null>(null);
   const [addCourseCategory, setAddCourseCategory] = useState("");
   const [addCourseQuery, setAddCourseQuery] = useState("");
   const [addCourseResults, setAddCourseResults] = useState<CourseSearchResult[]>([]);
@@ -1501,6 +1525,21 @@ function ConnectedRoadmapPage() {
   const [addCourseError, setAddCourseError] = useState("");
   // 이수기록(완료·대체 인정 포함) — 담기 목록에서 이미 이수/대체된 과목을 회색으로 막는 데 쓴다.
   const [courseRecords, setCourseRecords] = useState<CourseRecord[]>([]);
+  // 담기 패널의 "빠른 선택" 버튼용 — 이 학생이 실제로 등록된 학적 프로그램 전체
+  // (주전공/복수전공/부전공/연계전공). graduation은 주전공만 남기고 나머지는 버려서 따로 둔다.
+  const [academicPrograms, setAcademicPrograms] = useState<GraduationProgram[]>([]);
+  const [enrolledTracks, setEnrolledTracks] = useState<EnrolledTrack[]>([]);
+  // 트랙 빠른 선택을 눌렀을 때만 채운다 — department_id/major_id 필터로는 안 잡히는
+  // AI융합 공통교과목(학과 소속이 아닌 이름 목록)을 결과 목록에 별도로 얹는다.
+  const [addCourseCommonCourses, setAddCourseCommonCourses] = useState<CourseSearchResult[]>([]);
+  // 트랙 버튼 선택 표시 전용. major_id는 안 쓴다(아래 selectAddCourseTrack 참고) —
+  // 트랙의 major_id는 courses.major_id로 안 걸려서 필터에 못 쓰고, 버튼 강조에만 쓴다.
+  const [addCourseSelectedTrackId, setAddCourseSelectedTrackId] = useState<number | null>(null);
+  // 주전공/복수전공/... 버튼 선택 표시 전용. addCourseMajorId만으로는 비교 못 한다 —
+  // 핀테크융합전공처럼 학과 자체가 프로그램인 경우 major_id가 정상적으로 null이라
+  // (program_courses 테이블 문서 참고) null끼리 비교하면 아무것도 안 골랐을 때와
+  // 구분이 안 된다.
+  const [addCourseSelectedProgramType, setAddCourseSelectedProgramType] = useState<string | null>(null);
   const addCourseModalRef = useRef<HTMLDivElement>(null);
   // 로드맵 메타(제목·목표 졸업연도) 인라인 편집. 항목 편집(draftItems)과는 별개다.
   const [isMetaEditing, setIsMetaEditing] = useState(false);
@@ -1655,6 +1694,7 @@ function ConnectedRoadmapPage() {
         ?? graduationResult?.programs[0]
         ?? null;
       setGraduation(primaryProgram);
+      setAcademicPrograms(graduationResult?.programs ?? []);
       // 세션 목록을 먼저 잡고, 그중 하나의 대화만 읽는다. session_id 없이 읽으면
       // 이 로드맵의 모든 스레드가 한 화면에 뒤섞여 나온다.
       const sessionList = await listRoadmapSessions(nextRoadmap.id).catch(() => []);
@@ -1733,6 +1773,7 @@ function ConnectedRoadmapPage() {
       browseCourses(addCourseQuery.trim(), {
         departmentId: addCourseDepartment?.id ?? null,
         major: addCourseMajor || null,
+        majorId: addCourseMajorId,
         category: addCourseCategory || null,
       })
         .then((results) => {
@@ -1749,13 +1790,21 @@ function ConnectedRoadmapPage() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [addCourseTermKey, addCourseDepartment, addCourseMajor, addCourseCategory, addCourseQuery]);
+  }, [addCourseTermKey, addCourseDepartment, addCourseMajor, addCourseMajorId, addCourseCategory, addCourseQuery]);
 
   // 담기 목록에서 이미 이수/대체된 과목을 걸러내는 데 쓴다.
   useEffect(() => {
     getCourseRecords()
       .then(setCourseRecords)
       .catch(() => setCourseRecords([]));
+  }, []);
+
+  // 담기 패널 "빠른 선택" 버튼용 — 등록된 트랙(AI융합트랙 등). 대상 학과가 아니면
+  // 서버가 빈 배열을 준다(api/tracks.ts 참고), 그 경우 트랙 버튼 자체를 회색 처리한다.
+  useEffect(() => {
+    listEnrolledTracks()
+      .then(setEnrolledTracks)
+      .catch(() => setEnrolledTracks([]));
   }, []);
 
   // 담기 팝업 바깥을 클릭하거나 Esc를 누르면 닫는다.
@@ -1877,6 +1926,9 @@ function ConnectedRoadmapPage() {
     setAddCourseTermKey(null);
     setAddCourseSelectedIds(new Set());
     setAddCourseError("");
+    setAddCourseCommonCourses([]);
+    setAddCourseSelectedTrackId(null);
+    setAddCourseSelectedProgramType(null);
   }
 
   function cancelRoadmapEditing() {
@@ -1991,6 +2043,63 @@ function ConnectedRoadmapPage() {
     setAddCourseError("");
     // 같은 카드에서 담기 패널과 삭제 모드를 동시에 열어두지 않는다.
     setDeleteModeTermKey(null);
+  }
+
+  /** "빠른 선택"(주전공/복수전공/부전공/연계전공/트랙) 버튼 — 단과대→학부→전공을
+   * 하나씩 고르지 않고 그 프로그램의 department_id/major_id로 바로 좁힌다. */
+  function selectAddCourseProgram(
+    departmentId: number,
+    majorId: number | null,
+    majorLabel: string,
+    programType: string | null = null,
+  ) {
+    const matchedDepartment = addCourseDepartments.find((item) => item.id === departmentId) ?? null;
+    setAddCourseCollege(matchedDepartment?.college ?? "");
+    setAddCourseDepartment(matchedDepartment);
+    setAddCourseMajor(majorLabel);
+    setAddCourseMajorId(majorId);
+    setAddCourseCommonCourses([]);
+    setAddCourseSelectedTrackId(null);
+    setAddCourseSelectedProgramType(programType);
+  }
+
+  /** 트랙 빠른 선택. major_id는 트랙의 합성 major 행(예: "소셜데이터사이언스(SW융합트랙)")
+   * 그대로 넘긴다 — courses.major_id로는 안 걸리지만(실측: 사회학과 과목 48개 전부
+   * major_id=NULL) program_courses.major_id로는 이 트랙이 공식 인정한 과목(학과전공과목
+   * + SW융합공통교과목 교차인정분)을 정확히 잡는다(실측: 14개 대상 학과 전부
+   * program_courses에 두 그룹이 다 있다). 그래서 검색 결과가 department_id 소속 과목
+   * 전체가 아니라 이 트랙이 실제로 인정하는 과목으로 좁혀진다.
+   *
+   * 별도의 AI융합 공통교과목 목록(list_ai_common_courses, 이름 매칭 고정 리스트)도
+   * 여전히 같이 받는다 — program_courses에 없는 과목(카탈로그 적재 격차 등)을 놓치지
+   * 않기 위한 보완이다. 렌더링할 때 addCourseResults와 겹치는 id는 걸러 중복 표시를
+   * 막는다(아래 addCourseCommonCourses 렌더 부분 참고). */
+  function selectAddCourseTrack(track: EnrolledTrack) {
+    selectAddCourseProgram(track.department_id, track.major_id, track.track_name);
+    setAddCourseSelectedTrackId(track.enrollment_id);
+    listTrackAiCommonCourses()
+      .then((entries) => {
+        const inCatalog = entries.filter(
+          (entry): entry is typeof entry & { course_id: number } =>
+            entry.in_catalog && entry.course_id !== null,
+        );
+        setAddCourseCommonCourses(
+          inCatalog.map((entry) => ({
+            id: entry.course_id,
+            course_name: entry.course_name,
+            course_code: null,
+            department_id: null,
+            major_id: null,
+            major_name: null,
+            category: entry.category,
+            credits: entry.credits,
+            year: entry.year,
+            semester: entry.semester,
+            requirement_group: null,
+          })),
+        );
+      })
+      .catch(() => setAddCourseCommonCourses([]));
   }
 
   function toggleAddCourseSelected(courseId: number) {
@@ -2472,6 +2581,38 @@ function ConnectedRoadmapPage() {
                       const addCourseCollegeDepartments = addCourseDepartments.filter(
                         (item) => item.college === addCourseCollege,
                       );
+                      // 트랙 빠른 선택은 program_courses 교차인정으로 이미 addCourseResults에
+                      // SW융합공통교과목을 포함해서 가져온다 — 이름 매칭 고정 목록(AI_COMMON_COURSES)
+                      // 결과와 겹치는 과목을 여기서 걸러 중복 표시를 막는다.
+                      const resultCourseIds = new Set(addCourseResults.map((item) => item.id));
+                      const visibleCommonCourses = addCourseCommonCourses.filter(
+                        (course) => !resultCourseIds.has(course.id),
+                      );
+                      // department_id+major_id로 특정 프로그램을 골랐고 그 program_courses에
+                      // 필수/선택 그룹이 잡혀 있으면(예: 부전공 ◎ 필수 3과목 + ♤ 선택 후보),
+                      // 섞어서 보여주지 않고 그룹별로 나눠서 보여준다. 그룹 정보가 하나도 없는
+                      // 일반 브라우징/이름 검색은 그대로 평평하게 보여준다(기존 동작 유지).
+                      const hasRequirementGroups = addCourseResults.some((item) => item.requirement_group);
+                      const requirementGroupOrder = (label: string | null) => {
+                        if (label === "필수") return 0;
+                        if (label === "선택") return 1;
+                        if (label === null) return 3;
+                        return 2;
+                      };
+                      const groupedAddCourseResults = hasRequirementGroups
+                        ? Array.from(
+                            addCourseResults.reduce((byGroup, course) => {
+                              const key = course.requirement_group;
+                              const bucket = byGroup.get(key) ?? [];
+                              bucket.push(course);
+                              byGroup.set(key, bucket);
+                              return byGroup;
+                            }, new Map<string | null, CourseSearchResult[]>()),
+                          )
+                            .sort(([a], [b]) => requirementGroupOrder(a) - requirementGroupOrder(b)
+                              || (a ?? "").localeCompare(b ?? ""))
+                            .map(([label, courses]) => ({ label, courses }))
+                        : [{ label: null, courses: addCourseResults }];
                       return createPortal(
                         <div className="roadmap-add-course-overlay" role="presentation">
                         <div
@@ -2495,6 +2636,61 @@ function ConnectedRoadmapPage() {
                               <X size={16} aria-hidden="true" />
                             </button>
                           </header>
+                          <div className="roadmap-quick-program-row" aria-label="빠른 학과 선택">
+                            {PROGRAM_QUICK_SELECT_ORDER.map(({ type, label }) => {
+                              // AI융합트랙 등록도 UserAcademicProgram.program_type='interdisciplinary'로
+                              // 저장돼서(tracks.py), graduation.programs에 "연계·융합전공"과 같은
+                              // 유형으로 섞여 나온다 — is_ai_track으로 걸러야 실제 연계전공만 남는다.
+                              // 트랙은 아래 별도 "트랙" 버튼(enrolledTracks)에서 다룬다.
+                              // major_id는 null일 수 있다 — 핀테크융합전공처럼 학과 자체가
+                              // 프로그램인 경우가 정상이다(program_courses 테이블 문서 참고).
+                              // department_id만 있으면 버튼을 활성화한다.
+                              const program = academicPrograms.find(
+                                (item) => item.program_type === type && !item.is_ai_track
+                                  && item.department_id != null,
+                              );
+                              const buttonLabel = program
+                                ? `${label}(${program.major_name ?? program.department_name ?? ""})`
+                                : `${label} 없음`;
+                              return (
+                                <button
+                                  key={type}
+                                  type="button"
+                                  disabled={!program}
+                                  className={addCourseSelectedProgramType === type ? "selected" : ""}
+                                  onClick={() => program && program.department_id != null
+                                    // major_name이 없으면(학과 자체가 프로그램인 경우) 버튼 라벨용
+                                    // 문구("부전공" 등)를 여기 넘기면 안 된다 — 이게 major 이름
+                                    // 검색 파라미터로 그대로 나가서 Major.name 조회가 실패하고
+                                    // (matched_major_ids=[]) 결과가 통째로 0건이 된다(courses.py
+                                    // 참고). major_name이 없을 땐 빈 문자열로 — department_id/
+                                    // major_id만으로 좁히게 한다.
+                                    && selectAddCourseProgram(
+                                      program.department_id,
+                                      program.major_id ?? null,
+                                      program.major_name ?? "",
+                                      type,
+                                    )}
+                                >
+                                  {buttonLabel}
+                                </button>
+                              );
+                            })}
+                            {enrolledTracks.length > 0 ? (
+                              enrolledTracks.map((track) => (
+                                <button
+                                  key={track.enrollment_id}
+                                  type="button"
+                                  className={addCourseSelectedTrackId === track.enrollment_id ? "selected" : ""}
+                                  onClick={() => selectAddCourseTrack(track)}
+                                >
+                                  {track.track_name}
+                                </button>
+                              ))
+                            ) : (
+                              <button type="button" disabled>트랙 없음</button>
+                            )}
+                          </div>
                           <div className="timetable-scope">
                             <label>
                               <select
@@ -2504,6 +2700,10 @@ function ConnectedRoadmapPage() {
                                   setAddCourseCollege(event.target.value);
                                   setAddCourseDepartment(null);
                                   setAddCourseMajor("");
+                                  setAddCourseMajorId(null);
+                                  setAddCourseCommonCourses([]);
+                                  setAddCourseSelectedTrackId(null);
+                                  setAddCourseSelectedProgramType(null);
                                 }}
                               >
                                 <option value="">단과대 선택</option>
@@ -2519,6 +2719,10 @@ function ConnectedRoadmapPage() {
                                   const next = addCourseCollegeDepartments.find((item) => item.id === Number(event.target.value));
                                   setAddCourseDepartment(next ?? null);
                                   setAddCourseMajor("");
+                                  setAddCourseMajorId(null);
+                                  setAddCourseCommonCourses([]);
+                                  setAddCourseSelectedTrackId(null);
+                                  setAddCourseSelectedProgramType(null);
                                 }}
                               >
                                 <option value="">{addCourseCollege ? "학부 선택" : "단과대를 먼저"}</option>
@@ -2530,7 +2734,13 @@ function ConnectedRoadmapPage() {
                                 aria-label="전공 선택"
                                 value={addCourseMajor}
                                 disabled={!addCourseDepartment || addCourseDepartment.majors.length === 0}
-                                onChange={(event) => setAddCourseMajor(event.target.value)}
+                                onChange={(event) => {
+                                  setAddCourseMajor(event.target.value);
+                                  setAddCourseMajorId(null);
+                                  setAddCourseCommonCourses([]);
+                                  setAddCourseSelectedTrackId(null);
+                                  setAddCourseSelectedProgramType(null);
+                                }}
                               >
                                 <option value="">
                                   {addCourseDepartment && addCourseDepartment.majors.length > 0 ? "학부 전체 (모든 전공)" : "세부전공 없음"}
@@ -2575,15 +2785,65 @@ function ConnectedRoadmapPage() {
                                 <span>검색어를 줄이거나 이수구분 필터를 해제해 보세요.</span>
                               </li>
                             ) : null}
-                            {addCourseResults.map((course) => {
+                            {groupedAddCourseResults.map(({ label, courses }) => (
+                              <Fragment key={label ?? "__ungrouped"}>
+                                {label ? (
+                                  <li className="semester-group-head">
+                                    <span className="semester-group-dot is-course" aria-hidden="true" />
+                                    <h4>{label} 과목</h4>
+                                    <strong>{courses.length}과목</strong>
+                                  </li>
+                                ) : null}
+                                {courses.map((course) => {
+                                  const alreadyInThisTerm = existingCourseIds.has(course.id);
+                                  // 이 학기 안 중복은 course_id로, 전체(이수완료·대체인정·다른 학기 계획)는
+                                  // 이름으로 본다 — course_id가 없는 이수기록·대체 인정도 걸러야 하므로.
+                                  const alreadyElsewhere = !alreadyInThisTerm
+                                    && alreadyAccountedCourseNames.has(normalizeCourseName(course.course_name));
+                                  const isUnavailable = alreadyInThisTerm || alreadyElsewhere;
+                                  return (
+                                    <li className={isUnavailable ? "timetable-course is-unavailable" : "timetable-course"} key={course.id}>
+                                      <div className="timetable-course-info">
+                                        <strong>
+                                          {course.course_name}
+                                          {alreadyInThisTerm ? <em> · 이미 이 학기에 담김</em> : null}
+                                          {alreadyElsewhere ? <em> · 이미 이수·대체·계획됨</em> : null}
+                                        </strong>
+                                        <div className="timetable-course-tags" aria-label="과목 정보">
+                                          {course.category ? <span>{displayCategory(course.category)}</span> : null}
+                                          {course.major_name ? <span>{course.major_name}</span> : null}
+                                          {course.credits ? <span>{course.credits}학점</span> : null}
+                                          {formatCourseYearTag(course.year) ? <span>{formatCourseYearTag(course.year)}</span> : null}
+                                          {formatCourseSemesterTag(course.semester) ? <span>{formatCourseSemesterTag(course.semester)}</span> : null}
+                                        </div>
+                                      </div>
+                                      <input
+                                        className="semester-course-select-badge"
+                                        type="checkbox"
+                                        checked={addCourseSelectedIds.has(course.id)}
+                                        disabled={isUnavailable}
+                                        aria-label={`${course.course_name} 선택`}
+                                        onChange={() => toggleAddCourseSelected(course.id)}
+                                      />
+                                    </li>
+                                  );
+                                })}
+                              </Fragment>
+                            ))}
+                            {visibleCommonCourses.length > 0 ? (
+                              <li className="semester-group-head">
+                                <span className="semester-group-dot is-course" aria-hidden="true" />
+                                <h4>AI융합 공통교과목</h4>
+                                <strong>{visibleCommonCourses.length}과목</strong>
+                              </li>
+                            ) : null}
+                            {visibleCommonCourses.map((course) => {
                               const alreadyInThisTerm = existingCourseIds.has(course.id);
-                              // 이 학기 안 중복은 course_id로, 전체(이수완료·대체인정·다른 학기 계획)는
-                              // 이름으로 본다 — course_id가 없는 이수기록·대체 인정도 걸러야 하므로.
                               const alreadyElsewhere = !alreadyInThisTerm
                                 && alreadyAccountedCourseNames.has(normalizeCourseName(course.course_name));
                               const isUnavailable = alreadyInThisTerm || alreadyElsewhere;
                               return (
-                                <li className={isUnavailable ? "timetable-course is-unavailable" : "timetable-course"} key={course.id}>
+                                <li className={isUnavailable ? "timetable-course is-unavailable" : "timetable-course"} key={`common-${course.id}`}>
                                   <div className="timetable-course-info">
                                     <strong>
                                       {course.course_name}
@@ -2592,10 +2852,9 @@ function ConnectedRoadmapPage() {
                                     </strong>
                                     <div className="timetable-course-tags" aria-label="과목 정보">
                                       {course.category ? <span>{displayCategory(course.category)}</span> : null}
-                                      {course.major_name ? <span>{course.major_name}</span> : null}
                                       {course.credits ? <span>{course.credits}학점</span> : null}
-                                      {course.year ? <span>{course.year}학년</span> : null}
-                                      {course.semester ? <span>{course.semester}학기 개설</span> : null}
+                                      {formatCourseYearTag(course.year) ? <span>{formatCourseYearTag(course.year)}</span> : null}
+                                      {formatCourseSemesterTag(course.semester) ? <span>{formatCourseSemesterTag(course.semester)}</span> : null}
                                     </div>
                                   </div>
                                   <input

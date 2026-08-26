@@ -4520,6 +4520,39 @@ body.theme-dark .activity-tags span {
   overflow: hidden;
 }
 
+/* 단과대→학부→전공을 하나씩 고르지 않고 등록된 프로그램(주전공/복수전공/부전공/
+   연계전공/트랙)으로 바로 좁히는 빠른 선택 줄. */
+.roadmap-quick-program-row {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 6px;
+}
+
+.roadmap-quick-program-row button {
+  padding: 6px 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 20px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.roadmap-quick-program-row button.selected {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.roadmap-quick-program-row button:disabled {
+  border-color: var(--gray-line);
+  background: var(--gray-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
 .term-add-course-search {
   width: 100%;
   height: 36px;

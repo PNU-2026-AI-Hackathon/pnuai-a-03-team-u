@@ -520,12 +520,30 @@ MINOR_RULES: list[MinorRule] = [
         department_name="정보컴퓨터공학부",
         major_name="컴퓨터공학전공",
         curriculum_year="2026",
-        groups=[{"label": "필수", "type": "all"}],
-        notes="전공기초 중 ◎ 표시 과목만 부전공 인정. 총 21학점.",
+        groups=[
+            {"label": "필수", "type": "all"},
+            {"label": "선택", "type": "min_credits", "min_credits": 10},
+        ],
+        notes=(
+            "◎ 3과목(11학점) 필수이수 + 전공필수 ♤과목 중 10학점 이상 추가 이수, 총 21학점. "
+            "raw_data hwp 원문(2026교육과정표(컴퓨터공학전공).hwp)을 hwp5html로 직접 변환해 "
+            "범례·◎/♤ 마커를 재확인함(2026-08-27). 이전 버전은 course_code 없이 학과명만으로 "
+            "찾아 디자인테크놀로지전공의 동명 과목(더 낮은 course_id)에 잘못 연결돼 있었다."
+        ),
         courses=[
-            (None, "컴퓨터및프로그래밍입문", "필수"),
-            (None, "프로그래밍원리와실습", "필수"),
-            (None, "인터넷과웹기초", "필수"),
+            ("CB1501007", "컴퓨터및프로그래밍입문", "필수"),
+            ("CB1501011", "프로그래밍원리와실습", "필수"),
+            ("CB1501013", "인터넷과웹기초", "필수"),
+            ("CB1501014", "C++프로그래밍과실습", "선택"),
+            ("CB1501015", "공학선형대수학", "선택"),
+            ("CB1501016", "논리회로및설계", "선택"),
+            ("CB1501017", "데이터과학입문", "선택"),
+            ("CB1501018", "논리회로설계및실험", "선택"),
+            ("CB1501019", "자료구조", "선택"),
+            ("CB1501022", "컴퓨터구조", "선택"),
+            ("CB1501021", "운영체제", "선택"),
+            ("CB1501023", "컴퓨터알고리즘", "선택"),
+            ("CB2001125", "캡스톤디자인", "선택"),
         ],
     ),
     MinorRule(
@@ -533,11 +551,35 @@ MINOR_RULES: list[MinorRule] = [
         department_name="정보컴퓨터공학부",
         major_name="인공지능전공",
         curriculum_year="2026",
-        groups=[{"label": "필수", "type": "all"}],
+        groups=[
+            {"label": "필수", "type": "all"},
+            {"label": "선택", "type": "min_credits", "min_credits": 11},
+        ],
+        notes=(
+            "◎ 3과목(10학점)을 포함해 전공기초/전공필수 나머지 11학점 자유 이수, 총 21학점 "
+            "(컴퓨터공학전공과 달리 ♤ 전공필수로 국한하지 않음 — hwp 원문 범례 확인). "
+            "raw_data hwp 원문(2026교육과정표(인공지능전공).hwp) 직접 변환 재확인(2026-08-27). "
+            "이전 버전은 course_code 없이 학과명만으로 찾아 디자인테크놀로지전공/컴퓨터공학전공의 "
+            "동명 과목에 잘못 연결돼 있었고, 'AI 프로그래밍'(공백 포함)은 실제 course_name과 "
+            "안 맞아 애초에 매칭되지도 않았다."
+        ),
         courses=[
-            (None, "컴퓨터및프로그래밍입문", "필수"),
-            (None, "확률통계", "필수"),
-            (None, "AI 프로그래밍", "필수"),
+            ("CA1501028", "컴퓨터및프로그래밍입문", "필수"),
+            ("CA1501029", "확률통계", "필수"),
+            ("CA2001143", "AI프로그래밍", "필수"),
+            ("CA1501006", "이산수학", "선택"),
+            ("CA2001141", "인터넷과웹기초", "선택"),
+            ("CA1501030", "프로그래밍원리와실습", "선택"),
+            ("CA2001145", "데이터과학입문", "선택"),
+            ("CA2001144", "C++프로그래밍과실습", "선택"),
+            ("CA2001627", "인공지능개론", "선택"),
+            ("CA2001150", "머신러닝", "선택"),
+            ("CA2001149", "컴퓨터알고리즘", "선택"),
+            ("CA2001152", "캡스톤디자인", "선택"),
+            ("CA2001147", "자료구조", "선택"),
+            ("CA2001142", "공학선형대수학", "선택"),
+            ("CA2001151", "인공지능세미나특강", "선택"),
+            ("CA2001146", "인공지능수학", "선택"),
         ],
     ),
     MinorRule(
@@ -545,11 +587,31 @@ MINOR_RULES: list[MinorRule] = [
         department_name="정보컴퓨터공학부",
         major_name="디자인테크놀로지전공",
         curriculum_year="2026",
-        groups=[{"label": "필수", "type": "all"}],
-        notes="◎ 2과목 필수 + 전공필수(♤) 중 추가 이수하여 총 21학점.",
+        groups=[
+            {"label": "필수", "type": "all"},
+            {"label": "선택", "type": "min_credits", "min_credits": 11},
+        ],
+        notes=(
+            "◎ 3과목(10학점, 컴퓨터및프로그래밍입문·그래픽기초·3D모델링기초 — 이전 버전은 "
+            "3D모델링기초가 빠져 2과목으로 잘못 적혀 있었다) 필수이수 + 전공필수 ♤과목 중 "
+            "11학점 이상 추가 이수, 총 21학점. raw_data hwp 원문(학부_교육과정(2026).hwp, "
+            "디자인테크놀로지전공 폴더) hwp5html 직접 변환해 재확인(2026-08-27)."
+        ),
         courses=[
-            (None, "컴퓨터및프로그래밍입문", "필수"),
-            (None, "그래픽기초", "필수"),
+            ("DT1501219", "컴퓨터및프로그래밍입문", "필수"),
+            ("DT1501221", "그래픽기초", "필수"),
+            ("DT2002730", "3D모델링기초", "필수"),
+            ("DT2002724", "인터넷과웹기초", "선택"),
+            ("DT2002725", "C++프로그래밍과실습", "선택"),
+            ("DT2002726", "공학선형대수학", "선택"),
+            ("DT2002727", "발상과표현", "선택"),
+            ("DT2002728", "실감미디어스토리텔링", "선택"),
+            ("DT2002729", "감성과색채", "선택"),
+            ("DT2002731", "자료구조", "선택"),
+            ("DT2002732", "실감미디어프로그래밍", "선택"),
+            ("DT2002733", "피지컬컴퓨팅", "선택"),
+            ("DT2002735", "인간과컴퓨터상호작용", "선택"),
+            ("DT2002736", "캡스톤디자인", "선택"),
         ],
     ),
     MinorRule(
@@ -612,12 +674,33 @@ def _find_major(db, department_id: int, major_name: str) -> Major | None:
     return rows[0] if rows else None
 
 
-def _find_course(db, department_id: int, course_code: str | None, course_name: str) -> Course | None:
+def _find_course(
+    db, department_id: int, major_id: int | None, course_code: str | None, course_name: str
+) -> Course | None:
+    """department_id(+course_code)만으로 고르면, 같은 학부 안에 동명이인 과목이 있는
+    학과(정보컴퓨터공학부의 컴퓨터공학전공/인공지능전공/디자인테크놀로지전공처럼 전공별로
+    같은 이름의 입문 과목을 따로 관리하는 경우)에서 course_code 없이는 아무 전공에나
+    붙을 수 있다. 2026-08-27 실사고: 컴퓨터공학전공/인공지능전공 부전공 필수과목이
+    course_id 낮은 디자인테크놀로지전공 동명 과목에 잘못 연결돼 있었다 — 전공을 지정한
+    규칙은 major_id로 반드시 좁힌다.
+    """
     q = select(Course).where(Course.department_id == department_id, Course.course_name == course_name)
     if course_code:
         q = q.where(Course.course_code == course_code)
     rows = db.execute(q.order_by(Course.id)).scalars().all()
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    if major_id is None:
+        return rows[0]
+    for c in rows:
+        if c.major_id == major_id:
+            return c
+    for c in rows:
+        if c.major_id is None:
+            return c
+    # 지정 전공에도, 학과 공통(major_id NULL)에도 없으면 조용히 다른 전공 과목을
+    # 골라 쓰지 않는다 — pc_missing으로 드러내 사람이 확인하게 한다.
+    return None
 
 
 def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
@@ -677,11 +760,13 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
             db.flush()
 
     # program_courses upsert (필수과목 있으면)
+    kept_course_ids: set[int] = set()
     for code, name, group_label in rule.courses:
-        course = _find_course(db, dept.id, code, name)
+        course = _find_course(db, dept.id, major.id if major else None, code, name)
         if not course:
             stats["pc_missing"].append(f"{name} ({code or '-'})")
             continue
+        kept_course_ids.add(course.id)
         pc_q = select(ProgramCourse).where(
             ProgramCourse.department_id == dept.id,
             ProgramCourse.major_id == (major.id if major else None),
@@ -706,6 +791,27 @@ def upsert_rule(db, rule: MinorRule, dry_run: bool) -> dict:
             # autoflush=False라 flush를 안 하면 방금 add한 행이 같은 실행의 이후 조회에 안 보인다.
             # 같은 키를 두 번 처리하면 중복이 생기고, 이제는 유니크 제약 때문에 IntegrityError가 난다.
             db.flush()
+
+    # 더는 rule.courses에 없는 기존 행 정리. rule.courses가 비어 있는 규칙(과목 목록
+    # 미확보 placeholder)은 건드리지 않는다 — 빈 목록이라고 기존 데이터를 지우면 안 된다.
+    # kept_course_ids가 하나도 없으면(과목 조회가 전부 실패) 이것도 정리를 건너뛴다 —
+    # 조회 실패는 대개 코드/이름 오타 같은 버그라, 그걸로 기존 행을 전부 지우면 더 위험하다.
+    stats["pc_removed"] = 0
+    if rule.courses and kept_course_ids:
+        stale = db.execute(
+            select(ProgramCourse).where(
+                ProgramCourse.department_id == dept.id,
+                ProgramCourse.major_id == (major.id if major else None),
+                ProgramCourse.curriculum_year == rule.curriculum_year,
+                ProgramCourse.course_id.notin_(kept_course_ids),
+            )
+        ).scalars().all()
+        for pc in stale:
+            stats["pc_removed"] += 1
+            if not dry_run:
+                db.delete(pc)
+        if stale and not dry_run:
+            db.flush()
     return stats
 
 
@@ -722,6 +828,7 @@ def main():
             s = upsert_rule(db, rule, dry_run)
             all_stats.append(s)
             print(f"  [{s['gr_action']:12s}] {s['program']:60s} +courses={s['pc_upserted']:2d}"
+                  + (f"  -removed={s['pc_removed']}" if s.get('pc_removed') else "")
                   + (f"  missing={len(s['pc_missing'])}" if s['pc_missing'] else ""))
             if s['pc_missing']:
                 for m in s['pc_missing'][:3]:
