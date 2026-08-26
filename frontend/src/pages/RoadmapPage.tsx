@@ -2022,9 +2022,14 @@ function ConnectedRoadmapPage() {
       setAddCourseQuery("");
       setAddCourseResults([]);
     } catch (error) {
-      // 일부만 실패해도 화면이 서버 상태와 어긋나지 않게 다시 읽어온다(삭제 쪽과 동일 패턴).
+      // 일부만 성공하고 일부만 실패할 수 있다 — 화면을 서버 상태로 다시 맞추고
+      // 패널도 닫는다(삭제 쪽 confirmDeleteSelectedItems와 동일 패턴). 안 닫으면
+      // 사용자가 그대로 "담기"를 다시 눌러 이미 성공한 과목을 중복으로
+      // create_roadmap_item 하게 된다(그 엔드포인트엔 중복 방지가 없다).
       setAddCourseError(getApiErrorMessage(error, "과목을 담지 못했습니다."));
       await reloadRoadmap().catch(() => undefined);
+      setAddCourseTermKey(null);
+      setAddCourseSelectedIds(new Set());
     } finally {
       setIsAddingCourses(false);
     }
@@ -2325,6 +2330,7 @@ function ConnectedRoadmapPage() {
 
               {roadmapEditError ? <p className="roadmap-edit-feedback" role="alert">{roadmapEditError}</p> : null}
               {itemDeleteError ? <p className="roadmap-edit-feedback" role="alert">{itemDeleteError}</p> : null}
+              {addCourseError ? <p className="roadmap-edit-feedback" role="alert">{addCourseError}</p> : null}
               <section className="semester-timeline">
                 {timeline.map((term) => (
                   <article className="semester-timeline-card" key={term.key}>
@@ -2618,7 +2624,6 @@ function ConnectedRoadmapPage() {
                               </button>
                             </div>
                           </div>
-                          {addCourseError ? <p className="roadmap-edit-feedback" role="alert">{addCourseError}</p> : null}
                         </div>
                         </div>,
                         document.body,
