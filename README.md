@@ -278,7 +278,7 @@ PR을 열면 변경 범위에 맞는 자동 검사를 실행하고, 팀의 독�
 #### 3.1. 전체시스템 흐름도
 회원가입 직후 학사 정보 동기화까지는 온보딩 위저드가 순서대로 안내하지만(동기화는 건너뛰고 나중에 `내 정보`에서 해도 된다), 그다음 세 화면(졸업요건 분석·성장 로드맵·시간표 작성)은 **순서가 강제되지 않는 독립 화면**이다 — 로그인 후 아무 메뉴로나 바로 들어갈 수 있고, 동기화 전이면 각자 빈 상태 안내를 보여줄 뿐이다.
 
-<p align="center"><img src="docs/assets/planu-user-workflow.svg" alt="Plan-U 사용자 전체 흐름" width="100%" /></p>
+<p align="center"><img src="docs/assets/planu-user-workflow-reference.png" alt="Plan-U 사용자 전체 흐름" width="100%" /></p>
 
 <details>
 <summary>원본 Mermaid 사용자 흐름도 보기</summary>
@@ -312,7 +312,7 @@ flowchart TB
 
 3.1이 화면 단위의 큰 흐름이라면, 아래는 그 흐름 안에서 **AI 에이전트가 실제로 어떤 도구를 몇 단계에 걸쳐 호출하는지**를 보여준다. Plan-U의 두 AI 기능(성장 로드맵 상담, 시간표 추천)은 LLM이 자유롭게 답을 지어내는 게 아니라, 정해진 도구(tool) 집합을 순서대로 호출하며 실제 DB 값을 확인한 뒤에만 답을 만든다 — 그리고 그 답은 하나도 자동으로 저장되지 않고, **사용자가 체크해서 승인한 것만** 반영된다. 두 에이전트는 **③에서 병렬로 갈라지는 독립 화면**이다 — 로드맵을 거치지 않고 바로 시간표 화면에서 AI 추천을 받아도 되고, 그 반대도 된다(3.1 참고).
 
-<p align="center"><img src="docs/assets/planu-ai-workflow.svg" alt="Plan-U AI 에이전트 도구 호출 흐름" width="100%" /></p>
+<p align="center"><img src="docs/assets/planu-ai-workflow-presentation.svg" alt="Plan-U AI 에이전트 도구 호출 흐름" width="100%" /></p>
 
 <details>
 <summary>원본 Mermaid AI 도구 호출 흐름 보기</summary>
