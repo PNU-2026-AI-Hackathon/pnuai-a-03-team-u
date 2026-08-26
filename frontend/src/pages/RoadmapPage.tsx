@@ -2659,10 +2659,16 @@ function ConnectedRoadmapPage() {
                                   disabled={!program}
                                   className={addCourseSelectedProgramType === type ? "selected" : ""}
                                   onClick={() => program && program.department_id != null
+                                    // major_name이 없으면(학과 자체가 프로그램인 경우) 버튼 라벨용
+                                    // 문구("부전공" 등)를 여기 넘기면 안 된다 — 이게 major 이름
+                                    // 검색 파라미터로 그대로 나가서 Major.name 조회가 실패하고
+                                    // (matched_major_ids=[]) 결과가 통째로 0건이 된다(courses.py
+                                    // 참고). major_name이 없을 땐 빈 문자열로 — department_id/
+                                    // major_id만으로 좁히게 한다.
                                     && selectAddCourseProgram(
                                       program.department_id,
                                       program.major_id ?? null,
-                                      program.major_name ?? label,
+                                      program.major_name ?? "",
                                       type,
                                     )}
                                 >
