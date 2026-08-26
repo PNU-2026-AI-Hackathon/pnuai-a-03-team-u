@@ -49,4 +49,3 @@ class SyllabusRagDraftTest(unittest.TestCase):
         self.assertIn("주차계획: 제1주: C++ 개요", draft.content)
         self.assertNotIn("장애학생", draft.content)
         self.assertNotIn("표 머리말", draft.content)
-
