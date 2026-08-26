@@ -30,35 +30,84 @@ class CourseSearchResult(BaseModel):
     course_code: str | None
     department_id: int | None
     major_id: int | None
+    # 목록에서 전공 이름까지 보여주려고 조인해서 채운다(Course 자체엔 없음).
+    major_name: str | None = None
     category: str | None
     credits: float | None
+    # 로드맵 학기 배치 실수를 화면에서 미리 걸러내려고 노출한다(2026-08-26,
+    # 개설 학기 안 맞는 과목이 로드맵에 잘못 꽂힌 실제 사고 이후 추가).
+    year: str | None = None
+    semester: str | None = None
 
     model_config = {"from_attributes": True}
 
 
 @router.get("/search", response_model=list[CourseSearchResult])
 def search_courses(
-    q: str,
-    limit: int = 20,
+    q: str = "",
+    # 학과를 골라 그 학과 과목을 쭉 훑어보는 용도(로드맵 "과목 추가"의 학과별
+    # 브라우징 화면). q 없이 department_id만 와도 결과를 낸다.
+    department_id: int | None = None,
+    # 전공은 이름으로 받는다 — /departments/search가 전공을 이름 목록으로만
+    # 주므로 search_offerings와 같은 관례를 따른다.
+    major: str | None = None,
+    category: str | None = None,
+    limit: int = Query(40, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """과목명으로 검색하되, 사용자 본인 학과/전공 과목을 먼저 보여준다."""
+    """과목명으로 검색하거나(q), 학과를 골라 훑어본다(department_id).
+
+    로드맵 학기 카드에서 바로 여러 과목을 골라 담는 화면을 지원하려고
+    department_id/major/category 브라우징을 추가했다(2026-08-26). search_offerings의
+    program_courses 교차인정(핀테크융합전공처럼 다른 학과 개설 과목을 인정하는
+    경우)은 아직 여기 안 옮겼다 — 그런 과목은 이름 검색(q)으로는 여전히 찾힌다.
+    """
     q = q.strip()
-    if not q:
+    if not q and department_id is None:
         return []
+
+    conditions = []
+    if q:
+        conditions.append(Course.course_name.ilike(f"%{q}%"))
+    if department_id is not None:
+        conditions.append(Course.department_id == department_id)
+    if major and major.strip():
+        major_query = select(Major.id).where(Major.name == major.strip())
+        if department_id is not None:
+            major_query = major_query.where(Major.department_id == department_id)
+        # 이름이 안 맞으면 빈 결과가 맞다 — 조건을 조용히 무시하면 엉뚱한 전공
+        # 과목까지 섞여 나온다(search_offerings와 동일 원칙).
+        conditions.append(Course.major_id.in_(list(db.scalars(major_query))))
+    if category:
+        conditions.append(Course.category == category)
 
     # 본인 학과/전공이면 0, 아니면 1 — 정렬 시 본인 것이 먼저 오게
     own_department_rank = case((Course.department_id == current_user.department_id, 0), else_=1)
     own_major_rank = case((Course.major_id == current_user.major_id, 0), else_=1)
 
-    rows = db.scalars(
-        select(Course)
-        .where(Course.course_name.ilike(f"%{q}%"))
-        .order_by(own_department_rank, own_major_rank, Course.course_name)
+    rows = db.execute(
+        select(Course, Major.name)
+        .outerjoin(Major, Major.id == Course.major_id)
+        .where(*conditions)
+        .order_by(own_department_rank, own_major_rank, Course.year, Course.category, Course.course_name)
         .limit(limit)
     ).all()
-    return rows
+    return [
+        CourseSearchResult(
+            id=course.id,
+            course_name=course.course_name,
+            course_code=course.course_code,
+            department_id=course.department_id,
+            major_id=course.major_id,
+            major_name=major_name,
+            category=course.category,
+            credits=course.credits,
+            year=course.year,
+            semester=course.semester,
+        )
+        for course, major_name in rows
+    ]
 
 
 class OfferingTime(BaseModel):

@@ -1,10 +1,12 @@
 import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FormEvent, KeyboardEvent } from "react";
 import { getApiErrorMessage } from "../api/client";
 import { getActivities } from "../api/profile";
 import type { ActivityRecord } from "../api/profile";
 import {
+  browseCourses,
   chatWithRoadmapAgent,
   confirmRoadmapChanges,
   createRoadmapItem,
@@ -21,8 +23,10 @@ import {
   updateRoadmapItem,
 } from "../api/roadmaps";
 import type { CourseSearchResult, Curriculum, CurriculumCourse, PendingRoadmapChange, Roadmap, RoadmapChatSession, RoadmapConversation, RoadmapItem } from "../api/roadmaps";
-import { getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
-import type { GraduationProgram } from "../api/studentInfo";
+import { searchDepartments } from "../api/departments";
+import type { DepartmentSearchResult } from "../api/departments";
+import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
+import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { isMockAuthEnabled, visibleGrades } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import { useAuth } from "../auth/AuthContext";
@@ -100,6 +104,9 @@ const timelineStatusClassNames: Record<TimelineStatus, string> = {
 };
 
 const timelineCategoryOptions = ["전공 기초", "전공 필수", "전공 선택", "교양 필수", "교양 선택", "자격증", "진로 활동", "학사 일정"];
+
+/** 학기 카드의 "+ 과목 담기" 브라우징 이수구분 칩. courses.category 원 표기(공백 없음)와 맞춘다. */
+const COURSE_BROWSE_CATEGORIES = ["전공기초", "전공필수", "전공선택", "교양필수", "교양선택", "일반선택"];
 const timelineStatusOptions: TimelineStatus[] = ["수강 중", "이수 예정", "준비 중"];
 const emptyTimelineItem: NewTimelineItem = { name: "", category: "전공 선택", status: "이수 예정" };
 
@@ -1271,6 +1278,15 @@ function sameCategory(left: string | null, right: string | null) {
   return (left ?? "").replace(/\s/g, "") === (right ?? "").replace(/\s/g, "");
 }
 
+/** 이수기록('컴퓨터프로그래밍 Ⅰ')과 교육과정('컴퓨터프로그래밍(I)') 표기 차이를 흡수한다.
+ * 백엔드 roadmap_chat.py의 _norm과 같은 규칙(로마자 통일 + 괄호·공백 제거). */
+function normalizeCourseName(name: string | null | undefined): string {
+  if (!name) return "";
+  const roman: Record<string, string> = { "Ⅰ": "I", "Ⅱ": "II", "Ⅲ": "III", "Ⅳ": "IV" };
+  const romanized = [...name].map((ch) => roman[ch] ?? ch).join("");
+  return romanized.replace(/[()\s]/g, "");
+}
+
 const COLLAPSED_CURRICULUM_COURSE_COUNT = 6;
 
 function shouldCollapseCurriculumGroup(title: string) {
@@ -1470,6 +1486,22 @@ function ConnectedRoadmapPage() {
   const [isConfirmingItemDelete, setIsConfirmingItemDelete] = useState(false);
   const [isDeletingItems, setIsDeletingItems] = useState(false);
   const [itemDeleteError, setItemDeleteError] = useState("");
+  /** 학기 카드의 "+" 아이콘으로 켜는 학과별 브라우징 다중 담기. 전체 로드맵 편집(draftItems)과는 별개다. */
+  const [addCourseTermKey, setAddCourseTermKey] = useState<string | null>(null);
+  const [addCourseDepartments, setAddCourseDepartments] = useState<DepartmentSearchResult[]>([]);
+  const [addCourseCollege, setAddCourseCollege] = useState("");
+  const [addCourseDepartment, setAddCourseDepartment] = useState<DepartmentSearchResult | null>(null);
+  const [addCourseMajor, setAddCourseMajor] = useState("");
+  const [addCourseCategory, setAddCourseCategory] = useState("");
+  const [addCourseQuery, setAddCourseQuery] = useState("");
+  const [addCourseResults, setAddCourseResults] = useState<CourseSearchResult[]>([]);
+  const [isAddCourseSearching, setIsAddCourseSearching] = useState(false);
+  const [addCourseSelectedIds, setAddCourseSelectedIds] = useState<Set<number>>(new Set());
+  const [isAddingCourses, setIsAddingCourses] = useState(false);
+  const [addCourseError, setAddCourseError] = useState("");
+  // 이수기록(완료·대체 인정 포함) — 담기 목록에서 이미 이수/대체된 과목을 회색으로 막는 데 쓴다.
+  const [courseRecords, setCourseRecords] = useState<CourseRecord[]>([]);
+  const addCourseModalRef = useRef<HTMLDivElement>(null);
   // 로드맵 메타(제목·목표 졸업연도) 인라인 편집. 항목 편집(draftItems)과는 별개다.
   const [isMetaEditing, setIsMetaEditing] = useState(false);
   const [metaTitleDraft, setMetaTitleDraft] = useState("");
@@ -1682,6 +1714,90 @@ function ConnectedRoadmapPage() {
     };
   }, [addingTerm, courseQuery, selectedCourse]);
 
+  // 학기 카드 "+" 담기 패널의 단과대/학부 목록. 300여 개라 한 번만 받아 캐시한다.
+  useEffect(() => {
+    searchDepartments("", 300)
+      .then(setAddCourseDepartments)
+      .catch(() => setAddCourseDepartments([]));
+  }, []);
+
+  useEffect(() => {
+    if (!addCourseTermKey || (!addCourseDepartment && !addCourseQuery.trim())) {
+      setAddCourseResults([]);
+      setIsAddCourseSearching(false);
+      return;
+    }
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setIsAddCourseSearching(true);
+      browseCourses(addCourseQuery.trim(), {
+        departmentId: addCourseDepartment?.id ?? null,
+        major: addCourseMajor || null,
+        category: addCourseCategory || null,
+      })
+        .then((results) => {
+          if (!cancelled) setAddCourseResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setAddCourseResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsAddCourseSearching(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [addCourseTermKey, addCourseDepartment, addCourseMajor, addCourseCategory, addCourseQuery]);
+
+  // 담기 목록에서 이미 이수/대체된 과목을 걸러내는 데 쓴다.
+  useEffect(() => {
+    getCourseRecords()
+      .then(setCourseRecords)
+      .catch(() => setCourseRecords([]));
+  }, []);
+
+  // 담기 팝업 바깥을 클릭하거나 Esc를 누르면 닫는다.
+  useEffect(() => {
+    if (!addCourseTermKey) return;
+    function handlePointerDown(event: MouseEvent | TouchEvent) {
+      const modal = addCourseModalRef.current;
+      if (modal && event.target instanceof Node && !modal.contains(event.target)) {
+        setAddCourseTermKey(null);
+      }
+    }
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setAddCourseTermKey(null);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [addCourseTermKey]);
+
+  /** 이수 완료(roadmap 동기화분 포함) + 계획 중(전 학기 통틀어) + 대체 인정 과목의 정규화된 이름 집합.
+   * 담기 목록에서 중복 선택을 막는 데 쓴다 — 이 학기 안 중복은 course_id로, 전체는 이름으로 본다. */
+  const alreadyAccountedCourseNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of roadmap?.items ?? []) {
+      if (item.status === "dropped") continue;
+      names.add(normalizeCourseName(item.course_name));
+    }
+    for (const record of courseRecords) {
+      names.add(normalizeCourseName(record.course_name));
+      for (const substitute of record.substitutes ?? []) {
+        names.add(normalizeCourseName(substitute.course_name));
+      }
+    }
+    names.delete("");
+    return names;
+  }, [roadmap, courseRecords]);
+
   useEffect(() => {
     if (activeTab !== "semester") return;
     const strip = requirementStripRef.current;
@@ -1758,6 +1874,9 @@ function ConnectedRoadmapPage() {
     setSelectedDeleteIds(new Set());
     setIsConfirmingItemDelete(false);
     setItemDeleteError("");
+    setAddCourseTermKey(null);
+    setAddCourseSelectedIds(new Set());
+    setAddCourseError("");
   }
 
   function cancelRoadmapEditing() {
@@ -1791,6 +1910,8 @@ function ConnectedRoadmapPage() {
     setSelectedDeleteIds(new Set());
     setIsConfirmingItemDelete(false);
     setItemDeleteError("");
+    // 같은 카드에서 삭제 모드와 담기 패널을 동시에 열어두지 않는다.
+    setAddCourseTermKey(null);
   }
 
   function toggleSelectedDeleteId(itemId: number) {
@@ -1861,6 +1982,52 @@ function ConnectedRoadmapPage() {
     setDraftItems((current) => [...(current ?? []), newItem]);
     resetCoursePicker();
     setRoadmapEditError("");
+  }
+
+  /** 학기 카드 "+" 담기 패널을 열고 닫는다. 전체 로드맵 편집 모드는 안 건드린다. */
+  function toggleAddCoursePanel(termKey: string) {
+    setAddCourseTermKey((current) => (current === termKey ? null : termKey));
+    setAddCourseSelectedIds(new Set());
+    setAddCourseError("");
+    // 같은 카드에서 담기 패널과 삭제 모드를 동시에 열어두지 않는다.
+    setDeleteModeTermKey(null);
+  }
+
+  function toggleAddCourseSelected(courseId: number) {
+    setAddCourseSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  }
+
+  async function confirmAddCourses(term: ApiTimelineTerm) {
+    if (!roadmap || addCourseSelectedIds.size === 0) return;
+    setIsAddingCourses(true);
+    setAddCourseError("");
+    try {
+      await Promise.all(
+        [...addCourseSelectedIds].map((courseId) =>
+          createRoadmapItem(roadmap.id, {
+            course_id: courseId,
+            planned_grade: term.grade,
+            curriculum_semester: term.curriculumSemester,
+          }),
+        ),
+      );
+      await reloadRoadmap();
+      setAddCourseTermKey(null);
+      setAddCourseSelectedIds(new Set());
+      setAddCourseQuery("");
+      setAddCourseResults([]);
+    } catch (error) {
+      // 일부만 실패해도 화면이 서버 상태와 어긋나지 않게 다시 읽어온다(삭제 쪽과 동일 패턴).
+      setAddCourseError(getApiErrorMessage(error, "과목을 담지 못했습니다."));
+      await reloadRoadmap().catch(() => undefined);
+    } finally {
+      setIsAddingCourses(false);
+    }
   }
 
   async function saveRoadmapEditing() {
@@ -2165,16 +2332,31 @@ function ConnectedRoadmapPage() {
                       <div><span>{term.period}</span><h3>{term.term}</h3></div>
                       <div className="semester-timeline-credit">
                         <strong>{summarizeApiTerm(term.items)}</strong>
-                        {!isEditingRoadmap && term.items.some((item) => item.status !== "completed") ? (
-                          <button
-                            type="button"
-                            className={deleteModeTermKey === term.key ? "term-delete-toggle is-active" : "term-delete-toggle"}
-                            aria-label={deleteModeTermKey === term.key ? "이수예정 삭제 모드 닫기" : "이수예정 과목 삭제"}
-                            title={deleteModeTermKey === term.key ? "삭제 모드 닫기" : "이수예정 과목 삭제"}
-                            onClick={() => toggleTermDeleteMode(term.key)}
-                          >
-                            <Trash2 size={14} aria-hidden="true" />
-                          </button>
+                        {!isEditingRoadmap ? (
+                          <div className="semester-timeline-toolbar">
+                            {term.grade && term.curriculumSemester && term.period !== "이수 내역" ? (
+                              <button
+                                type="button"
+                                className={addCourseTermKey === term.key ? "term-add-toggle is-active" : "term-add-toggle"}
+                                aria-label={addCourseTermKey === term.key ? "과목 담기 패널 닫기" : "과목 담기"}
+                                title={addCourseTermKey === term.key ? "과목 담기 패널 닫기" : "과목 담기"}
+                                onClick={() => toggleAddCoursePanel(term.key)}
+                              >
+                                <Plus size={14} aria-hidden="true" />
+                              </button>
+                            ) : null}
+                            {term.items.some((item) => item.status !== "completed") ? (
+                              <button
+                                type="button"
+                                className={deleteModeTermKey === term.key ? "term-delete-toggle is-active" : "term-delete-toggle"}
+                                aria-label={deleteModeTermKey === term.key ? "이수예정 삭제 모드 닫기" : "이수예정 과목 삭제"}
+                                title={deleteModeTermKey === term.key ? "삭제 모드 닫기" : "이수예정 과목 삭제"}
+                                onClick={() => toggleTermDeleteMode(term.key)}
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -2276,6 +2458,172 @@ function ConnectedRoadmapPage() {
                         </div>
                       )
                     ) : null}
+                    {addCourseTermKey === term.key ? (() => {
+                      const existingCourseIds = new Set(
+                        term.items.map((item) => item.course_id).filter((id): id is number => id !== null),
+                      );
+                      const addCourseColleges = [...new Set(addCourseDepartments.map((item) => item.college))].sort();
+                      const addCourseCollegeDepartments = addCourseDepartments.filter(
+                        (item) => item.college === addCourseCollege,
+                      );
+                      return createPortal(
+                        <div className="roadmap-add-course-overlay" role="presentation">
+                        <div
+                          className="roadmap-add-course-modal"
+                          role="dialog"
+                          aria-modal="true"
+                          aria-label={`${term.term} 과목 담기`}
+                          ref={addCourseModalRef}
+                        >
+                          <header className="substitution-modal-head">
+                            <div>
+                              <p className="substitution-modal-eyebrow">과목 담기</p>
+                              <h4>{term.term}</h4>
+                            </div>
+                            <button
+                              type="button"
+                              className="substitution-modal-close"
+                              aria-label="닫기"
+                              onClick={() => toggleAddCoursePanel(term.key)}
+                            >
+                              <X size={16} aria-hidden="true" />
+                            </button>
+                          </header>
+                          <div className="timetable-scope">
+                            <label>
+                              <select
+                                aria-label="단과대 선택"
+                                value={addCourseCollege}
+                                onChange={(event) => {
+                                  setAddCourseCollege(event.target.value);
+                                  setAddCourseDepartment(null);
+                                  setAddCourseMajor("");
+                                }}
+                              >
+                                <option value="">단과대 선택</option>
+                                {addCourseColleges.map((college) => <option value={college} key={college}>{college}</option>)}
+                              </select>
+                            </label>
+                            <label>
+                              <select
+                                aria-label="학부 선택"
+                                value={addCourseDepartment?.id ?? ""}
+                                disabled={!addCourseCollege}
+                                onChange={(event) => {
+                                  const next = addCourseCollegeDepartments.find((item) => item.id === Number(event.target.value));
+                                  setAddCourseDepartment(next ?? null);
+                                  setAddCourseMajor("");
+                                }}
+                              >
+                                <option value="">{addCourseCollege ? "학부 선택" : "단과대를 먼저"}</option>
+                                {addCourseCollegeDepartments.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+                              </select>
+                            </label>
+                            <label>
+                              <select
+                                aria-label="전공 선택"
+                                value={addCourseMajor}
+                                disabled={!addCourseDepartment || addCourseDepartment.majors.length === 0}
+                                onChange={(event) => setAddCourseMajor(event.target.value)}
+                              >
+                                <option value="">
+                                  {addCourseDepartment && addCourseDepartment.majors.length > 0 ? "학부 전체 (모든 전공)" : "세부전공 없음"}
+                                </option>
+                                {(addCourseDepartment?.majors ?? []).map((major) => <option value={major} key={major}>{major}</option>)}
+                              </select>
+                            </label>
+                          </div>
+                          <div className="timetable-filters is-sub">
+                            {COURSE_BROWSE_CATEGORIES.map((category) => (
+                              <button
+                                key={category}
+                                type="button"
+                                className={addCourseCategory === category ? "selected" : ""}
+                                onClick={() => setAddCourseCategory((current) => (current === category ? "" : category))}
+                              >
+                                {displayCategory(category)}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            className="term-add-course-search"
+                            type="search"
+                            autoComplete="off"
+                            placeholder="과목명으로 바로 검색할 수도 있어요"
+                            value={addCourseQuery}
+                            onChange={(event) => setAddCourseQuery(event.target.value)}
+                          />
+                          <ul className="timetable-course-list term-add-course-list">
+                            {isAddCourseSearching ? (
+                              <li className="timetable-empty"><strong>과목을 찾는 중입니다</strong></li>
+                            ) : null}
+                            {!isAddCourseSearching && !addCourseDepartment && !addCourseQuery.trim() ? (
+                              <li className="timetable-empty">
+                                <strong>학부를 먼저 선택해 주세요</strong>
+                                <span>단과대 → 학부를 고르면 그 학부 과목이 쭉 나옵니다. 과목명으로 바로 검색할 수도 있어요.</span>
+                              </li>
+                            ) : null}
+                            {!isAddCourseSearching && (addCourseDepartment || addCourseQuery.trim()) && addCourseResults.length === 0 ? (
+                              <li className="timetable-empty">
+                                <strong>조건에 맞는 과목이 없습니다</strong>
+                                <span>검색어를 줄이거나 이수구분 필터를 해제해 보세요.</span>
+                              </li>
+                            ) : null}
+                            {addCourseResults.map((course) => {
+                              const alreadyInThisTerm = existingCourseIds.has(course.id);
+                              // 이 학기 안 중복은 course_id로, 전체(이수완료·대체인정·다른 학기 계획)는
+                              // 이름으로 본다 — course_id가 없는 이수기록·대체 인정도 걸러야 하므로.
+                              const alreadyElsewhere = !alreadyInThisTerm
+                                && alreadyAccountedCourseNames.has(normalizeCourseName(course.course_name));
+                              const isUnavailable = alreadyInThisTerm || alreadyElsewhere;
+                              return (
+                                <li className={isUnavailable ? "timetable-course is-unavailable" : "timetable-course"} key={course.id}>
+                                  <div className="timetable-course-info">
+                                    <strong>
+                                      {course.course_name}
+                                      {alreadyInThisTerm ? <em> · 이미 이 학기에 담김</em> : null}
+                                      {alreadyElsewhere ? <em> · 이미 이수·대체·계획됨</em> : null}
+                                    </strong>
+                                    <div className="timetable-course-tags" aria-label="과목 정보">
+                                      {course.category ? <span>{displayCategory(course.category)}</span> : null}
+                                      {course.major_name ? <span>{course.major_name}</span> : null}
+                                      {course.credits ? <span>{course.credits}학점</span> : null}
+                                      {course.year ? <span>{course.year}학년</span> : null}
+                                      {course.semester ? <span>{course.semester}학기 개설</span> : null}
+                                    </div>
+                                  </div>
+                                  <input
+                                    className="semester-course-select-badge"
+                                    type="checkbox"
+                                    checked={addCourseSelectedIds.has(course.id)}
+                                    disabled={isUnavailable}
+                                    aria-label={`${course.course_name} 선택`}
+                                    onChange={() => toggleAddCourseSelected(course.id)}
+                                  />
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          <div className="term-add-bar">
+                            <span>{addCourseSelectedIds.size > 0 ? `${addCourseSelectedIds.size}개 선택됨` : "담을 과목을 선택하세요"}</span>
+                            <div className="term-add-bar-actions">
+                              <button type="button" disabled={isAddingCourses} onClick={() => toggleAddCoursePanel(term.key)}>취소</button>
+                              <button
+                                className="term-add-bar-confirm"
+                                type="button"
+                                disabled={addCourseSelectedIds.size === 0 || isAddingCourses}
+                                onClick={() => void confirmAddCourses(term)}
+                              >
+                                {isAddingCourses ? <LoaderCircle size={13} aria-hidden="true" /> : <Plus size={13} aria-hidden="true" />} 담기
+                              </button>
+                            </div>
+                          </div>
+                          {addCourseError ? <p className="roadmap-edit-feedback" role="alert">{addCourseError}</p> : null}
+                        </div>
+                        </div>,
+                        document.body,
+                      );
+                    })() : null}
                     {isEditingRoadmap && term.grade && term.curriculumSemester ? (
                       addingTerm === term.key ? (
                         <div className="add-roadmap-item-form api-course-picker">
