@@ -6,7 +6,7 @@ export function BrandMark({ id }: BrandMarkProps) {
   const shadowId = `${id}-shadow`;
 
   return (
-    <svg className="brand-mark" viewBox="0 0 220 220" aria-hidden="true">
+    <svg className="brand-mark" viewBox="30 30 160 160" aria-hidden="true">
       <defs>
         <filter id={shadowId} x="0" y="0" width="220" height="220" filterUnits="userSpaceOnUse">
           <feDropShadow dx="0" dy="0" stdDeviation="15" floodColor="#2570ff" floodOpacity="0.1" />
