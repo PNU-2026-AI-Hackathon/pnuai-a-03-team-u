@@ -1774,7 +1774,9 @@ class _ToolContext:
         """
         compact = (message or "").replace(" ", "")
         terms = self._remaining_terms()
-        if "다음학기" in compact and terms:
+        # 로드맵은 과거/진행 중인 학기가 아니라 "다음 배치 가능 학기"부터 편성한다.
+        # 그래서 이번 학기·당장 요청도 실제 create 가능한 첫 remaining term으로 해석한다.
+        if any(marker in compact for marker in ("다음학기", "이번학기", "당장", "지금학기")) and terms:
             self.term_fill_target = (
                 str(terms[0]["planned_year"]), terms[0]["planned_semester"]
             )
@@ -1799,6 +1801,31 @@ class _ToolContext:
                         str(match["planned_year"]), match["planned_semester"]
                     )
                 return
+        # "내년 1학기"처럼 학년을 안 적은 표현은 첫 해당 달력연도·학기를 쓴다. "1학기"
+        # 또는 "2학기"만 적으면 남은 학기 중 가장 가까운 해당 학기로 정한다. 이 정책은
+        # ambiguous한 표현을 다른 임의 학기로 흘려보내는 것보다 안전하고 일관적이다.
+        cy, _ = _current_academic_term()
+        target_year = str(cy + 1) if "내년" in compact else None
+        requested_semester = next(
+            (f"{semester}학기" for semester in (1, 2) if f"{semester}학기" in compact),
+            None,
+        )
+        if target_year is not None or requested_semester is not None:
+            match = next(
+                (
+                    term for term in terms
+                    if (target_year is None or str(term["planned_year"]) == target_year)
+                    and (
+                        requested_semester is None
+                        or term["planned_semester"] == requested_semester
+                    )
+                ),
+                None,
+            )
+            if match is not None:
+                self.term_fill_target = (
+                    str(match["planned_year"]), match["planned_semester"]
+                )
 
     def get_graduation_progress(self) -> dict:
         # 부전공/복수전공/융합전공까지 모두 진도 계산해 LLM에 노출

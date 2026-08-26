@@ -3606,6 +3606,31 @@ class FinishGateBehaviourTest(unittest.TestCase):
         self.assertTrue(gate)
         self.assertIn("최소 두 과목", " ".join(gate))
 
+    def test_이번_학기_채우기도_다음_배치_가능_학기로_고정한다(self):
+        """'이번 학기'가 target=None으로 빠져 다른 학기 제안으로 통과하면 안 된다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.add(Course(id=983, course_name="이번학기후보", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "이번 학기 채우기", "terms": [{
+                    "planned_year": "2026", "planned_semester": "2학기",
+                    "planned_grade": 3, "course_ids": [983],
+                }]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "한 과목만 제안"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "다른 후보도 확인했습니다."}, "id": "c3"}],
+        ]
+
+        result, llm = self.run_chat(db, user, roadmap, script, "이번 학기를 채워줘")
+
+        self.assertEqual(3, llm.calls_made)
+        self.assertEqual("다른 후보도 확인했습니다.", result["reply"])
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        self.assertTrue(gate)
+        self.assertIn("최소 두 과목", " ".join(gate))
+
 
 class RemainingTermsEdgeCaseTest(unittest.TestCase):
     """이수기록이 없는 학생에게 남은 학기를 지어내면 안 된다."""
