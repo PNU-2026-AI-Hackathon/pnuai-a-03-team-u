@@ -3575,6 +3575,37 @@ class FinishGateBehaviourTest(unittest.TestCase):
         self.assertTrue(gate)
         self.assertIn("최소 두 과목", " ".join(gate))
 
+    def test_학기_채우기_게이트는_요청_학기만_센다(self):
+        """다른 학기에 넣은 과목으로 요청 학기의 단일 제안을 통과시키면 안 된다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.add_all([
+            Course(id=981, course_name="대상학기후보", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="2"),
+            Course(id=982, course_name="다른학기후보", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="4", semester="1"),
+        ])
+        db.flush()
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "학기 채우기", "terms": [
+                    {"planned_year": "2026", "planned_semester": "2학기",
+                     "planned_grade": 3, "course_ids": [981]},
+                    {"planned_year": "2027", "planned_semester": "1학기",
+                     "planned_grade": 4, "course_ids": [982]},
+                ]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "두 학기에 하나씩 제안"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "대상 학기를 다시 확인했습니다."}, "id": "c3"}],
+        ]
+
+        result, llm = self.run_chat(db, user, roadmap, script, "다음 학기를 채워줘")
+
+        self.assertEqual(3, llm.calls_made)
+        self.assertEqual("대상 학기를 다시 확인했습니다.", result["reply"])
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        self.assertTrue(gate)
+        self.assertIn("최소 두 과목", " ".join(gate))
+
 
 class RemainingTermsEdgeCaseTest(unittest.TestCase):
     """이수기록이 없는 학생에게 남은 학기를 지어내면 안 된다."""

@@ -1757,10 +1757,48 @@ class _ToolContext:
         # propose_term_plan을 이 턴에 한 번이라도 불렀는지. "졸업까지" 요청인데 제안을
         # 하나도 안 만들고 되묻기만 하고 끝내는 걸 막는 게이트가 이 값을 본다.
         self.term_plan_called = False
-        # 특정 학기를 "채워 달라"는 요청에서 한 과목만 제안하고 종료하는 문제를 막기 위한
-        # 관측값. 학기 시작 여유가 6학점 이상일 때만 다과목 게이트를 건다.
-        self.term_plan_accepted_count = 0
-        self.term_plan_had_room_for_multiple = False
+        # 특정 학기를 "채워 달라"는 요청의 대상. 다과목 게이트는 대화 전체가 아니라
+        # 이 (달력 연도, 학기) 하나만 본다 — 다른 학기에 과목 두 개를 넣어 대상 학기의
+        # 한 과목 제안을 통과시키거나, 반대로 다른 학기의 여유 때문에 막으면 안 된다.
+        self.term_fill_target: tuple[str, str] | None = None
+        self.term_fill_target_seen = False
+        self.term_fill_target_had_room_for_multiple = False
+        self.term_fill_target_accepted_count = 0
+
+    def configure_term_fill_target(self, message: str) -> None:
+        """사용자가 지정한 학기를 remaining_terms의 실제 달력 좌표로 확정한다.
+
+        모호한 "더 추가해줘"는 직전 대화 맥락을 안전하게 구조화할 수 없으므로 target을
+        비워 둔다. 그 경우에도 propose_term_plan 호출 자체는 게이트가 강제하지만, 엉뚱한
+        학기의 학점 여유를 근거로 단일 과목을 차단하지는 않는다.
+        """
+        compact = (message or "").replace(" ", "")
+        terms = self._remaining_terms()
+        if "다음학기" in compact and terms:
+            self.term_fill_target = (
+                str(terms[0]["planned_year"]), terms[0]["planned_semester"]
+            )
+            return
+        for grade in range(1, 5):
+            for semester in (1, 2):
+                if (
+                    f"{grade}학년{semester}학기" not in compact
+                    and f"{grade}-{semester}" not in compact
+                ):
+                    continue
+                match = next(
+                    (
+                        term for term in terms
+                        if term["planned_grade"] == grade
+                        and term["planned_semester"] == f"{semester}학기"
+                    ),
+                    None,
+                )
+                if match is not None:
+                    self.term_fill_target = (
+                        str(match["planned_year"]), match["planned_semester"]
+                    )
+                return
 
     def get_graduation_progress(self) -> dict:
         # 부전공/복수전공/융합전공까지 모두 진도 계산해 LLM에 노출
@@ -2389,7 +2427,7 @@ class _ToolContext:
             if key:
                 planned_name_keys.add(key)
         for change in self.pending_changes:
-            if change.action != "create":
+            if change.action not in {"create", "update"}:
                 continue
             if change.course_id is not None:
                 planned_course_ids.add(change.course_id)
@@ -2939,8 +2977,13 @@ class _ToolContext:
             credits_before = self._planned_credits_by_term().get(
                 (planned_year, planned_semester), 0.0
             )
-            if cap - credits_before >= 6:
-                self.term_plan_had_room_for_multiple = True
+            is_term_fill_target = self.term_fill_target == (
+                str(planned_year), planned_semester
+            )
+            if is_term_fill_target:
+                self.term_fill_target_seen = True
+                if cap - credits_before >= 6:
+                    self.term_fill_target_had_room_for_multiple = True
             planned_grade = term.get("planned_grade")
             course_ids = term.get("course_ids") or []
             term_reason = term.get("reason") or reason or "졸업까지 남은 학기 일괄 계획"
@@ -3003,7 +3046,8 @@ class _ToolContext:
                 else:
                     accepted.append({**entry, "change_id": result.get("change_id")})
                     accepted_count += 1
-                    self.term_plan_accepted_count += 1
+                    if is_term_fill_target:
+                        self.term_fill_target_accepted_count += 1
 
             planned_after = self._planned_credits_by_term().get(
                 (planned_year, planned_semester), 0.0
@@ -3648,6 +3692,8 @@ def run_roadmap_chat(
 
         llm = _build_llm()
         ctx = _ToolContext(db, user, roadmap)
+        if "term_fill_request" in applied_rules:
+            ctx.configure_term_fill_target(message)
 
         # 대시보드 필터·breakdown용 metadata (개인정보 아님).
         primary_prog = db.scalars(
@@ -3744,12 +3790,22 @@ def run_roadmap_chat(
                             )
                         elif (
                             expects_term_fill
-                            and ctx.term_plan_had_room_for_multiple
-                            and ctx.term_plan_accepted_count < 2
+                            and ctx.term_fill_target is not None
+                            and not ctx.term_fill_target_seen
+                        ):
+                            gate_reason = (
+                                "사용자가 지정한 학기에 대한 편성안이 없다. 다른 학기에 과목을 "
+                                "넣어 대체하지 말고, 요청 학기의 course_ids를 담아 "
+                                "propose_term_plan을 다시 호출해라."
+                            )
+                        elif (
+                            expects_term_fill
+                            and ctx.term_fill_target_had_room_for_multiple
+                            and ctx.term_fill_target_accepted_count < 2
                         ):
                             gate_reason = (
                                 "이 학기는 시작 시 6학점 이상 여유가 있었는데 새 과목이 "
-                                f"{ctx.term_plan_accepted_count}개만 제안됐다. search_courses로 이미 "
+                                f"{ctx.term_fill_target_accepted_count}개만 제안됐다. search_courses로 이미 "
                                 "이수·대체 인정·기존 계획을 제외한 다른 후보를 찾아 최소 두 과목을 "
                                 "함께 propose_term_plan에 넣어라. 실제 후보가 더 없다면 그 검색 결과를 "
                                 "확인한 뒤에만 finish_response 해라."
