@@ -147,11 +147,19 @@ def evaluate_program(
         label = grp.get("label", "")
         rule_type = grp.get("type", "unknown")
         matched_here = by_label.get(label, [])
+        # 그룹 임계값 키 이름이 시드 스크립트마다 다르다 — seed_minor_program_rules.py는
+        # "n"/"min_credits"를, seed_dual_and_special_2026_08_10.py는 "required_n"/
+        # "required_credits"를 쓴다. 코드가 "n"/"min_credits"만 읽던 시절엔 후자 쪽
+        # 136개 그룹(거의 모든 복수전공 "최소전공 합계" 포함)의 임계값이 전부 0으로
+        # 취급돼 이수량과 무관하게 항상 "완료"로 잘못 나오고 있었다(2026-08-27,
+        # 핀테크융합전공 연계전공 판정 재확인 중 발견). 두 키를 다 받아들인다.
+        group_n = grp.get("n", grp.get("required_n"))
+        group_min_credits = grp.get("min_credits", grp.get("required_credits"))
         ge = GroupEval(
             label=label,
             rule_type=rule_type,
-            required_n=grp.get("n"),
-            required_credits=grp.get("min_credits"),
+            required_n=group_n,
+            required_credits=group_min_credits,
             matched_courses=[c.course_name for c, _ in matched_here],
         )
         # 이 그룹의 전체 인정 과목 (참고용, min_courses에서 후보 개수 대비)
@@ -161,18 +169,18 @@ def evaluate_program(
             if not ge.completed:
                 ge.shortage = f"이수 {len(matched_here)}/{total_in_group} (전체 필수)"
         elif rule_type == "min_courses":
-            n = grp.get("n", 0)
+            n = group_n or 0
             ge.completed = len(matched_here) >= n
             if not ge.completed:
                 ge.shortage = f"이수 {len(matched_here)}/{n} ({total_in_group}개 후보 중)"
         elif rule_type == "min_credits":
-            min_c = grp.get("min_credits", 0)
+            min_c = group_min_credits or 0
             earned = sum((c.credits or 0) for c, _ in matched_here)
             ge.completed = earned >= min_c
             if not ge.completed:
                 ge.shortage = f"이수 {earned:.1f}/{min_c} 학점"
         elif rule_type == "min_distinct_departments":
-            k = grp.get("n", 0)
+            k = group_n or 0
             distinct_depts = {c.department_id for c, _ in matched_here if c.department_id}
             ge.completed = len(distinct_depts) >= k
             if not ge.completed:
