@@ -1688,6 +1688,38 @@ class CriticalMissingRequiredTest(unittest.TestCase):
         result = ctx._critical_missing_required(next_planned_semester="2학기")
         self.assertEqual(0, len(result))
 
+    def test_skips_planned_from_roadmap_items(self):
+        """로드맵 status='planned'(미래 학기에 이미 계획) 항목도 위험 아님으로 본다.
+
+        고치기 전엔 status=='completed'만 봐서, 이미 4학년 1학기에 계획해 둔 필수를
+        상담 턴마다 '아직 미이수'라며 다시 위험 경고·재추천했다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=107, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=107,
+                                  course_name="자료구조", planned_grade=4,
+                                  planned_year="2028", planned_semester="1학기",
+                                  status="planned"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(0, len(result))
+
+    def test_still_flags_dropped_from_roadmap_items(self):
+        """status='dropped'(취소/제외)까지 이수로 쳐주면 안 된다 — != 'dropped'로
+        고쳤지 상태 검사 자체를 없앤 게 아니라는 걸 고정한다."""
+        db = self.make_db()
+        ctx = self.make_ctx(db)
+        db.add(Course(id=108, course_name="자료구조", department_id=10, major_id=20,
+                      category="전공필수", credits=3.0, year="2", semester="1"))
+        db.add(CourseRoadmapItem(roadmap_id=ctx.roadmap.id, course_id=108,
+                                  course_name="자료구조", planned_grade=2,
+                                  status="dropped"))
+        db.flush()
+        result = ctx._critical_missing_required(next_planned_semester="2학기")
+        self.assertEqual(1, len(result))
+        self.assertEqual("자료구조", result[0]["course_name"])
+
     def test_skips_all_semester_courses(self):
         """전학기·1,2 개설(계절수업 등)은 다음 학기든 언제든 미룰 수 있어 위험 아님."""
         db = self.make_db()
@@ -3571,6 +3603,62 @@ class FinishGateBehaviourTest(unittest.TestCase):
 
         self.assertEqual(3, llm.calls_made)
         self.assertEqual("후보를 더 확인했습니다.", result["reply"])
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        self.assertTrue(gate)
+        self.assertIn("최소 두 과목", " ".join(gate))
+
+    def test_학기_채우기_게이트는_요청_학기만_센다(self):
+        """다른 학기에 넣은 과목으로 요청 학기의 단일 제안을 통과시키면 안 된다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.add_all([
+            Course(id=981, course_name="대상학기후보", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="3", semester="2"),
+            Course(id=982, course_name="다른학기후보", department_id=10, major_id=20,
+                   category="전공선택", credits=3.0, year="4", semester="1"),
+        ])
+        db.flush()
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "학기 채우기", "terms": [
+                    {"planned_year": "2026", "planned_semester": "2학기",
+                     "planned_grade": 3, "course_ids": [981]},
+                    {"planned_year": "2027", "planned_semester": "1학기",
+                     "planned_grade": 4, "course_ids": [982]},
+                ]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "두 학기에 하나씩 제안"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "대상 학기를 다시 확인했습니다."}, "id": "c3"}],
+        ]
+
+        result, llm = self.run_chat(db, user, roadmap, script, "다음 학기를 채워줘")
+
+        self.assertEqual(3, llm.calls_made)
+        self.assertEqual("대상 학기를 다시 확인했습니다.", result["reply"])
+        gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
+        self.assertTrue(gate)
+        self.assertIn("최소 두 과목", " ".join(gate))
+
+    def test_이번_학기_채우기도_다음_배치_가능_학기로_고정한다(self):
+        """'이번 학기'가 target=None으로 빠져 다른 학기 제안으로 통과하면 안 된다."""
+        db = self.make_db()
+        user, roadmap = self.make_student(db)
+        db.add(Course(id=983, course_name="이번학기후보", department_id=10, major_id=20,
+                      category="전공선택", credits=3.0, year="3", semester="2"))
+        db.flush()
+        script = [
+            [{"name": "propose_term_plan", "args": {
+                "reason": "이번 학기 채우기", "terms": [{
+                    "planned_year": "2026", "planned_semester": "2학기",
+                    "planned_grade": 3, "course_ids": [983],
+                }]}, "id": "c1"}],
+            [{"name": "finish_response", "args": {"message": "한 과목만 제안"}, "id": "c2"}],
+            [{"name": "finish_response", "args": {"message": "다른 후보도 확인했습니다."}, "id": "c3"}],
+        ]
+
+        result, llm = self.run_chat(db, user, roadmap, script, "이번 학기를 채워줘")
+
+        self.assertEqual(3, llm.calls_made)
+        self.assertEqual("다른 후보도 확인했습니다.", result["reply"])
         gate = [m for m in llm.tool_messages if "delivered" in m and "false" in m.lower()]
         self.assertTrue(gate)
         self.assertIn("최소 두 과목", " ".join(gate))
