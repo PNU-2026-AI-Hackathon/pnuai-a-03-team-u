@@ -6,8 +6,11 @@ export type CourseSearchResult = {
   course_code: string | null;
   department_id: number | null;
   major_id: number | null;
+  major_name: string | null;
   category: string | null;
   credits: number | null;
+  year: string | null;
+  semester: string | null;
 };
 
 export type RoadmapItem = {
@@ -153,9 +156,30 @@ export async function getCurrentRoadmap() {
   return data;
 }
 
+export type CourseBrowseFilters = {
+  departmentId?: number | null;
+  major?: string | null;
+  category?: string | null;
+  limit?: number;
+};
+
 export async function searchCourses(query: string, limit = 8) {
   const { data } = await apiClient.get<CourseSearchResult[]>("/courses/search", {
     params: { q: query, limit },
+  });
+  return data;
+}
+
+/** 학과를 골라 그 학과 과목을 쭉 훑어본다. query 없이 departmentId만으로도 결과가 온다. */
+export async function browseCourses(query: string, filters: CourseBrowseFilters = {}) {
+  const { data } = await apiClient.get<CourseSearchResult[]>("/courses/search", {
+    params: {
+      q: query,
+      department_id: filters.departmentId ?? undefined,
+      major: filters.major || undefined,
+      category: filters.category || undefined,
+      limit: filters.limit ?? 40,
+    },
   });
   return data;
 }
