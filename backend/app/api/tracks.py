@@ -23,7 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
-from app.domains.academics.tracks import find_ai_tracks_for_department, is_ai_track
+from app.domains.academics.tracks import (
+    find_ai_tracks_for_department, is_ai_track, list_ai_common_courses,
+)
+from app.domains.courses.models import Course
 from app.domains.academics.models import (
     Department, GraduationRequirement, Major, UserAcademicProgram,
 )
@@ -63,6 +66,27 @@ class EnrolledTrack(BaseModel):
     earned_credits: float
     remaining_credits: float
     completed: bool
+
+
+class AiCommonCourseResult(BaseModel):
+    """AI융합 공통교과목 한 줄. 로드맵 "과목 담기" 화면이 department_id/major_id로는
+    이 과목들을 못 찾는다 — 트랙 공통과목은 특정 학과 소속이 아니라 이름 목록으로만
+    관리되기 때문이다(`domains/academics/tracks.py` 참고). course_id가 없으면
+    (in_catalog=False) 로드맵에 담을 수 없다 — 우리 카탈로그 적재가 아직 안 된 것."""
+
+    course_id: int | None
+    course_name: str
+    category: str | None
+    credits: float | None
+    # 담기 화면이 정규 학기 과목과 같은 방식으로 배치 실수를 미리 걸러낼 수 있게
+    # 노출한다. AI융합 공통교과목은 대부분 courses.year/semester가 "전학년"/"전학기"다
+    # (실측) — 학년/학기 제한 없이 아무 때나 들어도 된다는 뜻이라 정규 1/2학기처럼
+    # 엄격히 안 막아도 된다.
+    year: str | None
+    semester: str | None
+    module: int
+    summary: str
+    in_catalog: bool
 
 
 class EnrollRequest(BaseModel):
@@ -129,6 +153,37 @@ def preview_tracks(department: str, db: Session = Depends(get_db)) -> list[Track
             ai_common_credits=rules.get("ai_common_credits", {}),
         ))
     return out
+
+
+@router.get("/ai-common-courses", response_model=list[AiCommonCourseResult])
+def list_track_ai_common_courses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[AiCommonCourseResult]:
+    """AI융합트랙의 "AI융합 공통교과목 6~9학점" 목록. 학생마다 다르지 않은
+    고정 목록이라 department_id 등 스코프 파라미터가 없다 — 로그인만 요구한다."""
+    entries = list_ai_common_courses(db)
+    course_ids = [entry["course_id"] for entry in entries if entry.get("course_id") is not None]
+    # list_ai_common_courses 자체는 year/semester를 안 채운다(roadmap_chat 프롬프트용
+    # 요약이라 필요 없었음) — 담기 화면 배치 검증용으로 여기서 따로 붙인다.
+    courses_by_id = {
+        course.id: course
+        for course in db.scalars(select(Course).where(Course.id.in_(course_ids)))
+    } if course_ids else {}
+    return [
+        AiCommonCourseResult(
+            course_id=entry.get("course_id"),
+            course_name=entry["course_name"],
+            category=entry.get("category"),
+            credits=entry.get("credits"),
+            year=courses_by_id[entry["course_id"]].year if entry.get("course_id") in courses_by_id else None,
+            semester=courses_by_id[entry["course_id"]].semester if entry.get("course_id") in courses_by_id else None,
+            module=entry["module"],
+            summary=entry["summary"],
+            in_catalog=entry["in_catalog"],
+        )
+        for entry in entries
+    ]
 
 
 @router.get("/available", response_model=list[AvailableTrack])

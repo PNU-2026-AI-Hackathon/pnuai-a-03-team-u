@@ -30,6 +30,25 @@ export type EnrolledTrack = {
   completed: boolean;
 };
 
+/**
+ * AI융합 공통교과목 한 줄. 특정 학과 소속이 아니라 이름 목록으로만 관리되는
+ * 과목이라(department_id/major_id 없음) 로드맵 "학과 훑어보기"로는 못 찾는다 —
+ * 트랙 빠른 선택에서 department/major 필터와 별도로 이 목록을 따로 받아 합친다.
+ * course_id가 null이면(in_catalog=false) 카탈로그 적재가 안 된 것이라 담을 수 없다.
+ */
+export type AiCommonCourse = {
+  course_id: number | null;
+  course_name: string;
+  category: string | null;
+  credits: number | null;
+  /** 대부분 "전학년"/"전학기"(학년·학기 제한 없음) — 실제 값이 이렇게 온다. */
+  year: string | null;
+  semester: string | null;
+  module: number;
+  summary: string;
+  in_catalog: boolean;
+};
+
 export type TrackPreview = {
   department_id: number;
   department_name: string;
@@ -58,6 +77,12 @@ export async function listAvailableTracks() {
 
 export async function listEnrolledTracks() {
   const { data } = await apiClient.get<EnrolledTrack[]>("/me/tracks/enrolled");
+  return data;
+}
+
+/** 학생마다 다르지 않은 고정 목록이라 스코프 파라미터가 없다. */
+export async function listTrackAiCommonCourses() {
+  const { data } = await apiClient.get<AiCommonCourse[]>("/me/tracks/ai-common-courses");
   return data;
 }
 
