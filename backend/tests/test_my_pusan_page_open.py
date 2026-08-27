@@ -18,6 +18,7 @@ from app.ingestion.crawlers.my_pusan_extracurricular import (
     _LEGACY_LOGIN_BUTTON_SELECTOR,
     _LEGACY_LOGIN_ID_SELECTOR,
     _LEGACY_LOGIN_PW_SELECTOR,
+    _LEGACY_LOGIN_TAB_SELECTOR,
     _login_to_legacy_my_pusan,
     _open_certificate_page,
 )
@@ -96,15 +97,25 @@ class _LegacyLoginPage:
     def fill(self, selector, value):
         self.events.append(("fill", selector, value))
 
-    def click(self, selector):
+    def click(self, selector, **_kwargs):
         self.events.append(("click", selector))
         self.url = "https://my.pusan.ac.kr/"
+
+    def locator(self, selector):
+        # _dismiss_login_popups가 부르는 진입점. 팝업이 없는 상태를 흉내낸다.
+        self.events.append(("locator", selector))
+        return _NoopLocator()
 
     def wait_for_load_state(self, state, **_kwargs):
         self.events.append(("load", state))
 
     def wait_for_timeout(self, ms):
         self.events.append(("sleep", ms))
+
+
+class _NoopLocator:
+    def evaluate_all(self, _script):
+        return 0
 
 
 class OpenCertificatePageTest(unittest.TestCase):
@@ -116,11 +127,29 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertEqual(("goto", LEGACY_MY_LOGIN_URL, {
             "wait_until": "domcontentloaded", "timeout": 10_000,
         }), page.events[0])
+        self.assertIn(("wait", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
+        self.assertIn(("click", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
+        # 로그인 공지 팝업이 `#idpwTab`을 덮으면 탭 click이 30초 타임아웃한다.
+        # 탭을 누르기 전에 팝업 닫기를 먼저 시도해야 한다.
+        self.assertLess(
+            next(i for i, e in enumerate(page.events) if e[0] == "locator"),
+            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
+        )
         self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR), page.events)
         self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password"), page.events)
         self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
+        # 구형 HTML은 폼이 처음에 숨겨져 있다. 순서가 뒤집히면 visible wait가
+        # 타임아웃해 이번 장애가 그대로 재발한다.
+        self.assertLess(
+            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
+            page.events.index(("wait", _LEGACY_LOGIN_ID_SELECTOR)),
+        )
+        self.assertLess(
+            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
+            page.events.index(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001")),
+        )
 
     def test_normal_load_returns_none(self):
         page = _FakePage([_CERT] * 10, ready_at=2)
