@@ -331,7 +331,10 @@ def _official_onestop_fallback(
     """
     # 일부 단위 테스트와 아직 마이그레이션하지 않은 개발 DB에는 이 테이블이 없다.
     # 그런 환경에서 "기준 없음" 경로 자체가 500이 되면 안 되므로 기존 동작을 유지한다.
-    if not inspect(db.get_bind()).has_table(StudentGraduationCategory.__tablename__):
+    # Engine을 inspect하면 SQLite in-memory 환경에서 별도 연결의 rollback이 현재
+    # 트랜잭션을 되돌릴 수 있다. 현재 세션 연결을 검사해 진행 중인 대화/제안 쓰기를
+    # 건드리지 않는다.
+    if not inspect(db.connection()).has_table(StudentGraduationCategory.__tablename__):
         return None
 
     # One-Stop 표에는 신청학과/전공 식별자가 없다. 특히 연합·연계·융합전공은 앱에서
