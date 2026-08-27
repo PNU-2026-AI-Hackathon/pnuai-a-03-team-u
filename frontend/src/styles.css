@@ -4568,10 +4568,6 @@ body.theme-dark .activity-tags span {
   cursor: pointer;
 }
 
-.fusion-programs-modal {
-  gap: 12px;
-}
-
 .fusion-programs-contact {
   flex: none;
   padding: 10px 12px;
@@ -4635,6 +4631,17 @@ body.theme-dark .activity-tags span {
   background: var(--blue-soft);
   color: var(--blue);
   font-weight: 700;
+}
+
+/* 다크 테마: --panel 카드가 --panel 모달 바탕에 묻히고 --gray-line 테두리가
+   거의 안 보여서, substitution-modal 다크 처리와 같은 톤으로 살짝 띄운다. */
+body.theme-dark .fusion-program-card {
+  border-color: #2b3440;
+  background: #161b22;
+}
+
+body.theme-dark .fusion-program-card-head h5 {
+  color: #e6edf3;
 }
 
 .term-add-course-search {
