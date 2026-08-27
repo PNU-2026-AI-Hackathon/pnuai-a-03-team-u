@@ -50,9 +50,21 @@ def _seed_rows() -> list[dict]:
         return list(csv.DictReader(f))
 
 
+# AIS 위젯이 참여학과별 "동일과목"을 각 학과 코드로 다 나열하는 단위. 예: 반도체융합전공
+# (347200)의 '반도체공학'은 반도체공학전공·전자·전기·광메카트로닉스가 각각 개설해서
+# SV2001333/SV2001369/SV2001837로 갈린다(pnusemi 교육과정표 PDF Ⅳ절과 일치). 접미사
+# 유실 버그가 아니라 실데이터라, import_courses_from_ais는 --allow-name-collisions로 넣는다
+# (2026-08-27, raw_data/manual_staging/06_interdisciplinary_majors/README.md).
+_KNOWN_ALIAS_GROUP_UNITS = {"347200"}
+
+
 def test_seed_has_no_suffix_dropped_collisions():
     """같은 단위·같은 개설 주체에 동명 과목이 있으면 접미사가 빠진 것이다."""
-    collisions = find_suffix_dropped_collisions(_seed_rows())
+    rows = [
+        r for r in _seed_rows()
+        if r.get("ais_dept_code", "").strip() not in _KNOWN_ALIAS_GROUP_UNITS
+    ]
+    collisions = find_suffix_dropped_collisions(rows)
     assert collisions == [], (
         "과목명 접미사(I/II 등)가 빠진 것으로 의심되는 행이 있다. AIS 원문을 다시 확인하라:\n"
         + "\n".join(f"  - {c}" for c in collisions)
