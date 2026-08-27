@@ -382,6 +382,51 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
         self.assertEqual("portal", saved[0].source)
         self.assertEqual({"portal", "fusion_plan"}, {program.source for program in programs})
 
+    def test_authoritative_snapshot_inactivates_missing_portal_program_only(self):
+        """One-Stop 현재 학적 표에서 빠진 부전공은 활성 졸업판정 대상에 남으면 안 된다.
+
+        단, 로드맵에서 따로 저장한 계획은 실제 학적이 아니므로 포털 스냅샷으로
+        비활성화하지 않는다.
+        """
+        db = self.make_db()
+        old_portal = map_academic_program_registrations(
+            db, 1, [["1", "부전공", "경영학과", "N", "선택"]]
+        )[0]
+        db.add(UserAcademicProgram(
+            user_id=1,
+            department_id=old_portal.department_id,
+            major_id=old_portal.major_id,
+            program_type="minor",
+            status="active",
+            source="fusion_plan",
+        ))
+        db.commit()
+
+        saved = map_academic_program_registrations(
+            db,
+            1,
+            [["No", "학적신청구분", "학과", "취소여부", ""],
+             ["1", "복수전공", "수학과", "N", "선택"]],
+            reconcile_portal_snapshot=True,
+        )
+        db.commit()
+
+        self.assertEqual(["dual"], [program.program_type for program in saved])
+        self.assertEqual("inactive", old_portal.status)
+        plan = db.query(UserAcademicProgram).filter_by(source="fusion_plan").one()
+        self.assertEqual("active", plan.status)
+
+    def test_missing_or_malformed_table_never_inactivates_programs(self):
+        """표가 비었거나 구조가 바뀐 실패를 '모든 전공 해제'로 해석하면 안 된다."""
+        db = self.make_db()
+        portal = map_academic_program_registrations(
+            db, 1, [["1", "복수전공", "수학과", "N", "선택"]]
+        )[0]
+        db.commit()
+
+        map_academic_program_registrations(db, 1, [], reconcile_portal_snapshot=False)
+        self.assertEqual("active", portal.status)
+
 
 if __name__ == "__main__":
     unittest.main()

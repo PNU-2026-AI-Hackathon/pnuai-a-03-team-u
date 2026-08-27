@@ -150,7 +150,11 @@ def _resolve_registration_hierarchy(
 
 
 def map_academic_program_registrations(
-    db: Session, user_id: int, registration_rows: list[list[str]]
+    db: Session,
+    user_id: int,
+    registration_rows: list[list[str]],
+    *,
+    reconcile_portal_snapshot: bool = False,
 ) -> list[UserAcademicProgram]:
     """졸업예정정보(menuCD=000000000000089) 테이블 0의 학적신청 행을
     UserAcademicProgram(주전공/복수전공/부전공/연합전공)에 upsert한다.
@@ -158,8 +162,14 @@ def map_academic_program_registrations(
     이 정보는 성적표나 졸업요건표에는 없고 이 페이지에서만 확인 가능하다.
     행 형식 예: ['1', '주전공', '의생명융합공학부 데이터사이언스전공', 'N', '선택']
     (마지막 칸은 UI 버튼 라벨이 섞여 들어온 것이라 사용하지 않는다.)
+
+    `reconcile_portal_snapshot=True`는 호출자가 실제 표의 헤더까지 정상적으로
+    받았을 때만 준다. 이 경우 이번 표에 없는 기존 포털 출처 부·복수·연계전공은
+    ``inactive``로 바꾼다. 파싱 실패/부분 응답을 빈 스냅샷으로 오인해 학적을 지우지
+    않으며, 로드맵에서 사용자가 저장한 ``source='fusion_plan'``은 절대 건드리지 않는다.
     """
     saved: list[UserAcademicProgram] = []
+    seen_portal_programs: set[tuple[str, int | None, int | None]] = set()
     for row in registration_rows:
         if len(row) < 3:
             continue
@@ -196,7 +206,30 @@ def map_academic_program_registrations(
         program.department_id = department_id
         program.major_id = major_id
         program.source = "portal"
+        program.status = "active"
         saved.append(program)
+        seen_portal_programs.add((program_type, department_id, major_id))
+
+    # 주전공은 학생기본정보 표가 별도 authoritative source라 여기서 비활성화하지
+    # 않는다. 나머지는 학적신청 표가 매번 현재 수강생의 전체 목록을 주므로, 이번
+    # 스냅샷에 없는 과거 portal/legacy 행을 활성 상태로 남겨두면 졸업 판정이 중복된다.
+    if reconcile_portal_snapshot:
+        existing_portal_programs = (
+            db.query(UserAcademicProgram)
+            .filter(
+                UserAcademicProgram.user_id == user_id,
+                UserAcademicProgram.program_type != "primary",
+                or_(
+                    UserAcademicProgram.source.is_(None),
+                    UserAcademicProgram.source == "portal",
+                ),
+            )
+            .all()
+        )
+        for program in existing_portal_programs:
+            identity = (program.program_type, program.department_id, program.major_id)
+            if identity not in seen_portal_programs:
+                program.status = "inactive"
 
     db.flush()
     return saved

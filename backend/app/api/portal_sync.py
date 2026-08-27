@@ -298,6 +298,13 @@ def sync_portal_data(
         ) from exc
 
     registration_rows = _table_rows_as_text(expected_info["tables"][0]) if expected_info["tables"] else []
+    # 학적신청 표의 헤더까지 실제로 확인한 경우에만 "없는 행=해제됨"으로 해석한다.
+    # 크롤러가 빈/다른 표를 주었을 때 기존 부·복수·연계전공을 잘못 비활성화하지 않기
+    # 위한 안전장치다.
+    registration_snapshot_is_complete = any(
+        any(cell.strip() == "학적신청구분" for cell in row)
+        for row in registration_rows
+    )
     expected_normalized = normalize_graduation_expected_info(expected_info)
 
     # 학교 포털 비밀번호는 저장하지 않는다 (프론트 회원가입 온보딩 문구 정합).
@@ -306,7 +313,12 @@ def sync_portal_data(
     # 흐름을 유지한다. 자동 크롤 도입 시점에 이 정책 재검토.
     map_student_record(db, current_user.id, student_record, status_changes)
     saved_records = map_grades(db, current_user.id, grades_tables)
-    saved_programs = map_academic_program_registrations(db, current_user.id, registration_rows)
+    saved_programs = map_academic_program_registrations(
+        db,
+        current_user.id,
+        registration_rows,
+        reconcile_portal_snapshot=registration_snapshot_is_complete,
+    )
     liberal_area_updates = _refine_liberal_area_categories(
         db, current_user.id, expected_normalized.get("requirement_items", [])
     )
