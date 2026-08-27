@@ -44,13 +44,14 @@ def _login_failure_message(diagnostics: dict[str, list[str]]) -> str:
     return "로그인 실패: 아이디/비밀번호를 확인하거나 잠시 후 다시 시도하세요."
 
 
-def _wait_for_initial_login_result(page: Page, diagnostics: dict[str, list[str]]) -> bool:
+def _wait_for_initial_login_result(page: Page, diagnostics: dict[str, list[str]]) -> bool | None:
     """새 One-Stop 로그인 클릭 직후의 확정 결과만 짧게 기다린다.
 
-    True는 로그인 페이지를 벗어나 성공 SSO 전환이 시작됐다는 뜻이다. False는
-    alert/2차인증 팝업 또는 제한 시간 안에 여전히 로그인 폼에 머문 확정 실패다.
-    성공 전환 뒤의 느린 SSO는 호출자가 기존 `networkidle`/`selectMenu` 검증으로
-    계속 기다린다. 즉 빠른 실패와 느리지만 정상인 로그인을 구분한다.
+    True는 로그인 페이지를 벗어나 성공 SSO 전환이 시작됐다는 뜻이고, False는
+    alert/2차인증 팝업이라는 **확정된** 실패다. 제한 시간 동안 URL이 `/login`에
+    남았을 뿐이면 None을 반환한다. 학교 SSO가 느리면 정상 POST도 그 상태로 4초를
+    넘길 수 있으므로, None은 실패가 아니라 기존 `networkidle`/`selectMenu` 검증으로
+    넘겨야 한다.
     """
     elapsed = 0
     while elapsed < _LOGIN_RESULT_TIMEOUT_MS:
@@ -60,7 +61,7 @@ def _wait_for_initial_login_result(page: Page, diagnostics: dict[str, list[str]]
             return True
         page.wait_for_timeout(_LOGIN_RESULT_POLL_MS)
         elapsed += _LOGIN_RESULT_POLL_MS
-    return False
+    return None
 
 
 def _close_and_raise_login_failure(context, diagnostics: dict[str, list[str]]) -> None:
@@ -291,7 +292,7 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
 
     # 틀린 비밀번호는 페이지 이동 없이 alert만 뜬다. 그 신호를 먼저 확인하지
     # 않으면 아래 networkidle 대기가 최대 30초를 소비한다.
-    if not _wait_for_initial_login_result(page, diagnostics):
+    if _wait_for_initial_login_result(page, diagnostics) is False:
         _close_and_raise_login_failure(context, diagnostics)
 
     page.wait_for_load_state("networkidle")

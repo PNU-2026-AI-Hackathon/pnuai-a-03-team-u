@@ -61,9 +61,11 @@ def test_wrong_password_alert_is_detected_before_full_networkidle_wait():
     assert "비밀번호" in _login_failure_message(diagnostics)
 
 
-def test_login_page_without_any_response_has_bounded_fast_failure():
+def test_login_page_without_any_response_is_not_false_failed_before_sso_budget():
     diagnostics = {"alerts": [], "popups": [], "sso_responses": [], "console": [], "pageerrors": []}
     page = _FailedLoginPage(diagnostics)
 
-    assert _wait_for_initial_login_result(page, diagnostics) is False
+    # 4초는 alert를 빠르게 받을 기회일 뿐 실패 확정 기준이 아니다. 학교 SSO가
+    # 느리면 이 뒤 기존 networkidle/selectMenu 검증으로 계속 진행해야 한다.
+    assert _wait_for_initial_login_result(page, diagnostics) is None
     assert page.polls == _LOGIN_RESULT_TIMEOUT_MS // 100
