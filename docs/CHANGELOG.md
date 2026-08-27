@@ -14,6 +14,13 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-28 (blackest21) — 시간표 추천 승인 카드에 후보 스위처 (PR #302, 프론트)
+
+- **증상**: 시간표 에이전트가 후보 조합을 2~3개 줘도(`build_timetable` → `_MAX_SCHEDULES_RETURNED = 3`) 승인 카드는 `schedules.find(s => s.offerings.length > 0)`로 첫 유효 후보 하나만 보여줬다. 나머지 후보는 채팅 텍스트("📋 후보 N")로만 존재하고 반영 불가.
+- **변경**: `suggestion` 단일 state → `suggestions[]` + `suggestionIndex`. 유효 후보(`offerings.length > 0`)만 담고, 2개 이상이면 카드 우상단에 `1 2 3 ›` 스위처(`.timetable-proposal-switch`). 누르면 `selectSuggestion(i)`이 그 후보의 "새로 담길 분반"만 기본 체크로 다시 잡고(`offeringIdsToPreselect`) 적용 결과·에러를 리셋. h4에 "후보 i/N" 표기. 세션 생성/초기화/적용/무시에서 `resetSuggestions()`.
+- **리뷰 반영(4eee3bf)**: 후보 번호 버튼 `aria-label="후보 N"`, `.timetable-proposal-head.has-switch h4`에만 우측 패딩(스위처가 "…학점" 꼬리 덮는 좁은 화면 겹침). 나머지 nit(스위치 시 수동 토글 손실, `›` 중복)은 목업과 일치·사용성 손해 없어 그대로.
+- `npm run build` 통과. 독립 리뷰 결론 "Merge, only nits".
+
 ## 2026-08-27 (blackest21) — 효원균형/창의교양 세부영역: 수강편람 폴백 + 학생 수동 지정 (PR #299 백엔드 · #300 프론트)
 
 - **증상**: 한고은 계정 교양선택 7과목이 전부 `student_course_records.liberal_area = NULL` → "효원균형교양 이수 현황"이 전부 미이수. **원인**: 졸업예정정보(menuCD=…089) 페이지의 table 3(`general_education_area_completion`)이 학생이수정보 칸을 비워서 준다(파서 레퍼런스 샘플로 확인). `student_graduation_categories`도 "교양선택 21학점" 통짜라 영역별 정보가 어디에도 없음.
