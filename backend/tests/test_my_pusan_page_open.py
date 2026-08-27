@@ -13,7 +13,14 @@ import unittest
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from app.ingestion.crawlers.my_pusan_extracurricular import _open_certificate_page
+from app.ingestion.crawlers.my_pusan_extracurricular import (
+    LEGACY_MY_LOGIN_URL,
+    _LEGACY_LOGIN_BUTTON_SELECTOR,
+    _LEGACY_LOGIN_ID_SELECTOR,
+    _LEGACY_LOGIN_PW_SELECTOR,
+    _login_to_legacy_my_pusan,
+    _open_certificate_page,
+)
 
 
 class _FakePage:
@@ -72,7 +79,49 @@ _LOGIN = "https://login.pusan.ac.kr/my/loginPage"
 _SSO = "https://my.pusan.ac.kr/modules/pusan/rsso/loginCheck.php"
 
 
+class _LegacyLoginPage:
+    """One-Stop 신규 로그인 뒤 My Pusan 구형 폼이 다시 나타난 상태."""
+
+    def __init__(self):
+        self.url = _LOGIN
+        self.events: list[tuple] = []
+
+    def goto(self, url, **kwargs):
+        self.events.append(("goto", url, kwargs))
+        self.url = _LOGIN
+
+    def wait_for_selector(self, selector, **_kwargs):
+        self.events.append(("wait", selector))
+
+    def fill(self, selector, value):
+        self.events.append(("fill", selector, value))
+
+    def click(self, selector):
+        self.events.append(("click", selector))
+        self.url = "https://my.pusan.ac.kr/"
+
+    def wait_for_load_state(self, state, **_kwargs):
+        self.events.append(("load", state))
+
+    def wait_for_timeout(self, ms):
+        self.events.append(("sleep", ms))
+
+
 class OpenCertificatePageTest(unittest.TestCase):
+    def test_legacy_my_pusan_login_uses_its_own_form_after_onestop_login(self):
+        page = _LegacyLoginPage()
+
+        self.assertIsNone(_login_to_legacy_my_pusan(page, "20260001", "test-password"))
+
+        self.assertEqual(("goto", LEGACY_MY_LOGIN_URL, {
+            "wait_until": "domcontentloaded", "timeout": 10_000,
+        }), page.events[0])
+        self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR), page.events)
+        self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR), page.events)
+        self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
+        self.assertIn(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password"), page.events)
+        self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
+
     def test_normal_load_returns_none(self):
         page = _FakePage([_CERT] * 10, ready_at=2)
         self.assertIsNone(_open_certificate_page(page))

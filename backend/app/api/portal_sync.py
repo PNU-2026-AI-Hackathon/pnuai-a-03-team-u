@@ -242,8 +242,9 @@ def sync_portal_data(
     db: Session = Depends(get_db),
 ):
     """학번/비밀번호로 One-Stop에 로그인해 학적부/성적/졸업요건을 가져와 저장한다."""
+    portal_password = payload.password.get_secret_value()
     try:
-        with pnu_session(payload.login_id, payload.password.get_secret_value()) as page:
+        with pnu_session(payload.login_id, portal_password) as page:
             student_record = fetch_student_record(page)
             # 학적변동 내역(편입학 여부). 같은 학적부 메뉴라 추가 로그인/이동 비용이
             # 거의 없다. 실패해도 동기화 전체를 깨지 않는다 — 못 읽으면 기존
@@ -267,7 +268,11 @@ def sync_portal_data(
             # portal-sync가 실패하면 안 되므로 여기서 예외 흡수. 성공 시에도 fetch 결과의
             # authenticated=False면 데이터 반영 스킵.
             try:
-                extracurricular = fetch_extracurricular_certificate(page)
+                extracurricular = fetch_extracurricular_certificate(
+                    page,
+                    login_id=payload.login_id,
+                    login_pw=portal_password,
+                )
             except Exception as exc:  # noqa: BLE001
                 logging.getLogger(__name__).warning(
                     "my.pusan.ac.kr 이수 프로그램 크롤 실패 (user_id=%s): %s",
