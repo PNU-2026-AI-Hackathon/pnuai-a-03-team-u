@@ -3150,6 +3150,14 @@ function ConnectedRoadmapPage() {
                     <X size={16} aria-hidden="true" />
                   </button>
                 </header>
+                <aside className="fusion-programs-contact">
+                  <a href="https://swedu.pusan.ac.kr/sites/swedu/index.do" target="_blank" rel="noreferrer">
+                    부산대학교 AI융합교육원 →
+                  </a>
+                  <p>[46241] 부산광역시 금정구 부산대학로63번길 2 (장전동)</p>
+                  <p>TEL 051-510-3737, 3738, 3337</p>
+                  <p>연계전공·융합전공 신청 자격·절차는 교육원에 직접 문의하세요.</p>
+                </aside>
                 <div className="fusion-programs-list">
                   {fusionPrograms.map((program) => (
                     <article className="fusion-program-card" key={program.program_id}>
