@@ -21,10 +21,12 @@ major_id, curriculum_year)로 묶어서 그룹이 하나라도 있으면 무조�
   (규칙 타입도 틀리고 total_credits도 없음) — `program_courses`가 참조하는
   8개 과목도 완전히 동일(전부 경영학과 자체 개설분, 타 학과 교차인정 없음).
   즉 사람이 조사한 부전공 데이터를 프로그램 타입만 바꿔 기계적으로 복제한 것.
-- 회원가입 폼(`AuthPage.tsx`)은 `program_type`으로 "primary"/"minor"/"dual"만
-  보낸다 — "interdisciplinary"는 UI 어디서도 생성하지 않는다(AI융합트랙은
-  `/me/tracks/enroll` 전용 경로). 이 40개 행에 걸린 실제 `UserAcademicProgram`도
-  0건으로 확인함 — 지워도 영향받는 실사용자가 없다.
+- `program_type="interdisciplinary"`인 `UserAcademicProgram`은 회원가입 폼이 아니라
+  `/me/tracks/enroll`(AI융합트랙 전용 경로)로만 생성되고, 그 행들은 AI융합트랙 14개
+  (`required_total_credits=21`)를 가리킨다 — 이 40개 backfill 행(`required_total_credits
+  IS NULL`)과는 키가 겹치지 않는다. 그래도 `run()`이 삭제 직전 해당
+  `(department_id, major_id, program_type="interdisciplinary")` 조합의 실사용자를 한 번
+  더 조회해서 1건이라도 있으면 SKIP한다. 40개 전부 0건으로 확인됨.
 - 진짜 연계전공 5개(빅데이터/산업수학SW/에너지IoT/임베디드SW/산업AI, 학사규정과
   이름·48학점 정확히 일치)는 `required_total_credits`가 채워져 있어서 이
   스크립트의 필터(`required_total_credits IS NULL`)에 안 걸린다 — 안 지워짐.
@@ -65,6 +67,7 @@ def run(dry_run: bool) -> int:
     try:
         targets = find_targets(db)
         print(f"삭제 대상: {len(targets)}개\n")
+        acted = 0
         for gr in targets:
             dept = db.get(Department, gr.department_id) if gr.department_id else None
             major = db.get(Major, gr.major_id) if gr.major_id else None
@@ -87,6 +90,7 @@ def run(dry_run: bool) -> int:
 
             print(f"  [{'would delete' if dry_run else 'delete'}] gr#{gr.id} {name} "
                   f"(dept={gr.department_id}, major={gr.major_id})")
+            acted += 1
             if not dry_run:
                 db.delete(gr)
 
@@ -94,7 +98,7 @@ def run(dry_run: bool) -> int:
             db.rollback()
         else:
             db.commit()
-        return len(targets)
+        return acted
     except Exception:
         db.rollback()
         raise
@@ -109,7 +113,9 @@ def main() -> None:
     dry_run = not args.apply
 
     count = run(dry_run)
-    print(f"\n{'[DRY-RUN]' if dry_run else '[COMMITTED]'} {count}개 처리")
+    verb = "삭제 예정" if dry_run else "삭제"
+    print(f"\n{'[DRY-RUN]' if dry_run else '[COMMITTED]'} {count}개 {verb} "
+          f"(실사용자 있어 SKIP한 행은 이 수에서 제외됨)")
 
 
 if __name__ == "__main__":
