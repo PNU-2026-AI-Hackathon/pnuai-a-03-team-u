@@ -29,6 +29,8 @@ import re
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
+from app.ingestion.crawlers.pnu_session import _dismiss_login_popups
+
 _logger = logging.getLogger(__name__)
 
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
@@ -280,6 +282,12 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
         if _LOGIN_HOST not in target.url:
             return None
 
+        # 부산대가 통합로그인 페이지에 로그인 공지 팝업을 띄우면 `#idpwTab` 위를
+        # 덮는다. Playwright의 일반 click은 가려진 요소를 안 눌러 30초 타임아웃이
+        # 나므로(pnu_session._dismiss_login_popups 주석 참고), 탭을 누르기 전에
+        # DOM click으로 먼저 닫는다. 실패해도 로그인을 중단하지 않는다.
+        _dismiss_login_popups(target)
+
         # 실제 구형 HTML은 #login_id/#login_pw를 처음에 display:none으로 렌더링한다.
         # “아이디 로그인” 탭을 열지 않으면 selector는 DOM에 있어도 visible 대기에서
         # 타임아웃한다. 2026-08-27 공개 응답으로 확인한 구조다.
@@ -288,7 +296,10 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
             state="visible",
             timeout=_LEGACY_LOGIN_TIMEOUT_MS,
         )
-        target.click(_LEGACY_LOGIN_TAB_SELECTOR)
+        # timeout 없이 두면 Playwright 기본 30초를 쓴다 — 팝업이 남아 있거나
+        # 애니메이션이 늦으면 이 함수의 나머지 대기(_LEGACY_LOGIN_TIMEOUT_MS)와
+        # 어긋나므로 명시적으로 맞춘다.
+        target.click(_LEGACY_LOGIN_TAB_SELECTOR, timeout=_LEGACY_LOGIN_TIMEOUT_MS)
         target.wait_for_selector(
             _LEGACY_LOGIN_ID_SELECTOR,
             state="visible",
