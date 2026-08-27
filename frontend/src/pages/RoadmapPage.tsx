@@ -1585,7 +1585,11 @@ function ConnectedRoadmapPage() {
   async function handleFusionProgramClick(program: FusionProgramOption) {
     if (isFusionSaving || !program.program_type_label) return;
     const action = program.enrolled ? "취소" : "저장";
-    if (!window.confirm(`${program.program_name} ${program.program_type_label} 이수 계획을 ${action}하시겠습니까?`)) {
+    // 연계전공은 program_name에 이미 "(SW연계전공)"이 들어 있어 라벨을 또 붙이면 중복된다.
+    const typeText = program.program_name.includes(program.program_type_label)
+      ? ""
+      : `${program.program_type_label} `;
+    if (!window.confirm(`${program.program_name} ${typeText}이수 계획을 ${action}하시겠습니까?`)) {
       return;
     }
     setIsFusionSaving(true);

@@ -2024,7 +2024,7 @@ class _ToolContext:
                 "name": info.program_name,
                 "kind_label": info.kind_label,  # SW연계전공 / AI융합트랙 / 융합전공 ...
                 "program_type": info.program_type,  # minor | dual | interdisciplinary
-                "program_type_label": info.program_type_label,  # 부전공 | 복수전공 | None
+                "program_type_label": info.program_type_label,  # 부전공 | 복수전공 | 연계전공 | None
                 "total_credits": info.total_credits,
                 "participating_departments": [p.name for p in info.participating_departments],
                 "already_enrolled": info.enrolled,
