@@ -10,8 +10,11 @@ from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
+    ProgramCourse,
     School,
     StudentCourseRecord,
+    StudentCourseSubstitution,
+    StudentGraduationCategory,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
@@ -28,6 +31,9 @@ _TABLES = [
     UserAcademicProgram.__table__,
     GraduationRequirement.__table__,
     StudentCourseRecord.__table__,
+    ProgramCourse.__table__,
+    StudentCourseSubstitution.__table__,
+    StudentGraduationCategory.__table__,
 ]
 
 

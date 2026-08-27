@@ -24,8 +24,10 @@ from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
+    ProgramCourse,
     School,
     StudentCourseRecord,
+    StudentCourseSubstitution,
     StudentGraduationCategory,
     UserAcademicProgram,
 )
@@ -36,6 +38,7 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, Course.__table__, UserAcademicProgram.__table__,
     GraduationRequirement.__table__, StudentCourseRecord.__table__, StudentGraduationCategory.__table__,
+    ProgramCourse.__table__, StudentCourseSubstitution.__table__,
 ]
 
 
@@ -451,6 +454,112 @@ class DuplicateRequirementRowTest(_Base):
         db.commit()
         progress = compute_graduation_progress(db, 1)[0]
         self.assertFalse(any("기준학점 행이" in w for w in progress.warnings), progress.warnings)
+
+
+class NonPrimaryRuleJudgmentTest(_Base):
+    """부전공/복수전공을 지정 과목·그룹 규칙으로 판정하는 하이브리드(2026-08-27).
+
+    핀테크융합전공 부전공이 special_rules.groups("전공필수 5과목 중 3개")·
+    program_courses가 있는데도 총 이수학점 21만 넘으면 "충족"으로 뜨던 문제.
+    """
+
+    def _minor_db(self, *, with_rules: bool):
+        db = self.make_db()
+        # 주전공 요건 (하이브리드 대상 아님).
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130,
+        ))
+        # 부전공 학적 + 요건.
+        db.add(UserAcademicProgram(user_id=1, department_id=10, major_id=None,
+                                   program_type="minor", curriculum_year="2024"))
+        minor_req = GraduationRequirement(
+            department_id=10, program_type="minor", curriculum_year="2024",
+            required_total_credits=9,
+        )
+        if with_rules:
+            minor_req.special_rules = {
+                "total_credits": 9,
+                "groups": [{"type": "min_courses", "n": 3, "label": "필수 (3과목)"}],
+            }
+        db.add(minor_req)
+        db.flush()
+        # 학생 이수: 아무 과목이나 총 30학점 (flat이면 통과).
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="잡과목", category="전공선택", credits=30))
+        if with_rules:
+            # 인정과목 3개 중 2개만 이수.
+            for name in ("필수A", "필수B", "필수C"):
+                c = Course(course_code=f"X_{name}", course_name=name, department_id=10,
+                           category="전공필수", credits=3)
+                db.add(c); db.flush()
+                db.add(ProgramCourse(department_id=10, major_id=None, course_id=c.id,
+                                     requirement_group="필수 (3과목)", category="전공필수",
+                                     curriculum_year="2024"))
+                if name != "필수C":
+                    db.add(StudentCourseRecord(user_id=1, course_id=c.id, raw_course_name=name,
+                                               category="전공필수", credits=3))
+        db.commit()
+        return db
+
+    def test_rule_based_minor_not_satisfied_when_required_courses_missing(self):
+        db = self._minor_db(with_rules=True)
+        minor = next(p for p in compute_graduation_progress(db, 1) if p.program_type == "minor")
+        self.assertFalse(minor.satisfied)  # flat이면 True였을 것 (30 >= 9)
+        self.assertTrue(any("필수 (3과목)" in w for w in minor.warnings), minor.warnings)
+        self.assertTrue(any("프로그램 지정 과목 기준" in w for w in minor.warnings), minor.warnings)
+
+    def test_minor_without_rules_falls_back_to_flat_with_caveat(self):
+        db = self._minor_db(with_rules=False)
+        minor = next(p for p in compute_graduation_progress(db, 1) if p.program_type == "minor")
+        self.assertTrue(minor.satisfied)  # flat: 30 >= 9
+        self.assertTrue(
+            any("총 이수학점만 대조됨" in w for w in minor.warnings), minor.warnings
+        )
+
+    def test_primary_is_never_routed_through_rule_judgment(self):
+        db = self._minor_db(with_rules=True)
+        primary = next(p for p in compute_graduation_progress(db, 1) if p.program_type == "primary")
+        # 주전공엔 flat 폴백 경고가 붙지 않는다.
+        self.assertFalse(any("총 이수학점만 대조됨" in w for w in primary.warnings), primary.warnings)
+        self.assertFalse(any("프로그램 지정 과목 기준" in w for w in primary.warnings), primary.warnings)
+
+
+class LiberalAreaAdvisoryWarningTest(_Base):
+    """주전공 결과에 균형/창의교양 세부영역 자문 경고를 얹는다(satisfied는 불변)."""
+
+    def test_official_snapshot_and_empty_areas_surface_as_warnings(self):
+        db = self.make_db()
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130, required_general_elective=18,
+        ))
+        # 학교 공식 스냅샷: 균형교양 미이수.
+        db.add(StudentGraduationCategory(
+            user_id=1, program_type="주전공", category="효원균형교양",
+            required_credits=6, earned_credits=3, satisfied=False,
+            failure_reason="균형교양영역미달", synced_at=datetime.datetime(2026, 8, 20),
+        ))
+        # 세부영역 중 1개만 이수 (나머지는 0과목).
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="사상과역사과목",
+                                   category="교양선택", liberal_area="사상과역사", credits=3))
+        db.commit()
+        primary = compute_graduation_progress(db, 1)[0]
+        self.assertTrue(any("학교 공식 판정" in w and "효원균형교양" in w for w in primary.warnings),
+                        primary.warnings)
+        self.assertTrue(any("이수 0과목인 세부영역" in w for w in primary.warnings), primary.warnings)
+        # 교양선택 satisfied는 총 학점 비교 그대로 (영역 규칙이 바꾸지 않음).
+        ge = next(c for c in primary.categories if c.category_name == "교양선택")
+        self.assertEqual(3, int(ge.earned_credits))
+
+    def test_no_snapshot_no_warnings(self):
+        db = self.make_db()
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130,
+        ))
+        db.commit()
+        primary = compute_graduation_progress(db, 1)[0]
+        self.assertFalse(any("학교 공식 판정" in w for w in primary.warnings), primary.warnings)
 
 
 if __name__ == "__main__":
