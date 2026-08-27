@@ -254,7 +254,7 @@ class DepartmentLevelFallbackTest(_Base):
 class OneStopOfficialFallbackTest(_Base):
     """공식 학과 기준이 없을 때에만 학생별 One-Stop 판정을 사용한다."""
 
-    def _official_row(self, category, required, earned, satisfied):
+    def _official_row(self, category, required, earned, satisfied, *, synced_at=None):
         return StudentGraduationCategory(
             user_id=1,
             program_type="주전공",
@@ -264,14 +264,16 @@ class OneStopOfficialFallbackTest(_Base):
             registered_credits=0,
             expected_credits=0,
             satisfied=satisfied,
-            synced_at=datetime.datetime.now(datetime.UTC),
+            synced_at=synced_at or datetime.datetime.now(datetime.UTC),
         )
 
     def test_uses_official_snapshot_when_requirement_is_missing(self):
         db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
         db.add_all([
-            self._official_row("전공필수", 33, 26, False),
-            self._official_row("총이수학점", 133, 64, False),
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
         ])
         db.commit()
 
@@ -285,13 +287,15 @@ class OneStopOfficialFallbackTest(_Base):
 
     def test_does_not_override_an_official_department_requirement(self):
         db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
         db.add(GraduationRequirement(
             department_id=10, program_type="primary", curriculum_year="2024",
             required_total_credits=130, required_major_required=30,
         ))
         db.add_all([
-            self._official_row("전공필수", 33, 26, False),
-            self._official_row("총이수학점", 133, 64, False),
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
         ])
         db.commit()
 
@@ -306,6 +310,34 @@ class OneStopOfficialFallbackTest(_Base):
 
         progress = compute_graduation_progress(db, 1)[0]
         self.assertFalse(progress.requirement_found)
+
+    def test_does_not_use_ambiguous_same_type_program_snapshot(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add(UserAcademicProgram(
+            user_id=1, department_id=10, program_type="primary", curriculum_year="2024",
+        ))
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
+        ])
+        db.commit()
+
+        for progress in compute_graduation_progress(db, 1):
+            self.assertFalse(progress.requirement_found)
+
+    def test_does_not_use_stale_snapshot(self):
+        db = self.make_db()
+        stale = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=32)
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stale),
+            self._official_row("교양필수", 10, 7, False, synced_at=stale),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stale),
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
 
 
 class LeaveOfAbsenceIsJudgedTest(_Base):

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -46,6 +47,12 @@ _ONESTOP_PROGRAM_TYPE_MAP = {
 }
 
 _ONESTOP_TOTAL_CATEGORY = "총이수학점"
+_ONESTOP_FALLBACK_REQUIRED_CATEGORIES = {
+    _ONESTOP_TOTAL_CATEGORY,
+    "전공필수",
+    "교양필수",
+}
+_ONESTOP_FALLBACK_MAX_AGE = datetime.timedelta(days=31)
 
 # "교양선택" 세부영역 — 세대별로 이름과 구성이 다르다
 # (docs/progress/liberal-arts-area-requirements.md §4.1/§6/§7.2/§7.3 조사 참고).
@@ -327,6 +334,17 @@ def _official_onestop_fallback(
     if not inspect(db.get_bind()).has_table(StudentGraduationCategory.__tablename__):
         return None
 
+    # One-Stop 표에는 신청학과/전공 식별자가 없다. 같은 internal program_type을 두 개
+    # 이상 가진 학생(복수 복수전공, 여러 연계전공 등)은 어느 행이 어느 프로그램인지
+    # 확정할 수 없으므로 공식 결과를 억지로 붙이지 않는다.
+    active_same_type_count = db.query(func.count(UserAcademicProgram.id)).filter(
+        UserAcademicProgram.user_id == user_id,
+        UserAcademicProgram.program_type == program.program_type,
+        UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
+    ).scalar() or 0
+    if active_same_type_count != 1:
+        return None
+
     portal_program_types = [
         label for label, internal in _ONESTOP_PROGRAM_TYPE_MAP.items()
         if internal == program.program_type
@@ -346,6 +364,21 @@ def _official_onestop_fallback(
         None,
     )
     if total_row is None or total_row.required_credits is None or total_row.earned_credits is None:
+        return None
+
+    # 표가 일부만 파싱된 경우를 학교 공식 전체 판정으로 보이면 안 된다. 학사 기준의
+    # 공통 핵심 세 행(총계·전공필수·교양필수)이 모두 같은 동기화에서 왔을 때만 쓴다.
+    # 학과별 기준을 알 수 없는 경우에도, 이 조건을 못 만족하면 기존 "판정 불가"가
+    # 더 안전하다.
+    category_names = {(row.category or "").strip() for row in rows}
+    if not _ONESTOP_FALLBACK_REQUIRED_CATEGORIES.issubset(category_names):
+        return None
+    synced_at = total_row.synced_at
+    if synced_at.tzinfo is None:
+        synced_at = synced_at.replace(tzinfo=datetime.UTC)
+    if datetime.datetime.now(datetime.UTC) - synced_at > _ONESTOP_FALLBACK_MAX_AGE:
+        return None
+    if any(row.synced_at != total_row.synced_at for row in rows):
         return None
 
     required_total = Decimal(total_row.required_credits)
