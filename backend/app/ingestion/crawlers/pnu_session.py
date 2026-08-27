@@ -22,10 +22,51 @@ _ONESTOP_LOGIN_BUTTON_SELECTOR = f"{_ONESTOP_LOGIN_FORM} .login-btn"
 _LOGIN_FORM_ATTEMPTS = 3
 _LOGIN_FORM_TIMEOUT_MS = 12_000
 _LOGIN_POPUP_CLOSE_SELECTOR = '.popup_layer a[href*="layerPopupClose"]'
+# 비밀번호 오류는 One-Stop이 alert로 즉시 알려 준다. 이를 성공 SSO와 같은
+# networkidle(기본 30초) 대기 뒤에 판정하면 사용자는 틀린 비밀번호를 한참 기다린다.
+_LOGIN_RESULT_TIMEOUT_MS = 4_000
+_LOGIN_RESULT_POLL_MS = 100
 
 
 class PnuLoginError(Exception):
     pass
+
+
+def _login_failure_message(diagnostics: dict[str, list[str]]) -> str:
+    """캡처한 로그인 실패 신호를 사용자에게 안전한 문구로 바꾼다."""
+    if diagnostics["popups"]:
+        return (
+            "로그인 실패: 이 계정은 2차 인증(이메일)이 필요해 자동 로그인을 지원하지 않습니다. "
+            "One-Stop 포털에서 직접 로그인해주세요."
+        )
+    if diagnostics["alerts"]:
+        return f"로그인 실패: {diagnostics['alerts'][-1]}"
+    return "로그인 실패: 아이디/비밀번호를 확인하거나 잠시 후 다시 시도하세요."
+
+
+def _wait_for_initial_login_result(page: Page, diagnostics: dict[str, list[str]]) -> bool | None:
+    """새 One-Stop 로그인 클릭 직후의 확정 결과만 짧게 기다린다.
+
+    True는 로그인 페이지를 벗어나 성공 SSO 전환이 시작됐다는 뜻이고, False는
+    alert/2차인증 팝업이라는 **확정된** 실패다. 제한 시간 동안 URL이 `/login`에
+    남았을 뿐이면 None을 반환한다. 학교 SSO가 느리면 정상 POST도 그 상태로 4초를
+    넘길 수 있으므로, None은 실패가 아니라 기존 `networkidle`/`selectMenu` 검증으로
+    넘겨야 한다.
+    """
+    elapsed = 0
+    while elapsed < _LOGIN_RESULT_TIMEOUT_MS:
+        if diagnostics["alerts"] or diagnostics["popups"]:
+            return False
+        if not page.url.rstrip("/").endswith("/login"):
+            return True
+        page.wait_for_timeout(_LOGIN_RESULT_POLL_MS)
+        elapsed += _LOGIN_RESULT_POLL_MS
+    return None
+
+
+def _close_and_raise_login_failure(context, diagnostics: dict[str, list[str]]) -> None:
+    context.close()
+    raise PnuLoginError(_login_failure_message(diagnostics))
 
 
 def _fallback_allowed() -> bool:
@@ -249,6 +290,11 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
     page.fill(_ONESTOP_LOGIN_PW_SELECTOR, login_pw)
     page.click(_ONESTOP_LOGIN_BUTTON_SELECTOR)
 
+    # 틀린 비밀번호는 페이지 이동 없이 alert만 뜬다. 그 신호를 먼저 확인하지
+    # 않으면 아래 networkidle 대기가 최대 30초를 소비한다.
+    if _wait_for_initial_login_result(page, diagnostics) is False:
+        _close_and_raise_login_failure(context, diagnostics)
+
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(1000)  # 2FA 팝업/alert가 뜨는 데 약간의 지연이 있어 캡처를 놓치지 않게 여유를 둔다
 
@@ -258,15 +304,7 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
             page.url,
             diagnostics,
         )
-        context.close()
-        if diagnostics["popups"]:
-            raise PnuLoginError(
-                "로그인 실패: 이 계정은 2차 인증(이메일)이 필요해 자동 로그인을 지원하지 않습니다. "
-                "One-Stop 포털에서 직접 로그인해주세요."
-            )
-        if diagnostics["alerts"]:
-            raise PnuLoginError(f"로그인 실패: {diagnostics['alerts'][-1]}")
-        raise PnuLoginError("로그인 실패: 아이디/비밀번호를 확인하세요.")
+        _close_and_raise_login_failure(context, diagnostics)
 
     if "UpdatePassword" in page.url:
         # "다음에 변경하기" 링크는 href="javascript:onclick=changeNextPw();" 형태라
@@ -303,17 +341,7 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
             diagnostics,
             body_snippet,
         )
-        context.close()
-        if diagnostics["popups"]:
-            raise PnuLoginError(
-                "로그인 실패: 이 계정은 2차 인증(이메일)이 필요해 자동 로그인을 지원하지 않습니다. "
-                "One-Stop 포털에서 직접 로그인해주세요."
-            )
-        if diagnostics["alerts"]:
-            raise PnuLoginError(f"로그인 실패: {diagnostics['alerts'][-1]}")
-        raise PnuLoginError(
-            "로그인 실패: 포털 인증에 실패했습니다(아이디/비밀번호를 확인하거나 잠시 후 다시 시도하세요)."
-        )
+        _close_and_raise_login_failure(context, diagnostics)
 
     return page
 

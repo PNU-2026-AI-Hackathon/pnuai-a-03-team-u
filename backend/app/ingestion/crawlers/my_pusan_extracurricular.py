@@ -24,11 +24,23 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
+_logger = logging.getLogger(__name__)
+
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
+LEGACY_MY_LOGIN_URL = "https://login.pusan.ac.kr/my/loginPage"
+
+# One-Stop은 2026-08부터 자체 `/login` 쿠키를 쓰지만 My Pusan은 여전히 이
+# 통합로그인 폼과 rSSO 쿠키를 요구한다. 두 서비스의 인증 상태를 같은 것으로
+# 가정하면 One-Stop 성적은 들어오고 비교과만 비는 부분 성공이 된다.
+_LEGACY_LOGIN_ID_SELECTOR = "#login_id"
+_LEGACY_LOGIN_PW_SELECTOR = "#login_pw"
+_LEGACY_LOGIN_BUTTON_SELECTOR = "#btnLogin"
+_LEGACY_LOGIN_TIMEOUT_MS = 12_000
 
 # data-name 값 → 어느 도메인 모델로 upsert할지. eco(이수 프로그램)/award(수상)/
 # performance(연수)/group(동아리)/volunteer(봉사)/etc(기타)는 모두 UserActivity로 합친다.
@@ -250,7 +262,57 @@ def _open_certificate_page(target: Page) -> str | None:
     )
 
 
-def fetch_extracurricular_certificate(page: Page) -> dict:
+def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str | None:
+    """My Pusan 전용 구형 통합로그인을 수행한다.
+
+    One-Stop의 새 로그인 이후에도 My Pusan에 이미 rSSO 세션이 있으면 로그인 host가
+    곧바로 My Pusan으로 되돌아갈 수 있다. 그 경우 입력폼을 억지로 기다리지 않고
+    성공으로 두며, 실제 인증서 접근 성공 여부는 호출자가 `_open_certificate_page`로
+    다시 판정한다.
+    """
+    try:
+        target.goto(
+            LEGACY_MY_LOGIN_URL,
+            wait_until="domcontentloaded",
+            timeout=_GOTO_TIMEOUT_MS,
+        )
+        if _LOGIN_HOST not in target.url:
+            return None
+
+        target.wait_for_selector(
+            _LEGACY_LOGIN_ID_SELECTOR,
+            state="visible",
+            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+        )
+        target.wait_for_selector(
+            _LEGACY_LOGIN_PW_SELECTOR,
+            state="visible",
+            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+        )
+        target.fill(_LEGACY_LOGIN_ID_SELECTOR, login_id)
+        target.fill(_LEGACY_LOGIN_PW_SELECTOR, login_pw)
+        target.click(_LEGACY_LOGIN_BUTTON_SELECTOR)
+        # 구형 SSO는 click 뒤 여러 redirect를 거친다. 여기서 networkidle을 오래
+        # 기다리지 않고, 다음 `_open_certificate_page`가 기존의 루프 감지 로직으로
+        # 최종 착지를 판정하게 한다.
+        try:
+            target.wait_for_load_state("domcontentloaded", timeout=_LEGACY_LOGIN_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            pass
+        target.wait_for_timeout(500)
+        return None
+    except PlaywrightTimeoutError:
+        return "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다."
+    except Exception as exc:  # noqa: BLE001 - 외부 로그인 UI 변경은 전체 동기화를 막지 않는다
+        _logger.warning("my.pusan 구형 통합로그인 실패: %s", exc)
+        return "my.pusan.ac.kr용 통합로그인 중 오류가 발생했습니다."
+
+
+def fetch_extracurricular_certificate(
+    page: Page,
+    login_id: str | None = None,
+    login_pw: str | None = None,
+) -> dict:
     """certificate 페이지에서 활동/자격증/어학 목록을 유형별로 뽑는다.
 
     반환:
@@ -265,6 +327,21 @@ def fetch_extracurricular_certificate(page: Page) -> dict:
     target = context.new_page()
     try:
         failure = _open_certificate_page(target)
+        # One-Stop 신규 로그인은 My Pusan의 레거시 rSSO 쿠키를 만들지 않는다. 인증서
+        # 페이지가 로그인 폼으로 고착된 경우에만, 이번 요청에서 전달받은 자격증명으로
+        # My Pusan 전용 구형 로그인을 한 번 수행하고 다시 접근한다.
+        # rSSO 무한 왕복·네트워크 타임아웃은 학교 측 장애 가능성이 커서 자격증명을
+        # 다시 제출해도 회복되지 않는다. 구형 로그인 폼에 고착된 경우에만 재인증한다.
+        needs_legacy_login = (
+            failure is not None
+            and "로그인이 되지 않아 로그인 페이지로 돌아왔습니다" in failure
+        )
+        if needs_legacy_login and login_id and login_pw:
+            legacy_failure = _login_to_legacy_my_pusan(target, login_id, login_pw)
+            if legacy_failure is None:
+                failure = _open_certificate_page(target)
+            else:
+                failure = legacy_failure
         final_url = target.url
         authenticated = failure is None
         if failure is not None:
