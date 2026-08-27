@@ -61,17 +61,40 @@ class FusionProgramOption(BaseModel):
     participating_departments: list[ParticipatingDepartment]
 
 
+def _suffix_label(name: str | None) -> str | None:
+    """majors.name의 괄호 접미사에서 유형 라벨을 뽑는다.
+
+    '빅데이터(SW연계전공)' → 'SW연계전공', '소셜데이터사이언스(SW융합트랙)' → 'SW융합트랙'.
+    seed_sw_convergence_programs.py가 붙이는 접미사와 정확히 맞물린다.
+    """
+    if not name or "(" not in name or ")" not in name:
+        return None
+    inner = name[name.rfind("(") + 1 : name.rfind(")")].strip()
+    if any(token in inner for token in ("연계전공", "융합전공", "융합트랙")):
+        return inner
+    return None
+
+
 def _classify(
     requirement: GraduationRequirement, dept_name: str, major_name: str | None
 ) -> tuple[str, str] | None:
-    """(kind, kind_label) 또는 None(융합 프로그램 아님)."""
+    """(kind, kind_label) 또는 None(융합 프로그램 아님).
+
+    kind는 프론트 스타일링용 3분류(track/linked/convergence). kind_label은
+    사용자에게 보이는 정확한 명칭 — AI융합교육원 프로그램은 접미사 그대로
+    (SW연계전공 / SW융합전공 / SW융합트랙), AI융합트랙 인증은 'AI융합트랙',
+    그 외(반도체·DX 등)는 일반 '융합전공'.
+    """
     hay = f"{major_name or ''} {dept_name or ''}"
-    if is_ai_track(requirement) or "융합트랙" in hay:
-        return "track", "융합트랙"
+    suffix = _suffix_label(major_name)
+    if is_ai_track(requirement):
+        return "track", "AI융합트랙"
+    if "융합트랙" in hay:
+        return "track", suffix or "융합트랙"
     if "연계전공" in hay:
-        return "linked", "연계전공"
+        return "linked", suffix or "연계전공"
     if "융합전공" in hay:
-        return "convergence", "융합전공"
+        return "convergence", suffix or "융합전공"
     return None
 
 

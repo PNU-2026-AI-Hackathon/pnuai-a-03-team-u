@@ -110,7 +110,7 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         self.assertEqual(1, len(result))
         option = result[0]
         self.assertEqual("linked", option.kind)
-        self.assertEqual("연계전공", option.kind_label)
+        self.assertEqual("SW연계전공", option.kind_label)  # 접미사 우선
         self.assertEqual(48, option.total_credits)
         self.assertEqual("2026", option.curriculum_year)  # 중복행 중 최신 채택
         self.assertEqual("경영학과", option.department_name)
@@ -168,7 +168,7 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         result = list_available_fusion_programs(current_user=user, db=db)
         track = next(o for o in result if o.major_id == 88)
         self.assertEqual("track", track.kind)
-        self.assertEqual("융합트랙", track.kind_label)
+        self.assertEqual("AI융합트랙", track.kind_label)  # is_ai_track 우선
 
     def test_interdisciplinary_dropped_when_minor_or_dual_exists(self):
         """핀테크융합전공처럼 interdisciplinary(42) + dual(42)이면 interdisciplinary는 버린다."""
