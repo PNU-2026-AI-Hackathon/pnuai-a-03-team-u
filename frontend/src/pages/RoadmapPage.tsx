@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, Sparkles, Trash2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FormEvent, KeyboardEvent } from "react";
@@ -28,6 +28,8 @@ import type { DepartmentSearchResult } from "../api/departments";
 import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { listEnrolledTracks, listTrackAiCommonCourses } from "../api/tracks";
+import { listAvailableFusionPrograms } from "../api/fusionPrograms";
+import type { FusionProgramOption } from "../api/fusionPrograms";
 import type { EnrolledTrack } from "../api/tracks";
 import { isMockAuthEnabled, visibleGrades } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
@@ -1529,6 +1531,11 @@ function ConnectedRoadmapPage() {
   // (주전공/복수전공/부전공/연계전공). graduation은 주전공만 남기고 나머지는 버려서 따로 둔다.
   const [academicPrograms, setAcademicPrograms] = useState<GraduationProgram[]>([]);
   const [enrolledTracks, setEnrolledTracks] = useState<EnrolledTrack[]>([]);
+  // "AI융합 가능" 버튼/패널 — 학생 학과가 참여 학과인 융합전공/연계전공/트랙.
+  // 목록이 비면 버튼을 숨긴다(비참여 학과·학과 미지정이면 서버가 빈 배열).
+  const [fusionPrograms, setFusionPrograms] = useState<FusionProgramOption[]>([]);
+  const [isFusionPanelOpen, setIsFusionPanelOpen] = useState(false);
+  const fusionPanelRef = useRef<HTMLDivElement>(null);
   // 트랙 빠른 선택을 눌렀을 때만 채운다 — department_id/major_id 필터로는 안 잡히는
   // AI융합 공통교과목(학과 소속이 아닌 이름 목록)을 결과 목록에 별도로 얹는다.
   const [addCourseCommonCourses, setAddCourseCommonCourses] = useState<CourseSearchResult[]>([]);
@@ -1806,6 +1813,35 @@ function ConnectedRoadmapPage() {
       .then(setEnrolledTracks)
       .catch(() => setEnrolledTracks([]));
   }, []);
+
+  // "AI융합 가능" 버튼용. 참여 학과가 아니면 서버가 빈 배열 → 버튼을 숨긴다.
+  useEffect(() => {
+    listAvailableFusionPrograms()
+      .then(setFusionPrograms)
+      .catch(() => setFusionPrograms([]));
+  }, []);
+
+  // AI융합 패널 바깥을 클릭하거나 Esc를 누르면 닫는다.
+  useEffect(() => {
+    if (!isFusionPanelOpen) return;
+    function handlePointerDown(event: MouseEvent | TouchEvent) {
+      const panel = fusionPanelRef.current;
+      if (panel && event.target instanceof Node && !panel.contains(event.target)) {
+        setIsFusionPanelOpen(false);
+      }
+    }
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setIsFusionPanelOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFusionPanelOpen]);
 
   // 담기 팝업 바깥을 클릭하거나 Esc를 누르면 닫는다.
   useEffect(() => {
@@ -2389,6 +2425,11 @@ function ConnectedRoadmapPage() {
             <small>{graduation?.curriculum_year ? `${graduation.curriculum_year} 교육과정` : "교육과정 확인 필요"}</small>
           </div>
           <div className="roadmap-edit-actions">
+            {fusionPrograms.length > 0 && !isEditingRoadmap ? (
+              <button className="fusion-programs-button" type="button" onClick={() => setIsFusionPanelOpen(true)}>
+                <Sparkles size={15} aria-hidden="true" /> AI융합 가능
+              </button>
+            ) : null}
             {isEditingRoadmap ? (
               <>
                 <button type="button" disabled={isRoadmapSaving} onClick={cancelRoadmapEditing}>
@@ -3084,6 +3125,64 @@ function ConnectedRoadmapPage() {
         <div className="suggested-actions"><span>다음 추천 행동</span><div className="quick-prompts">{suggestedActions.map((action) => <button type="button" key={action.label} disabled={isAiLoading || pendingChanges.length > 0} onClick={() => void sendMessage(action.prompt)}>{action.label}</button>)}</div></div>
         <form className="ai-input" onSubmit={handleSubmit}><textarea ref={promptRef} value={prompt} rows={1} aria-label="AI에게 메시지 보내기" placeholder="예: 다음 학기 전공 필수를 먼저 배치해줘" disabled={isAiLoading || pendingChanges.length > 0} onChange={(event) => { setPrompt(event.target.value); event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`; }} onKeyDown={handlePromptKeyDown} /><button type="submit" aria-label="메시지 전송" title="메시지 전송" disabled={!prompt.trim() || isAiLoading || pendingChanges.length > 0}>{isAiLoading ? <LoaderCircle size={17} aria-hidden="true" /> : <Send size={17} aria-hidden="true" />}</button></form>
       </aside>
+
+      {isFusionPanelOpen
+        ? createPortal(
+            <div className="roadmap-add-course-overlay" role="presentation">
+              <div
+                className="roadmap-add-course-modal fusion-programs-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="이수 가능한 AI융합 전공"
+                ref={fusionPanelRef}
+              >
+                <header className="substitution-modal-head">
+                  <div>
+                    <p className="substitution-modal-eyebrow">AI융합 가능</p>
+                    <h4>내 학과 과목이 인정되는 융합·연계전공</h4>
+                  </div>
+                  <button
+                    type="button"
+                    className="substitution-modal-close"
+                    aria-label="닫기"
+                    onClick={() => setIsFusionPanelOpen(false)}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </header>
+                <div className="fusion-programs-list">
+                  {fusionPrograms.map((program) => (
+                    <article className="fusion-program-card" key={program.program_id}>
+                      <div className="fusion-program-card-head">
+                        <h5>{program.program_name}</h5>
+                        <span className={`program-type-badge${program.kind === "track" ? " is-track" : ""}`}>
+                          {program.kind_label}
+                        </span>
+                      </div>
+                      <p className="fusion-program-meta">
+                        {program.department_name}
+                        {program.total_credits != null
+                          ? ` · ${program.program_type_label ? `${program.program_type_label} ` : ""}${program.total_credits}학점`
+                          : ""}
+                      </p>
+                      <div className="fusion-program-depts timetable-course-tags">
+                        {program.participating_departments.map((dept) => (
+                          <span
+                            key={dept.id}
+                            className={dept.id === graduation?.department_id ? "is-mine" : ""}
+                          >
+                            {dept.name}
+                          </span>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

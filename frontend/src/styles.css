@@ -4553,6 +4553,69 @@ body.theme-dark .activity-tags span {
   cursor: default;
 }
 
+/* "AI융합 가능" 버튼 + 패널 — 학생 학과가 참여 학과인 융합/연계/트랙 목록. */
+.roadmap-edit-actions .fusion-programs-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--blue);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fusion-programs-modal {
+  gap: 14px;
+}
+
+.fusion-programs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.fusion-program-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--gray-line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.fusion-program-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fusion-program-card-head h5 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.fusion-program-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.fusion-program-depts span.is-mine {
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-weight: 700;
+}
+
 .term-add-course-search {
   width: 100%;
   height: 36px;
