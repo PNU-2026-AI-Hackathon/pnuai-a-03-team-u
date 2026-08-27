@@ -101,10 +101,16 @@ class StudentCourseRecord(TimestampMixin, Base):
     raw_course_code: Mapped[str | None] = mapped_column(String(50))
     raw_course_name: Mapped[str] = mapped_column(String(255))
     category: Mapped[str | None] = mapped_column(String(50))
-    # One-Stop 졸업예정정보의 균형교양 세부영역 학교 판정.
-    # category(교양선택)는 졸업요건 학점 집계용 상위 이수구분이고, 이 값은
-    # 사상과역사/사회와문화 같은 세부영역이라 의미가 다르므로 별도 보존한다.
+    # 균형/창의교양 세부영역(사상과역사·사회와문화 …). category(교양선택)는 졸업요건
+    # 학점 집계용 상위 이수구분이고, 이 값은 세부영역이라 의미가 다르므로 별도 보존.
+    # 매 portal-sync마다 다시 계산된다: 학생 지정(override) > One-Stop 학교판정 >
+    # 수강편람 카탈로그(`courses.general_education_area`) 순.
     liberal_area: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    # `liberal_area`가 어떤 근거로 채워졌는지: 'override' | 'onestop' | 'catalog' | None.
+    liberal_area_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # 학생이 "내 정보"에서 직접 고른 세부영역. sync가 덮어쓰지 않는다 — 자동 매칭이
+    # 틀렸을 때 학생이 고쳐 둘 수 있게. None이면 자동 매칭에 맡긴다.
+    liberal_area_override: Mapped[str | None] = mapped_column(String(50), nullable=True)
     credits: Mapped[float | None] = mapped_column(Numeric(4, 1))
     year: Mapped[str | None] = mapped_column(String(10))
     semester: Mapped[str | None] = mapped_column(String(20))

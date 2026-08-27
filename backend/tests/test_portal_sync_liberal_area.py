@@ -13,7 +13,18 @@ import unittest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api.portal_sync import _match_known_liberal_area, _refine_liberal_area_categories
+from fastapi import HTTPException
+
+from app.api.portal_sync import (
+    CourseRecordInput,
+    CourseRecordsReplaceRequest,
+    LiberalAreaRequest,
+    _match_known_liberal_area,
+    _refine_liberal_area_categories,
+    list_course_records,
+    replace_course_records,
+    set_course_liberal_area,
+)
 from app.core.db import Base
 from app.domains.academics.graduation_progress import (
     BALANCED_LIBERAL_AREAS,
@@ -120,6 +131,72 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
         self.assertEqual("사상과역사", rec.liberal_area)
         self.assertEqual(3, int(self._general_elective(db).earned_credits))
 
+    def test_catalog_fallback_fills_liberal_area_when_onestop_table_empty(self):
+        """졸업예정정보 표가 세부영역을 안 주면(부산대 실측상 흔함) 수강편람
+        `courses.general_education_area`로 채운다."""
+        db = self.make_db([("한국사의흐름", "교양선택"), ("모르는교양", "교양선택")])
+        db.add(Course(id=1, course_code="C1", course_name="한국사의흐름",
+                      category="효원균형교양", general_education_area="사상과역사", credits=3))
+        db.commit()
+
+        n = _refine_liberal_area_categories(db, 1, [])  # One-Stop 표 없음
+        db.commit()
+
+        by_name = {r.raw_course_name: r for r in db.query(StudentCourseRecord).all()}
+        self.assertEqual("사상과역사", by_name["한국사의흐름"].liberal_area)
+        self.assertEqual("catalog", by_name["한국사의흐름"].liberal_area_source)
+        self.assertIsNone(by_name["모르는교양"].liberal_area)  # 카탈로그에 없으면 그대로 비움
+        self.assertGreaterEqual(n, 1)
+
+    def test_student_override_wins_over_catalog_and_onestop(self):
+        db = self.make_db([("한국사의흐름", "교양선택")])
+        db.add(Course(id=1, course_code="C1", course_name="한국사의흐름",
+                      category="효원균형교양", general_education_area="사상과역사", credits=3))
+        rec = db.query(StudentCourseRecord).one()
+        rec.liberal_area_override = "사회와문화"
+        db.commit()
+
+        _refine_liberal_area_categories(db, 1, [_area_row("한국사의흐름", "1영역 : 사상과역사")])
+        db.commit()
+
+        rec = db.query(StudentCourseRecord).one()
+        self.assertEqual("사회와문화", rec.liberal_area)
+        self.assertEqual("override", rec.liberal_area_source)
+
+    def test_catalog_area_is_remapped_to_student_generation(self):
+        """카탈로그는 신체계 이름('세계와 소통')으로 주는데 학생이 2024학번(구체계)이면
+        '외국어'로 저장돼야 화면·판정이 같은 영역으로 본다."""
+        db = self.make_db([("글로벌중국어1", "교양선택"), ("인성수업", "교양선택")])
+        db.add_all([
+            Course(id=1, course_code="C1", course_name="글로벌중국어1",
+                   category="효원균형교양", general_education_area="세계와 소통", credits=3),
+            # 신체계 신설 영역 — 구체계 학생에겐 대응 영역이 없어 버려진다.
+            Course(id=2, course_code="C2", course_name="인성수업",
+                   category="효원창의교양", general_education_area="인성과 사회봉사", credits=3),
+        ])
+        db.commit()
+
+        _refine_liberal_area_categories(db, 1, [])
+        db.commit()
+
+        by_name = {r.raw_course_name: r for r in db.query(StudentCourseRecord).all()}
+        self.assertEqual("외국어", by_name["글로벌중국어1"].liberal_area)
+        self.assertEqual("catalog", by_name["글로벌중국어1"].liberal_area_source)
+        self.assertIsNone(by_name["인성수업"].liberal_area)
+
+    def test_rerun_clears_stale_area_when_no_source_matches(self):
+        """override도 없고 카탈로그·One-Stop 매칭도 사라지면 liberal_area를 비운다."""
+        db = self.make_db([("역사의이해", "교양선택")])
+        _refine_liberal_area_categories(db, 1, [_area_row("역사의이해", "1영역 : 사상과역사")])
+        db.commit()
+        self.assertEqual("사상과역사", db.query(StudentCourseRecord).one().liberal_area)
+
+        _refine_liberal_area_categories(db, 1, [])  # 이번 sync엔 근거 없음
+        db.commit()
+        rec = db.query(StudentCourseRecord).one()
+        self.assertIsNone(rec.liberal_area)
+        self.assertIsNone(rec.liberal_area_source)
+
     def test_unknown_area_keeps_original_category(self):
         """모르는 영역명이면 덮어쓰지 않는다 — 집계 정확성이 세부영역 조언보다 우선."""
         db = self.make_db([("이상한과목", "교양선택")])
@@ -154,6 +231,132 @@ class RefineLiberalAreaCategoriesTest(unittest.TestCase):
         self.assertEqual(9, int(ge.earned_credits))
         self.assertEqual(0, int(ge.remaining_credits))
         self.assertTrue(ge.satisfied)
+
+
+class SetCourseLiberalAreaEndpointTest(unittest.TestCase):
+    """`PUT /me/course-records/{id}/liberal-area` — 학생이 세부영역을 직접 고친다."""
+
+    def setUp(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_TABLES)
+        self.db = sessionmaker(bind=engine)()
+        self.db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=1, school_id=1, name="정보의생명공학대학"),
+            Department(id=10, college_id=1, name="정보컴퓨터공학부"),
+        ])
+        self.user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                         department_id=10)
+        self.db.add(self.user)
+        self.db.add(UserAcademicProgram(user_id=1, department_id=10, program_type="primary",
+                                        curriculum_year="2024"))  # 구체계
+        self.db.add_all([
+            StudentCourseRecord(id=1, user_id=1, raw_course_name="한국사의흐름",
+                                category="교양선택", credits=3),
+            StudentCourseRecord(id=2, user_id=1, raw_course_name="자료구조",
+                                category="전공필수", credits=3),
+        ])
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_지정하면_override와_effective_값이_함께_바뀐다(self):
+        resp = set_course_liberal_area(
+            record_id=1, payload=LiberalAreaRequest(liberal_area="사상과역사"),
+            current_user=self.user, db=self.db,
+        )
+        self.assertEqual("사상과역사", resp.liberal_area)
+        self.assertEqual("override", resp.liberal_area_source)
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertEqual("사상과역사", rec.liberal_area_override)
+
+    def test_None이면_지정_해제된다(self):
+        set_course_liberal_area(
+            record_id=1, payload=LiberalAreaRequest(liberal_area="사상과역사"),
+            current_user=self.user, db=self.db,
+        )
+        resp = set_course_liberal_area(
+            record_id=1, payload=LiberalAreaRequest(liberal_area=None),
+            current_user=self.user, db=self.db,
+        )
+        self.assertIsNone(resp.liberal_area)
+        self.assertIsNone(self.db.get(StudentCourseRecord, 1).liberal_area_override)
+
+    def test_교양이_아닌_과목은_422(self):
+        with self.assertRaises(HTTPException) as e:
+            set_course_liberal_area(
+                record_id=2, payload=LiberalAreaRequest(liberal_area="사상과역사"),
+                current_user=self.user, db=self.db,
+            )
+        self.assertEqual(422, e.exception.status_code)
+
+    def test_구체계_학생이_신체계_영역을_고르면_422(self):
+        # 2024학번(구체계)에는 '인성과 사회봉사'(신체계 신설)가 없다.
+        with self.assertRaises(HTTPException) as e:
+            set_course_liberal_area(
+                record_id=1, payload=LiberalAreaRequest(liberal_area="인성과 사회봉사"),
+                current_user=self.user, db=self.db,
+            )
+        self.assertEqual(422, e.exception.status_code)
+
+    def test_내정보편집으로_바꾼_세부영역은_다음_sync에_안_지워진다(self):
+        """replace_course_records로 세부영역을 바꾸면 override로 저장돼야 한다 —
+        안 그러면 다음 portal-sync의 _refine이 자동 매칭으로 덮어써 사라진다
+        (독립 리뷰 지적: 수동 편집 유실 회귀)."""
+        # 교양선택인데 카탈로그·One-Stop 어디에도 없는 과목.
+        replace_course_records(
+            CourseRecordsReplaceRequest(courses=[
+                CourseRecordInput(id=1, course_name="한국사의흐름", category="교양선택",
+                                  liberal_area="사상과역사", credits=3),
+                CourseRecordInput(id=2, course_name="자료구조", category="전공필수", credits=3),
+            ]),
+            current_user=self.user, db=self.db,
+        )
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertEqual("사상과역사", rec.liberal_area_override)
+        self.assertEqual("override", rec.liberal_area_source)
+
+        _refine_liberal_area_categories(self.db, self.user.id, [])  # 자동 매칭 근거 없음
+        self.db.commit()
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertEqual("사상과역사", rec.liberal_area)  # 유지된다
+
+    def test_replace가_값을_안_바꾸면_자동값을_override로_승격하지_않는다(self):
+        rec = self.db.get(StudentCourseRecord, 1)
+        rec.liberal_area = "사회와문화"
+        rec.liberal_area_source = "catalog"
+        self.db.commit()
+
+        replace_course_records(
+            CourseRecordsReplaceRequest(courses=[
+                CourseRecordInput(id=1, course_name="한국사의흐름", category="교양선택",
+                                  liberal_area="사회와문화", credits=3),
+                CourseRecordInput(id=2, course_name="자료구조", category="전공필수", credits=3),
+            ]),
+            current_user=self.user, db=self.db,
+        )
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertIsNone(rec.liberal_area_override)  # 그대로면 승격 안 함
+        self.assertEqual("catalog", rec.liberal_area_source)
+
+    def test_남의_기록은_404(self):
+        other = User(id=2, email="o@example.com", password_hash="x", name="남")
+        self.db.add(other); self.db.commit()
+        with self.assertRaises(HTTPException) as e:
+            set_course_liberal_area(
+                record_id=1, payload=LiberalAreaRequest(liberal_area="사상과역사"),
+                current_user=other, db=self.db,
+            )
+        self.assertEqual(404, e.exception.status_code)
+
+    def test_목록_응답에_editable과_options가_실린다(self):
+        records = list_course_records(current_user=self.user, db=self.db)
+        by_id = {r.id: r for r in records}
+        self.assertTrue(by_id[1].liberal_area_editable)
+        self.assertIn("사상과역사", by_id[1].liberal_area_options)
+        self.assertFalse(by_id[2].liberal_area_editable)
+        self.assertEqual([], by_id[2].liberal_area_options)
 
 
 if __name__ == "__main__":
