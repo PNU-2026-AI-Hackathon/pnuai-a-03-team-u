@@ -93,7 +93,9 @@ export type GraduationProgress = {
   programs: GraduationProgram[];
 };
 
-const FALLBACK_MOCK_LIBERAL_AREAS = [
+/** 효원균형·창의교양 세부영역 폴백 목록 (구체계 2021 기준). 백엔드가 이수기록마다
+ *  학생 체계별 `liberal_area_options`를 내려주므로, 그게 없을 때(목 데이터 등)만 쓴다. */
+export const FALLBACK_LIBERAL_AREAS = [
   "사상과역사", "사회와문화", "문학과예술", "과학과기술",
   "건강과레포츠", "외국어", "융복합", "효원브릿지",
 ] as const;
@@ -103,11 +105,11 @@ const mockCourses: CourseRecord[] = [
   { id: 2, course_name: "자료구조", category: "전공필수", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
   { id: 3, course_name: "선형대수", category: "전공선택", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "B+", match_status: "matched", source: "mock" },
   { id: 4, course_name: "웹프로그래밍", category: "전공선택", liberal_area: null, credits: 3, year: "2026", semester: "1", grade: "A+", match_status: "matched", source: "mock" },
-  { id: 5, course_name: "역사의 이해", category: "교양선택", liberal_area: "사상과역사", liberal_area_source: "catalog", liberal_area_editable: true, liberal_area_options: [...FALLBACK_MOCK_LIBERAL_AREAS], credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 5, course_name: "역사의 이해", category: "교양선택", liberal_area: "사상과역사", liberal_area_source: "catalog", liberal_area_editable: true, liberal_area_options: [...FALLBACK_LIBERAL_AREAS], credits: 3, year: "2026", semester: "1", grade: "A0", match_status: "matched", source: "mock" },
   { id: 6, course_name: "Python Programming", category: "전공기초", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
   { id: 7, course_name: "확률및통계 II", category: "전공기초", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
   { id: 8, course_name: "인공지능과 디지털 사고", category: "교양필수", liberal_area: null, credits: 3, year: "2025", semester: "2", grade: "A+", match_status: "matched", source: "mock" },
-  { id: 9, course_name: "현대사회와 문화", category: "교양선택", liberal_area: "사회와문화", liberal_area_source: "catalog", liberal_area_editable: true, liberal_area_options: [...FALLBACK_MOCK_LIBERAL_AREAS], credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
+  { id: 9, course_name: "현대사회와 문화", category: "교양선택", liberal_area: "사회와문화", liberal_area_source: "catalog", liberal_area_editable: true, liberal_area_options: [...FALLBACK_LIBERAL_AREAS], credits: 3, year: "2025", semester: "2", grade: "A0", match_status: "matched", source: "mock" },
 ];
 
 const mockGraduationProgress: GraduationProgress = {
@@ -255,6 +257,21 @@ export async function setCourseSubstitutions(recordId: number, courseIds: number
 
 /** 교양선택 이수기록의 균형/창의교양 세부영역을 학생이 직접 고른다. null이면 지정 해제. */
 export async function setCourseLiberalArea(recordId: number, liberalArea: string | null) {
+  if (isMockStudentDataEnabled) {
+    // 목 모드엔 백엔드가 없다. sessionStorage의 이수기록을 갱신하고 그 행을 돌려준다
+    // (saveGraduationOverride와 같은 패턴).
+    const records = readMockCourses().map((course) =>
+      course.id === recordId
+        ? {
+            ...course,
+            liberal_area: liberalArea,
+            liberal_area_source: liberalArea ? "override" : null,
+          }
+        : course,
+    );
+    window.sessionStorage.setItem("planUCourseRecords", JSON.stringify(records));
+    return records.find((course) => course.id === recordId) as CourseRecord;
+  }
   const { data } = await apiClient.put<CourseRecord>(
     `/me/course-records/${recordId}/liberal-area`,
     { liberal_area: liberalArea },

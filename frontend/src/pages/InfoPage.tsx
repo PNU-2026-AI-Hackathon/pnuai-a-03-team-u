@@ -31,6 +31,7 @@ import { entryGrade, updateMyProfile } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import {
   clearGraduationOverride,
+  FALLBACK_LIBERAL_AREAS,
   getCourseRecords,
   getGraduationProgress,
   isMockStudentDataEnabled,
@@ -192,12 +193,7 @@ const MAJOR_CATEGORY_MARK = "전공";
 
 /** 효원균형·창의교양 세부영역 목록. 학생의 교양 체계(구체계/신체계)에 따라 이름이
  *  달라서(외국어↔세계와 소통 등) 백엔드가 이수기록마다 `liberal_area_options`로
- *  내려준다. 그게 없을 때만(목 데이터 등) 구체계 8개로 폴백한다. */
-const FALLBACK_LIBERAL_AREAS = [
-  "사상과역사", "사회와문화", "문학과예술", "과학과기술",
-  "건강과레포츠", "외국어", "융복합", "효원브릿지",
-] as const;
-
+ *  내려준다. 그게 없을 때만(목 데이터 등) `FALLBACK_LIBERAL_AREAS`로 폴백한다. */
 function resolveLiberalAreaList(courses: CourseRecord[]): string[] {
   const fromApi = courses
     .flatMap((course) => course.liberal_area_options ?? [])
@@ -390,6 +386,9 @@ export function InfoPage() {
   const [substitutionError, setSubstitutionError] = useState("");
   const [liberalAreaSavingId, setLiberalAreaSavingId] = useState<number | null>(null);
   const [liberalAreaError, setLiberalAreaError] = useState("");
+  // 에러를 어느 행에 붙일지. savingId는 finally에서 바로 null이 돼서 그걸로 게이트하면
+  // 메시지가 한 프레임도 안 보인다 (applySubstitution이 targetId로 게이트하는 이유).
+  const [liberalAreaErrorId, setLiberalAreaErrorId] = useState<number | null>(null);
   const [graduationEditDraft, setGraduationEditDraft] = useState<GraduationProgram | null>(null);
   const [hasGraduationEdited, setHasGraduationEdited] = useState(false);
   const [graduationEditError, setGraduationEditError] = useState("");
@@ -917,6 +916,7 @@ export function InfoPage() {
   async function applyLiberalArea(course: CourseRecord, area: string) {
     setLiberalAreaSavingId(course.id);
     setLiberalAreaError("");
+    setLiberalAreaErrorId(null);
     try {
       const updated = await setCourseLiberalArea(course.id, area || null);
       const merge = (records: CourseRecord[]) =>
@@ -925,6 +925,7 @@ export function InfoPage() {
       setCourseEditDraft(merge);
     } catch (error) {
       setLiberalAreaError(getErrorMessage(error, "세부영역을 저장하지 못했습니다."));
+      setLiberalAreaErrorId(course.id);
     } finally {
       setLiberalAreaSavingId(null);
     }
@@ -1832,7 +1833,6 @@ export function InfoPage() {
                                   <label>
                                     <span>효원균형·창의교양 영역</span>
                                     <select
-                                      aria-label={`${course.course_name} 교양 세부영역`}
                                       value={course.liberal_area ?? ""}
                                       disabled={liberalAreaSavingId === course.id}
                                       onChange={(event) => applyLiberalArea(course, event.target.value)}
@@ -1841,12 +1841,19 @@ export function InfoPage() {
                                       {(course.liberal_area_options ?? []).map((area) => (
                                         <option key={area} value={area}>{area}</option>
                                       ))}
+                                      {/* 자동값이 학생 체계 목록에 없을 때도 보이게 —
+                                          안 그러면 select가 빈칸으로 보이고 실수로 지워진다. */}
+                                      {course.liberal_area && !(course.liberal_area_options ?? []).includes(course.liberal_area) ? (
+                                        <option value={course.liberal_area}>{course.liberal_area}</option>
+                                      ) : null}
                                     </select>
                                   </label>
-                                  {course.liberal_area && course.liberal_area_source !== "override" ? (
+                                  {liberalAreaSavingId === course.id ? (
+                                    <span className="course-liberal-area-hint">저장 중…</span>
+                                  ) : course.liberal_area && course.liberal_area_source !== "override" ? (
                                     <span className="course-liberal-area-hint">자동 판정</span>
                                   ) : null}
-                                  {liberalAreaError && liberalAreaSavingId === course.id ? (
+                                  {liberalAreaError && liberalAreaErrorId === course.id ? (
                                     <p className="profile-edit-error" role="alert">{liberalAreaError}</p>
                                   ) : null}
                                 </div>
