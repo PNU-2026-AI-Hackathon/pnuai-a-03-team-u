@@ -355,6 +355,32 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
         self.assertEqual("핀테크융합전공", dept.name)
         self.assertIsNone(minor.major_id)
 
+    def test_two_bare_token_fusion_minors_do_not_overwrite_each_other(self):
+        """major_id가 둘 다 None인 융합전공 부전공 2개(반도체·핀테크)가 오면
+        department_id까지 봐서 별도 행으로 저장해야 한다 — 예전엔 upsert 필터에
+        department_id가 없어 뒤 행이 앞 행을 덮어썼다(독립 리뷰 지적)."""
+        db = self.make_db()
+        saved = map_academic_program_registrations(db, 1, [
+            ["1", "주전공", "경영학과", "N", "선택"],
+            ["2", "부전공", "핀테크융합전공", "N", "선택"],
+            ["3", "부전공", "반도체융합전공", "N", "선택"],
+        ])
+        minors = [p for p in saved if p.program_type == "minor"]
+        self.assertEqual(2, len(minors))
+        names = {db.get(Department, p.department_id).name for p in minors}
+        self.assertEqual({"핀테크융합전공", "반도체융합전공"}, names)
+        # 재실행해도 같은 두 행을 재사용한다 (중복 생성 없음).
+        map_academic_program_registrations(db, 1, [
+            ["1", "주전공", "경영학과", "N", "선택"],
+            ["2", "부전공", "핀테크융합전공", "N", "선택"],
+            ["3", "부전공", "반도체융합전공", "N", "선택"],
+        ])
+        db.flush()
+        total_minors = db.query(UserAcademicProgram).filter_by(
+            user_id=1, program_type="minor"
+        ).count()
+        self.assertEqual(2, total_minors)
+
     def test_unknown_label_and_short_rows_are_skipped(self):
         db = self.make_db()
         saved = map_academic_program_registrations(db, 1, [

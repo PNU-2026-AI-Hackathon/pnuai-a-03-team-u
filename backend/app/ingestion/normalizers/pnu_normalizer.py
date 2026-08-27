@@ -195,20 +195,28 @@ def map_academic_program_registrations(
         # -> 기존에 같은 department 이름으로 이미 만들어진 행이 있으면 그걸 우선 재사용한다.
         department_id, major_id = _resolve_registration_hierarchy(db, college, department, major)
 
-        program = (
+        candidates = (
             db.query(UserAcademicProgram)
             .filter(
                 UserAcademicProgram.user_id == user_id,
                 UserAcademicProgram.program_type == program_type,
                 UserAcademicProgram.major_id == major_id,
-                # 로드맵에서 저장한 계획은 실제 One-Stop 학적 동기화가 덮어쓰거나
-                # .one_or_none()을 다중행 오류로 만들면 안 된다.
+                # 로드맵에서 저장한 계획은 실제 One-Stop 학적 동기화가 덮어쓰면 안 된다.
                 or_(
                     UserAcademicProgram.source.is_(None),
                     UserAcademicProgram.source == "portal",
                 ),
             )
-            .one_or_none()
+            .all()
+        )
+        # 같은 program_type·major_id(=None)인 융합전공 부·복수전공이 둘 이상이면
+        # (반도체 부전공 + 핀테크 부전공처럼) department_id까지 봐야 서로 안 덮어쓴다.
+        # department_id가 정확히 일치하는 행을 우선 재사용하고, 없으면 과거에 dept
+        # 해석 실패로 남은 NULL-dept 행 하나를 골라 승격한다.
+        program = next(
+            (c for c in candidates if c.department_id == department_id), None
+        ) or next(
+            (c for c in candidates if c.department_id is None), None
         )
         if program is None:
             program = UserAcademicProgram(user_id=user_id, program_type=program_type)
