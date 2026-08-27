@@ -25,6 +25,7 @@ from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.tracks import (
     find_ai_tracks_for_department, is_ai_track, list_ai_common_courses,
+    track_scope_major_ids,
 )
 from app.domains.courses.models import Course
 from app.domains.academics.models import (
@@ -98,9 +99,11 @@ class EnrollRequest(BaseModel):
 
 # 판별 규칙은 `domains/academics/tracks.py`에 모아 두었다 — 로드맵 챗도 같은 규칙을
 # 써야 화면과 AI가 같은 말을 한다. 여기서는 얇게 감싸기만 한다.
-def _find_tracks_for_dept(db: Session, department_id: int) -> list[GraduationRequirement]:
-    """이 학과 학생이 이수 가능한 SW융합트랙 GR 목록."""
-    return find_ai_tracks_for_department(db, department_id)
+def _find_tracks_for_dept(
+    db: Session, department_id: int, major_id: int | None = None
+) -> list[GraduationRequirement]:
+    """이 학과(+전공) 학생이 이수 가능한 SW융합트랙 GR 목록."""
+    return find_ai_tracks_for_department(db, department_id, major_id)
 
 
 def _is_track(gr: GraduationRequirement) -> bool:
@@ -194,7 +197,12 @@ def list_available_tracks(
     """학생 주전공 학과 기준으로 이수 가능한 AI융합트랙 목록."""
     if current_user.department_id is None:
         return []
-    grs = [gr for gr in _find_tracks_for_dept(db, current_user.department_id) if _is_track(gr)]
+    grs = [
+        gr for gr in _find_tracks_for_dept(
+            db, current_user.department_id, current_user.major_id
+        )
+        if _is_track(gr)
+    ]
     if not grs:
         return []
 
@@ -301,6 +309,12 @@ def enroll_track(
         raise HTTPException(
             status_code=404,
             detail="해당 트랙이 없거나 학생 학과에서 이수 가능한 AI융합트랙이 아닙니다",
+        )
+    scope = track_scope_major_ids(db, gr)
+    if scope and current_user.major_id not in scope:
+        raise HTTPException(
+            status_code=403,
+            detail="이 트랙은 같은 학부의 다른 전공 대상입니다",
         )
 
     # 이미 등록됐는지

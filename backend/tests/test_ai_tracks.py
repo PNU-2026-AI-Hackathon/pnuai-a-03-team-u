@@ -11,9 +11,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.domains.academics.models import (
-    College, Department, GraduationRequirement, Major, School, UserAcademicProgram,
+    College, Department, GraduationRequirement, Major, ProgramCourse, School,
+    UserAcademicProgram,
 )
-from app.domains.academics.tracks import find_ai_tracks_for_department, is_ai_track
+from app.domains.academics.tracks import (
+    find_ai_tracks_for_department, is_ai_track, track_scope_major_ids,
+)
 from app.domains.courses.models import Course, CourseOffering
 from app.domains.planning.models import CourseRoadmap
 from app.domains.planning.roadmap_chat import _ToolContext
@@ -30,6 +33,7 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, UserAcademicProgram.__table__, GraduationRequirement.__table__,
     CourseRoadmap.__table__, Course.__table__, CourseOffering.__table__,
+    ProgramCourse.__table__,
 ]
 
 
@@ -87,6 +91,71 @@ class AiTrackDetectionTest(unittest.TestCase):
     def test_is_ai_track는_인증유형만_본다(self):
         self.assertTrue(is_ai_track(self.db.get(GraduationRequirement, 271)))
         self.assertFalse(is_ai_track(self.db.get(GraduationRequirement, 281)))
+
+
+class TrackMajorScopeTest(unittest.TestCase):
+    """한 학부 아래 여러 전공이 있고 트랙이 그중 한 전공 대상일 때
+    (바이오메디컬디바이스&데이터 트랙 = 의생명융합공학부지만 의생명공학전공 대상),
+    형제 전공 학생에게는 안 뜬다."""
+
+    def setUp(self):
+        engine = create_engine("sqlite://")
+        for t in _TABLES:
+            t.create(engine)
+        self.db = sessionmaker(bind=engine, autoflush=False)()
+        self.db.add(School(id=1, name="부산대학교")); self.db.flush()
+        self.db.add(College(id=1, school_id=1, name="공과대학")); self.db.flush()
+        self.db.add(Department(id=1, college_id=1, name="의생명융합공학부"))
+        self.db.add(Department(id=118, college_id=1, name="소프트웨어융합교육원"))
+        self.db.flush()
+        self.db.add_all([
+            Major(id=1, department_id=1, name="데이터사이언스전공"),
+            Major(id=33, department_id=1, name="의생명공학전공"),
+            Major(id=73, department_id=1, name="바이오메디컬디바이스&데이터(SW융합트랙)"),
+        ])
+        self.db.flush()
+        self.db.add(GraduationRequirement(
+            id=278, department_id=1, major_id=73, program_type="interdisciplinary",
+            required_total_credits=21, special_rules=_TRACK_RULES,
+        ))
+        # 학과전공과목 = 의생명공학전공(33) 과목 / SW공통 = 소프트웨어융합교육원 개설
+        self.db.add_all([
+            Course(id=6069, course_name="바이오센서공학", department_id=1, major_id=33, credits=3),
+            Course(id=6051, course_name="회로이론", department_id=1, major_id=33, credits=3),
+            Course(id=6605, course_name="생체고체역학", department_id=1, major_id=None, credits=3),
+            Course(id=6512, course_name="데이터분석입문", department_id=118, major_id=None, credits=3),
+        ])
+        self.db.flush()
+        for cid in (6069, 6051, 6605, 6512):
+            self.db.add(ProgramCourse(department_id=1, major_id=73, course_id=cid))
+        self.db.flush()
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_scope는_학부개설_전공지정_과목의_전공id만(self):
+        # 6069·6051 → {33}. 6605(전공 미지정)·6512(타 학과 개설)는 제외.
+        self.assertEqual(
+            {33}, track_scope_major_ids(self.db, self.db.get(GraduationRequirement, 278))
+        )
+
+    def test_대상_전공_학생에게는_뜬다(self):
+        self.assertEqual([278], [gr.id for gr in find_ai_tracks_for_department(self.db, 1, 33)])
+
+    def test_형제_전공_학생에게는_안_뜬다(self):
+        self.assertEqual([], find_ai_tracks_for_department(self.db, 1, 1))
+
+    def test_전공_미지정이면_학과_단위로_판단(self):
+        # 회원가입 홍보 카드 등 — major_id 없이 호출하면 종전대로 학과 단위.
+        self.assertEqual([278], [gr.id for gr in find_ai_tracks_for_department(self.db, 1)])
+
+    def test_전공지정_과목이_없는_트랙은_전공제한_없음(self):
+        # 학과전공과목이 전부 전공 미지정이면 scope 비어 형제 전공에도 뜬다(종전 동작).
+        self.db.query(ProgramCourse).filter_by(course_id=6069).delete()
+        self.db.query(ProgramCourse).filter_by(course_id=6051).delete()
+        self.db.flush()
+        self.assertEqual(set(), track_scope_major_ids(self.db, self.db.get(GraduationRequirement, 278)))
+        self.assertEqual([278], [gr.id for gr in find_ai_tracks_for_department(self.db, 1, 1)])
 
 
 class GetAvailableTracksToolTest(unittest.TestCase):

@@ -1937,7 +1937,9 @@ class _ToolContext:
         if department_id is None:
             return {"tracks": [], "note": "학과 정보가 없어 트랙을 판단할 수 없다."}
 
-        grs = find_ai_tracks_for_department(self.db, department_id)
+        grs = find_ai_tracks_for_department(
+            self.db, department_id, self.user.major_id
+        )
         if not grs:
             return {
                 "tracks": [],
@@ -3584,7 +3586,7 @@ def _build_student_context_block(db: Session, user: User) -> str:
     # 트랙이 있으면 진도 요약, 없고 대상 학과면 "이수 가능하다" 안내.
     ai_track_block = ""
     if user.department_id is not None:
-        track_grs = find_ai_tracks_for_department(db, user.department_id)
+        track_grs = find_ai_tracks_for_department(db, user.department_id, user.major_id)
         if track_grs:
             enrolled_major_ids = {
                 p.major_id for p in programs

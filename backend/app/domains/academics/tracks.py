@@ -17,7 +17,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domains.academics.models import GraduationRequirement
+from app.domains.academics.models import GraduationRequirement, ProgramCourse
 from app.domains.courses.models import Course, CourseOffering
 
 # 트랙 인증 유형 표기. special_rules에 이 값이 있어야 AI융합트랙으로 본다.
@@ -161,14 +161,46 @@ def list_ai_common_courses(
     return out
 
 
+def track_scope_major_ids(db: Session, gr: GraduationRequirement) -> set[int]:
+    """트랙의 '학과전공과목'이 특정 전공 소속 과목들이면 그 전공 id 집합.
+
+    한 학부(department) 아래 여러 전공이 있고 트랙이 그중 한 전공 대상일 때
+    (예: 바이오메디컬디바이스&데이터 트랙 = 의생명융합공학부 학부지만
+    의생명공학전공 대상), 학부만 보고 게이트하면 형제 전공(데이터사이언스전공)
+    학생에게도 잘못 노출된다. 트랙 `program_courses` 중 그 학부가 개설한
+    전공 지정 과목(SW융합공통은 소프트웨어융합교육원 개설이라 제외)의
+    `courses.major_id`로 대상 전공을 좁힌다.
+
+    전부 학부 단위(전공 미지정)면 빈 집합 = 전공 제한 없음(학과 단위로만 판단).
+    """
+    if gr.department_id is None:
+        return set()
+    rows = db.execute(
+        select(Course.major_id)
+        .join(ProgramCourse, ProgramCourse.course_id == Course.id)
+        .where(
+            ProgramCourse.department_id == gr.department_id,
+            ProgramCourse.major_id == gr.major_id,
+            Course.department_id == gr.department_id,
+            Course.major_id.is_not(None),
+        )
+        .distinct()
+    ).scalars().all()
+    return {mid for mid in rows if mid is not None}
+
+
 def find_ai_tracks_for_department(
-    db: Session, department_id: int | None
+    db: Session, department_id: int | None, major_id: int | None = None
 ) -> list[GraduationRequirement]:
-    """이 학과 학생이 이수 가능한 AI융합트랙 요건 행 목록.
+    """이 학과(+전공) 학생이 이수 가능한 AI융합트랙 요건 행 목록.
 
     대상 학과가 아니면 빈 목록. 2026-08-19 기준 14개 학과에 등록돼 있고,
     정보컴퓨터공학부처럼 SW 학과는 대상이 아니다(트랙 취지가 비SW 전공자의
     AI·SW 역량 인증이다).
+
+    `major_id`를 주면, 학부는 같지만 다른 전공을 대상으로 하는 트랙은 제외한다
+    (`track_scope_major_ids` 참고). `major_id=None`이면 학과 단위로만 판단한다
+    (회원가입 홍보 카드 등 전공 확정 전 화면).
     """
     if department_id is None:
         return []
@@ -179,4 +211,10 @@ def find_ai_tracks_for_department(
             GraduationRequirement.required_total_credits == TRACK_TOTAL_CREDITS,
         )
     ).all()
-    return [gr for gr in candidates if is_ai_track(gr)]
+    tracks = [gr for gr in candidates if is_ai_track(gr)]
+    if major_id is None:
+        return tracks
+    return [
+        gr for gr in tracks
+        if not (scope := track_scope_major_ids(db, gr)) or major_id in scope
+    ]
