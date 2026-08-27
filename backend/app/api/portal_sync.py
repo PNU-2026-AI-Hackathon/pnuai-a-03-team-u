@@ -661,7 +661,12 @@ def replace_course_records(
         if category in BALANCED_LIBERAL_AREAS:
             liberal_area = category
             category = "교양선택"
-        if liberal_area is not None and liberal_area not in BALANCED_LIBERAL_AREAS:
+        # 학생 교양 체계에 있는 영역만 허용한다 (PUT .../liberal-area와 같은 기준).
+        # union(BALANCED_*)만 보면 2021 학생이 "세계와 소통" 같은 타 체계 값을 저장할 수
+        # 있고, override는 _refine의 세대 remap을 안 타서 그대로 굳는다(무해하지만 무의미).
+        if liberal_area is not None and liberal_area not in _liberal_area_options_for_user(
+            db, current_user.id
+        ):
             raise HTTPException(status_code=422, detail="알 수 없는 교양 세부영역입니다")
         if category != "교양선택":
             # liberal_area는 교양선택일 때만 의미가 있다. 프론트가 category를 다른 값으로
