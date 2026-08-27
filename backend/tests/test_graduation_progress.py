@@ -339,6 +339,41 @@ class OneStopOfficialFallbackTest(_Base):
 
         self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
 
+    def test_does_not_use_mixed_sync_snapshot(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row(
+                "총이수학점", 133, 64, False,
+                synced_at=stamp - datetime.timedelta(seconds=1),
+            ),
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
+
+    def test_never_uses_ambiguous_interdisciplinary_snapshot(self):
+        db = self.make_db()
+        program = db.query(UserAcademicProgram).filter_by(user_id=1).one()
+        program.program_type = "interdisciplinary"
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add_all([
+            StudentGraduationCategory(
+                user_id=1, program_type="융합전공", category=category,
+                required_credits=required, earned_credits=earned,
+                registered_credits=0, expected_credits=0, satisfied=False,
+                synced_at=stamp,
+            )
+            for category, required, earned in (
+                ("전공필수", 33, 26), ("교양필수", 10, 7), ("총이수학점", 133, 64),
+            )
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
+
 
 class LeaveOfAbsenceIsJudgedTest(_Base):
     """휴학생도 졸업요건 판정을 받는지 (2026-08-14 정책 결정).

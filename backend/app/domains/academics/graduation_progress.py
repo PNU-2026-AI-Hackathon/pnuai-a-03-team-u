@@ -334,7 +334,13 @@ def _official_onestop_fallback(
     if not inspect(db.get_bind()).has_table(StudentGraduationCategory.__tablename__):
         return None
 
-    # One-Stop 표에는 신청학과/전공 식별자가 없다. 같은 internal program_type을 두 개
+    # One-Stop 표에는 신청학과/전공 식별자가 없다. 특히 연합·연계·융합전공은 앱에서
+    # 모두 `interdisciplinary`로 접히므로, 원문 프로그램을 보존하는 스키마를 만들기
+    # 전까지는 다른 프로그램의 판정을 붙이지 않기 위해 fallback 대상에서 제외한다.
+    if program.program_type == "interdisciplinary":
+        return None
+
+    # 같은 internal program_type을 두 개
     # 이상 가진 학생(복수 복수전공, 여러 연계전공 등)은 어느 행이 어느 프로그램인지
     # 확정할 수 없으므로 공식 결과를 억지로 붙이지 않는다.
     active_same_type_count = db.query(func.count(UserAcademicProgram.id)).filter(
