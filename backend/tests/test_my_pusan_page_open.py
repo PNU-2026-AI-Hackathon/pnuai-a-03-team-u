@@ -208,6 +208,24 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertNotIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
         self.assertNotIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
 
+    def test_captured_alert_becomes_the_failure_reason(self):
+        """비밀번호 오류 등 alert는 페이지 이동 없이 뜬다. 캡처해서 실패 사유에 담아야
+        '로그인 페이지로 돌아왔습니다'라는 원인 불명 문구만 남지 않는다."""
+        page = _LegacyLoginPage()
+        alerts = ["비밀번호를 확인하세요."]
+
+        reason = _login_to_legacy_my_pusan(
+            page, "20260001", "wrong-pw", alerts=alerts
+        )
+
+        self.assertEqual("my.pusan.ac.kr 로그인 실패: 비밀번호를 확인하세요.", reason)
+
+    def test_no_alert_still_returns_none_on_success(self):
+        page = _LegacyLoginPage()
+        self.assertIsNone(
+            _login_to_legacy_my_pusan(page, "20260001", "test-password", alerts=[])
+        )
+
     def test_normal_load_returns_none(self):
         page = _FakePage([_CERT] * 10, ready_at=2)
         self.assertIsNone(_open_certificate_page(page))
