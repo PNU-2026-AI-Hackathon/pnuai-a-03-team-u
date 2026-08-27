@@ -14,6 +14,15 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-27 (blackest21) — 효원균형/창의교양 세부영역: 수강편람 폴백 + 학생 수동 지정 (PR #299 백엔드 · #300 프론트)
+
+- **증상**: 한고은 계정 교양선택 7과목이 전부 `student_course_records.liberal_area = NULL` → "효원균형교양 이수 현황"이 전부 미이수. **원인**: 졸업예정정보(menuCD=…089) 페이지의 table 3(`general_education_area_completion`)이 학생이수정보 칸을 비워서 준다(파서 레퍼런스 샘플로 확인). `student_graduation_categories`도 "교양선택 21학점" 통짜라 영역별 정보가 어디에도 없음.
+- **모델**: 과목마다 세부영역 하나를 붙이고 화면은 영역별 이수/미이수만 본다(학점 per 영역 안 추적). 매 sync마다 우선순위로 재계산: 학생 지정(`liberal_area_override`) > One-Stop 표 > 수강편람 `courses.general_education_area` 과목명 매칭. 옛 과목(구체계)은 학생의 현재 교양 체계 이름으로 정규화(`liberal_area_in_generation`: "세계와 소통"↔"외국어" 등). 졸업 판정이 체계별로 다르므로(구체계 6영역 vs 신체계) 학생 체계 표기를 써야 화면·판정이 안 어긋난다.
+- **backend (#299)**: migration `7989e4e39d55` — `student_course_records`에 `liberal_area_source`('override'|'onestop'|'catalog'|None), `liberal_area_override`(학생 지정, sync가 안 덮어씀) nullable 2개. `_refine_liberal_area_categories` 재작성. `PUT /me/course-records/{id}/liberal-area`(편입 `.../substitutions`와 같은 패턴 — 치환·멱등, 학생 체계 영역만 허용). `CourseRecordResponse`에 `liberal_area_source`/`liberal_area_editable`/`liberal_area_options`. `replace_course_records`도 폼에서 바꾼 세부영역을 override로 저장(안 그러면 다음 sync가 자동 매칭으로 덮어써 유실 — 독립 리뷰 지적).
+- **frontend (#300)**: 내 정보 이수 과목 목록의 교양선택 행에 세부영역 `<select>`(미지정 + `liberal_area_options`), 자동 매칭값이면 "자동 판정" 뱃지. "효원균형교양 이수 현황" 영역 목록을 학생 체계별로. 목 모드 브랜치·에러 표시 게이트는 독립 리뷰 반영.
+- **Supabase migration 적용 완료**(`7989e4e39d55`). 로컬 postgres·pytest 806·골든 통과. 실카탈로그 시뮬레이션: 한고은 7과목 중 5과목 자동 매칭, 나머지 2과목(도시생태와사회혁신·한국사의흐름)은 카탈로그 미등재 → 학생이 UI에서 지정.
+- **미결**: `courses.general_education_area` 커버리지 확대(203/7806) — 별도 ingestion 과제. 한고은은 portal-sync 재실행해야 자동 매칭이 채워진다.
+
 ## 2026-08-27 (blackest21) — portal-sync 학적 반영 수정: my.pusan SSO 대기 회귀 되돌림 + 부전공 프로그램명 파싱 (PR #297)
 
 - **#295(다른 세션에서 머지됨)가 my.pusan 비교과 크롤을 회귀시켰다.** `#btnLogin` click
