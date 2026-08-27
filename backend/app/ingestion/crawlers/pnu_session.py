@@ -9,6 +9,15 @@ from app.core.config import is_dev_environment, settings
 _logger = logging.getLogger(__name__)
 
 ONESTOP_URL = "https://onestop.pusan.ac.kr"
+ONESTOP_LOGIN_URL = f"{ONESTOP_URL}/login"
+
+# 2026-08-27 One-Stop 개편 뒤 로그인 입력폼은 외부 SSO(login.pusan.ac.kr)가 아니라
+# One-Stop 메인 HTML의 이 블록 안에 렌더링된다. 범용 ``#userID``만 쓰면 메뉴/팝업이
+# 같은 id를 도입했을 때 잘못된 요소를 잡을 수 있으므로 로그아웃 전용 컨테이너로 한정한다.
+_ONESTOP_LOGIN_FORM = ".tab-content.logged-out-view"
+_ONESTOP_LOGIN_ID_SELECTOR = f"{_ONESTOP_LOGIN_FORM} #userID"
+_ONESTOP_LOGIN_PW_SELECTOR = f"{_ONESTOP_LOGIN_FORM} #userPW"
+_ONESTOP_LOGIN_BUTTON_SELECTOR = f"{_ONESTOP_LOGIN_FORM} .login-btn"
 
 _LOGIN_FORM_ATTEMPTS = 3
 _LOGIN_FORM_TIMEOUT_MS = 12_000
@@ -136,35 +145,34 @@ def _dismiss_login_popups(page: Page) -> int:
 
 
 def _reach_login_form(page: Page) -> None:
-    """onestop.pusan.ac.kr을 거쳐 login.pusan.ac.kr의 "아이디 로그인" 입력폼(#login_id)이
-    실제로 보일 때까지 페이지를 연다.
+    """현재 One-Stop의 로그인 입력폼이 실제로 보일 때까지 직접 연다.
 
-    **반드시 onestop.pusan.ac.kr에서 "#global_login" 링크를 클릭해서 들어가야 한다.**
-    2026-07-22 실계정 테스트로 확인: login.pusan.ac.kr/onestop/loginPage로 직접
-    이동(직링크)하면 로그인 페이지의 `csrfToken` JS 전역변수가 빈 문자열로 렌더링돼서,
-    로그인 자체(아이디/비밀번호 검증, sToken 발급)는 성공해도 그 다음 단계인
-    onestop.pusan.ac.kr로의 세션 핸드오프(`restoreSite()`가 만드는 폼 POST의 `_csrf`
-    필드)가 서버에서 거부돼 `/login`으로 되돌아온다. onestop.pusan.ac.kr에서 자연스럽게
-    "#global_login"을 클릭해 들어가야만(리퍼러 체인) csrfToken이 정상적으로 채워진다 —
-    직링크가 더 간단해 보여서 한 번 바꿨다가 이걸로 한참 헤맸다.
+    2026-08-27 확인: ``/login``은 별도 SSO 화면으로 리다이렉트하지 않고, 공개 메인
+    페이지 안의 ``.tab-content.logged-out-view``에 ``#userID``/``#userPW``와
+    ``.login-btn``을 렌더링한다. 이전의 ``#global_login → login.pusan.ac.kr`` 흐름은
+    더 이상 존재하지 않으므로, 그 링크/``#idpwTab``을 기다리면 매번 타임아웃한다.
 
-    이 사이트는 같은 코드를 여러 번 돌려도 렌더링 타이밍이 매번 조금씩 달라서
-    (networkidle 이후에도 #idpwTab이 아직 없거나, 있어도 탭 전환 클릭이 안 먹는 경우가
-    재현 시마다 달랐다), 한 시퀀스 안에서 미세하게 맞추기보다 안 되면 페이지를 통째로
-    다시 열어 재시도한다.
+    렌더링 타이밍 변동은 여전히 있어 실패하면 로그인 페이지 자체를 다시 열어 재시도한다.
     """
     last_error: PlaywrightTimeoutError | None = None
     for _ in range(_LOGIN_FORM_ATTEMPTS):
-        page.goto(ONESTOP_URL, wait_until="networkidle")
         try:
-            with page.expect_navigation():
-                page.click('a[href="#global_login"]')
-            page.wait_for_load_state("networkidle")
-            page.wait_for_selector("#idpwTab > a", state="visible", timeout=_LOGIN_FORM_TIMEOUT_MS)
-            _dismiss_login_popups(page)
-            if not page.evaluate("document.querySelector('#login_id')?.offsetParent !== null"):
-                page.click("#idpwTab > a")
-            page.wait_for_selector("#login_id", state="visible", timeout=_LOGIN_FORM_TIMEOUT_MS)
+            page.goto(ONESTOP_LOGIN_URL, wait_until="networkidle")
+            page.wait_for_selector(
+                _ONESTOP_LOGIN_ID_SELECTOR,
+                state="visible",
+                timeout=_LOGIN_FORM_TIMEOUT_MS,
+            )
+            page.wait_for_selector(
+                _ONESTOP_LOGIN_PW_SELECTOR,
+                state="visible",
+                timeout=_LOGIN_FORM_TIMEOUT_MS,
+            )
+            page.wait_for_selector(
+                _ONESTOP_LOGIN_BUTTON_SELECTOR,
+                state="visible",
+                timeout=_LOGIN_FORM_TIMEOUT_MS,
+            )
             return
         except PlaywrightTimeoutError as exc:
             last_error = exc
@@ -237,9 +245,9 @@ def login(browser: Browser, login_id: str | None = None, login_pw: str | None = 
     context.on("page", _capture_popup)
 
     _reach_login_form(page)
-    page.fill("#login_id", login_id)
-    page.fill("#login_pw", login_pw)
-    page.click("#btnLogin")
+    page.fill(_ONESTOP_LOGIN_ID_SELECTOR, login_id)
+    page.fill(_ONESTOP_LOGIN_PW_SELECTOR, login_pw)
+    page.click(_ONESTOP_LOGIN_BUTTON_SELECTOR)
 
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(1000)  # 2FA 팝업/alert가 뜨는 데 약간의 지연이 있어 캡처를 놓치지 않게 여유를 둔다
