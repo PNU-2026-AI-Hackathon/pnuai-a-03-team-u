@@ -4,6 +4,7 @@
 아예 에러가 나던 문제라 P0로 다뤘다.
 """
 
+import datetime
 import unittest
 
 from sqlalchemy import create_engine
@@ -25,6 +26,7 @@ from app.domains.academics.models import (
     Major,
     School,
     StudentCourseRecord,
+    StudentGraduationCategory,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course  # noqa: F401 — SCR.course_id FK 해석용
@@ -33,7 +35,7 @@ from app.domains.users.models import User
 _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, Course.__table__, UserAcademicProgram.__table__,
-    GraduationRequirement.__table__, StudentCourseRecord.__table__,
+    GraduationRequirement.__table__, StudentCourseRecord.__table__, StudentGraduationCategory.__table__,
 ]
 
 
@@ -247,6 +249,130 @@ class DepartmentLevelFallbackTest(_Base):
         db.commit()
         progress = compute_graduation_progress(db, 1)[0]
         self.assertFalse(progress.requirement_found)
+
+
+class OneStopOfficialFallbackTest(_Base):
+    """공식 학과 기준이 없을 때에만 학생별 One-Stop 판정을 사용한다."""
+
+    def _official_row(self, category, required, earned, satisfied, *, synced_at=None):
+        return StudentGraduationCategory(
+            user_id=1,
+            program_type="주전공",
+            category=category,
+            required_credits=required,
+            earned_credits=earned,
+            registered_credits=0,
+            expected_credits=0,
+            satisfied=satisfied,
+            synced_at=synced_at or datetime.datetime.now(datetime.UTC),
+        )
+
+    def test_uses_official_snapshot_when_requirement_is_missing(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
+        ])
+        db.commit()
+
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertTrue(progress.requirement_found)
+        self.assertEqual(133, progress.required_total_credits)
+        self.assertEqual(64, progress.earned_total_credits)
+        self.assertFalse(progress.satisfied)
+        self.assertTrue(any("One-Stop" in warning for warning in progress.warnings))
+        self.assertEqual("전공필수", progress.categories[0].category_name)
+
+    def test_does_not_override_an_official_department_requirement(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130, required_major_required=30,
+        ))
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
+        ])
+        db.commit()
+
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertEqual(130, progress.required_total_credits)
+        self.assertFalse(any("One-Stop" in warning for warning in progress.warnings))
+
+    def test_partial_or_broken_snapshot_is_not_used(self):
+        db = self.make_db()
+        db.add(self._official_row("전공필수", 33, 26, False))
+        db.commit()
+
+        progress = compute_graduation_progress(db, 1)[0]
+        self.assertFalse(progress.requirement_found)
+
+    def test_does_not_use_ambiguous_same_type_program_snapshot(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add(UserAcademicProgram(
+            user_id=1, department_id=10, program_type="primary", curriculum_year="2024",
+        ))
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stamp),
+        ])
+        db.commit()
+
+        for progress in compute_graduation_progress(db, 1):
+            self.assertFalse(progress.requirement_found)
+
+    def test_does_not_use_stale_snapshot(self):
+        db = self.make_db()
+        stale = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=32)
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stale),
+            self._official_row("교양필수", 10, 7, False, synced_at=stale),
+            self._official_row("총이수학점", 133, 64, False, synced_at=stale),
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
+
+    def test_does_not_use_mixed_sync_snapshot(self):
+        db = self.make_db()
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add_all([
+            self._official_row("전공필수", 33, 26, False, synced_at=stamp),
+            self._official_row("교양필수", 10, 7, False, synced_at=stamp),
+            self._official_row(
+                "총이수학점", 133, 64, False,
+                synced_at=stamp - datetime.timedelta(seconds=1),
+            ),
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
+
+    def test_never_uses_ambiguous_interdisciplinary_snapshot(self):
+        db = self.make_db()
+        program = db.query(UserAcademicProgram).filter_by(user_id=1).one()
+        program.program_type = "interdisciplinary"
+        stamp = datetime.datetime.now(datetime.UTC)
+        db.add_all([
+            StudentGraduationCategory(
+                user_id=1, program_type="융합전공", category=category,
+                required_credits=required, earned_credits=earned,
+                registered_credits=0, expected_credits=0, satisfied=False,
+                synced_at=stamp,
+            )
+            for category, required, earned in (
+                ("전공필수", 33, 26), ("교양필수", 10, 7), ("총이수학점", 133, 64),
+            )
+        ])
+        db.commit()
+
+        self.assertFalse(compute_graduation_progress(db, 1)[0].requirement_found)
 
 
 class LeaveOfAbsenceIsJudgedTest(_Base):

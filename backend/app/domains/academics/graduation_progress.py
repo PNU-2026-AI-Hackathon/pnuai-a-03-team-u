@@ -7,13 +7,19 @@
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import Session
 
-from app.domains.academics.models import GraduationRequirement, StudentCourseRecord, UserAcademicProgram
+from app.domains.academics.models import (
+    GraduationRequirement,
+    StudentCourseRecord,
+    StudentGraduationCategory,
+    UserAcademicProgram,
+)
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.academics.tracks import is_ai_track as _is_ai_track
 
@@ -27,6 +33,26 @@ _REQUIRED_FIELD_TO_LABEL: dict[str, str] = {
     "required_general_elective": "교양선택",
     "required_free_elective": "일반선택",
 }
+
+# One-Stop 졸업예정정보 표의 학적신청구분 → 앱의 program_type. 이 표는 학생별 학교
+# 공식 판정이므로, 학과 공통 기준이 없는 경우에만 fallback으로 쓴다. 공통 기준 행을
+# 만들거나 갱신하는 용도로 쓰면 다른 학생에게 잘못 전파된다.
+_ONESTOP_PROGRAM_TYPE_MAP = {
+    "주전공": "primary",
+    "복수전공": "dual",
+    "부전공": "minor",
+    "연합전공": "interdisciplinary",
+    "연계전공": "interdisciplinary",
+    "융합전공": "interdisciplinary",
+}
+
+_ONESTOP_TOTAL_CATEGORY = "총이수학점"
+_ONESTOP_FALLBACK_REQUIRED_CATEGORIES = {
+    _ONESTOP_TOTAL_CATEGORY,
+    "전공필수",
+    "교양필수",
+}
+_ONESTOP_FALLBACK_MAX_AGE = datetime.timedelta(days=31)
 
 # "교양선택" 세부영역 — 세대별로 이름과 구성이 다르다
 # (docs/progress/liberal-arts-area-requirements.md §4.1/§6/§7.2/§7.3 조사 참고).
@@ -293,6 +319,117 @@ def _earned_credits_by_category(db: Session, user_id: int) -> dict[str, Decimal]
     return totals
 
 
+def _official_onestop_fallback(
+    db: Session, user_id: int, program: UserAcademicProgram
+) -> ProgramProgress | None:
+    """학과 공통 기준이 없을 때만 One-Stop 학교 공식 판정을 보여준다.
+
+    One-Stop의 `student_graduation_categories`는 특정 학생의 학적·학번·예외를 모두
+    반영한 결과다. 따라서 `graduation_requirements`를 채우는 소스로 쓰지 않고,
+    그 학생의 기준 행을 찾지 못했을 때에만 이 진행도 응답을 대체한다. 총이수학점 행이
+    없으면 표가 부분 파싱됐을 가능성이 있으므로 사용하지 않는다.
+    """
+    # 일부 단위 테스트와 아직 마이그레이션하지 않은 개발 DB에는 이 테이블이 없다.
+    # 그런 환경에서 "기준 없음" 경로 자체가 500이 되면 안 되므로 기존 동작을 유지한다.
+    # Engine을 inspect하면 SQLite in-memory 환경에서 별도 연결의 rollback이 현재
+    # 트랜잭션을 되돌릴 수 있다. 현재 세션 연결을 검사해 진행 중인 대화/제안 쓰기를
+    # 건드리지 않는다.
+    if not inspect(db.connection()).has_table(StudentGraduationCategory.__tablename__):
+        return None
+
+    # One-Stop 표에는 신청학과/전공 식별자가 없다. 특히 연합·연계·융합전공은 앱에서
+    # 모두 `interdisciplinary`로 접히므로, 원문 프로그램을 보존하는 스키마를 만들기
+    # 전까지는 다른 프로그램의 판정을 붙이지 않기 위해 fallback 대상에서 제외한다.
+    if program.program_type == "interdisciplinary":
+        return None
+
+    # 같은 internal program_type을 두 개
+    # 이상 가진 학생(복수 복수전공, 여러 연계전공 등)은 어느 행이 어느 프로그램인지
+    # 확정할 수 없으므로 공식 결과를 억지로 붙이지 않는다.
+    active_same_type_count = db.query(func.count(UserAcademicProgram.id)).filter(
+        UserAcademicProgram.user_id == user_id,
+        UserAcademicProgram.program_type == program.program_type,
+        UserAcademicProgram.status.in_(ACTIVE_PROGRAM_STATUSES),
+    ).scalar() or 0
+    if active_same_type_count != 1:
+        return None
+
+    portal_program_types = [
+        label for label, internal in _ONESTOP_PROGRAM_TYPE_MAP.items()
+        if internal == program.program_type
+    ]
+    if not portal_program_types:
+        return None
+    rows = db.scalars(
+        select(StudentGraduationCategory)
+        .where(
+            StudentGraduationCategory.user_id == user_id,
+            StudentGraduationCategory.program_type.in_(portal_program_types),
+        )
+        .order_by(StudentGraduationCategory.id)
+    ).all()
+    total_row = next(
+        (row for row in rows if (row.category or "").strip() == _ONESTOP_TOTAL_CATEGORY),
+        None,
+    )
+    if total_row is None or total_row.required_credits is None or total_row.earned_credits is None:
+        return None
+
+    # 표가 일부만 파싱된 경우를 학교 공식 전체 판정으로 보이면 안 된다. 학사 기준의
+    # 공통 핵심 세 행(총계·전공필수·교양필수)이 모두 같은 동기화에서 왔을 때만 쓴다.
+    # 학과별 기준을 알 수 없는 경우에도, 이 조건을 못 만족하면 기존 "판정 불가"가
+    # 더 안전하다.
+    category_names = {(row.category or "").strip() for row in rows}
+    if not _ONESTOP_FALLBACK_REQUIRED_CATEGORIES.issubset(category_names):
+        return None
+    synced_at = total_row.synced_at
+    if synced_at.tzinfo is None:
+        synced_at = synced_at.replace(tzinfo=datetime.UTC)
+    if datetime.datetime.now(datetime.UTC) - synced_at > _ONESTOP_FALLBACK_MAX_AGE:
+        return None
+    if any(row.synced_at != total_row.synced_at for row in rows):
+        return None
+
+    required_total = Decimal(total_row.required_credits)
+    earned_total = Decimal(total_row.earned_credits)
+    satisfied = total_row.satisfied
+    categories = [
+        CategoryProgress(
+            category_code=f"onestop:{row.id}",
+            category_name=(row.category or "").strip(),
+            required_credits=Decimal(row.required_credits) if row.required_credits is not None else None,
+            earned_credits=Decimal(row.earned_credits) if row.earned_credits is not None else Decimal("0"),
+            remaining_credits=(
+                Decimal("0") if row.satisfied is True else
+                max(Decimal("0"), Decimal(row.required_credits) - Decimal(row.earned_credits))
+                if row.required_credits is not None and row.earned_credits is not None else None
+            ),
+            satisfied=row.satisfied,
+        )
+        for row in rows
+        if (row.category or "").strip() != _ONESTOP_TOTAL_CATEGORY
+    ]
+    return ProgramProgress(
+        user_academic_program_id=program.id,
+        program_type=program.program_type,
+        department_id=program.department_id,
+        major_id=program.major_id,
+        curriculum_year=program.curriculum_year,
+        requirement_found=True,
+        required_total_credits=int(required_total),
+        earned_total_credits=earned_total,
+        remaining_total_credits=(
+            Decimal("0") if satisfied is True else max(Decimal("0"), required_total - earned_total)
+        ),
+        satisfied=satisfied,
+        categories=categories,
+        warnings=[
+            "학과 공통 기준학점 데이터가 없어 One-Stop의 학생별 학교 공식 졸업사정 결과로 표시함.",
+            f"학교 공식 판정 동기화 시각: {total_row.synced_at.isoformat()}",
+        ],
+    )
+
+
 def compute_graduation_progress(
     db: Session, user_id: int, program_types: set[str] | None = None
 ) -> list[ProgramProgress]:
@@ -315,6 +452,10 @@ def compute_graduation_progress(
         warnings: list[str] = []
 
         if requirement is None:
+            official_fallback = _official_onestop_fallback(db, user_id, program)
+            if official_fallback is not None:
+                results.append(official_fallback)
+                continue
             results.append(
                 ProgramProgress(
                     user_academic_program_id=program.id,
