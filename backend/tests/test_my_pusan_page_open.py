@@ -124,6 +124,16 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password"), page.events)
         self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
+        # 구형 HTML은 폼이 처음에 숨겨져 있다. 순서가 뒤집히면 visible wait가
+        # 타임아웃해 이번 장애가 그대로 재발한다.
+        self.assertLess(
+            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
+            page.events.index(("wait", _LEGACY_LOGIN_ID_SELECTOR)),
+        )
+        self.assertLess(
+            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
+            page.events.index(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001")),
+        )
 
     def test_normal_load_returns_none(self):
         page = _FakePage([_CERT] * 10, ready_at=2)
