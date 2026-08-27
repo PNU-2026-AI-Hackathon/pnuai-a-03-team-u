@@ -38,6 +38,7 @@ from app.domains.academics.course_substitution import (
     substituted_course_names,
     substituting_record,
 )
+from app.domains.academics.fusion_catalog import available_fusion_programs
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from app.domains.academics.program_evaluator import evaluate_program
 from app.domains.academics.models import (
@@ -436,10 +437,15 @@ _CONDITIONAL_RULES: dict[str, str] = {
 
     "career_dept_mismatch": """
 - **진로-전공 mismatch 감지 시 부·복수전공 옵션 제안**: 학생 프로필의 진로 목표와
-  주전공 학과가 명백히 다른 도메인이라 판단된다. `finish_response`에서 **부전공/복수전공
-  옵션을 능동적으로 제안해라**. 문구 예: "국문학과 커리큘럼만으로는 백엔드 실무 역량
-  쌓기 어려워요. 정보컴퓨터공학부 **부전공(21학점)** 또는 **복수전공(36학점)** 을
-  고려해보시는 게 좋습니다 — 프로필 '학적 관리'에서 등록 가능합니다."
+  주전공 학과가 명백히 다른 도메인이라 판단된다. 제안 전에 **`get_fusion_programs`를
+  호출**해서 이 학생이 이수 가능한 융합전공/연계전공이 있는지 먼저 확인해라 —
+  진로에 맞는 융합전공(반도체·DX·그린바이오·SW연계전공 등)이 있으면 일반 학과 부전공
+  대신, 또는 함께 제안한다. `finish_response`에서 **부전공/복수전공/융합전공 옵션을
+  능동적으로 제안해라**. 문구 예: "국문학과 커리큘럼만으로는 백엔드 실무 역량 쌓기
+  어려워요. 정보컴퓨터공학부 **부전공(21학점)** 또는 **복수전공(36학점)** 을
+  고려해보시는 게 좋습니다 — 프로필 '학적 관리'에서 등록 가능합니다." 융합전공을
+  제안할 때도 `get_fusion_programs`가 준 이름·학점을 그대로 인용하고, 등록 위치는
+  로드맵 상단 'AI융합' 패널이라고 안내해라.
   이 안내를 안 하면 사용자는 자기 진로에 맞는 경로를 놓친다.""",
 
     "transfer_student": """
@@ -988,6 +994,22 @@ _TOOLS = [
                 "AI융합 공통교과목 목록(모듈1/모듈2, 개설 확인 여부, 온라인 개설 여부)도 함께 "
                 "돌려주므로 '무엇을 담으면 되는지'까지 구체적으로 답할 수 있다. "
                 "tracks가 빈 배열이면 대상 학과가 아니니 트랙을 아예 언급하지 마라."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fusion_programs",
+            "description": (
+                "이 학생이 이수할 수 있는 융합전공·연계전공 목록을 조회한다. "
+                "get_available_tracks(AI융합트랙 인증)와 달리 부·복수전공으로 이수하는 "
+                "융합전공(반도체·DX·그린바이오 등 신설), SW연계전공까지 포함한다. "
+                "진로와 주전공이 어긋나 보이는 학생에게 부·복수전공을 제안할 때, 일반 학과 "
+                "부전공뿐 아니라 이 목록의 융합전공도 후보로 들려면 먼저 이걸 호출해라. "
+                "각 항목에 total_credits(부전공 21·복수전공 36~48), 참여학과, 이미 등록했는지가 온다. "
+                "programs가 빈 배열이면 대상이 없으니 융합전공을 언급하지 마라."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -1962,6 +1984,47 @@ class _ToolContext:
                 "노려야 한다고만 말해라). ai_common_not_in_catalog = 우리 수강편람에서 확인되지 "
                 "않음(AI융합교육원 공지를 확인하라고 덧붙여라). "
                 "listed_as가 있으면 수강편람에 그 이름으로 올라와 있다는 뜻이다."
+            ),
+        }
+
+    def get_fusion_programs(self) -> dict:
+        """이 학생이 이수할 수 있는 융합전공·연계전공·AI(SW)융합트랙 목록.
+
+        `get_available_tracks`가 AI융합트랙(인증 프로그램)만 보는 데 비해, 이건
+        학사규정상 부·복수전공으로 이수하는 **융합전공/연계전공**까지 포함한다
+        (반도체·DX·그린바이오 등 신설 융합전공, SW연계전공 등). 진로와 주전공이
+        어긋나 보이는 학생에게 부·복수전공을 제안할 때, 일반 학과 부전공만 말고
+        이 목록의 융합전공도 후보로 들 수 있게 한다.
+
+        대상이 없으면 `programs: []`. 그때는 융합전공 얘기를 지어내지 마라.
+        """
+        infos = available_fusion_programs(self.db, self.user)
+        if not infos:
+            return {
+                "programs": [],
+                "note": "이 학생이 이수 가능한 융합·연계전공이 확인되지 않는다. 언급하지 마라.",
+            }
+        programs = [
+            {
+                "program_id": info.program_id,
+                "name": info.program_name,
+                "kind_label": info.kind_label,  # SW연계전공 / AI융합트랙 / 융합전공 ...
+                "program_type": info.program_type,  # minor | dual | interdisciplinary
+                "program_type_label": info.program_type_label,  # 부전공 | 복수전공 | None
+                "total_credits": info.total_credits,
+                "participating_departments": [p.name for p in info.participating_departments],
+                "already_enrolled": info.enrolled,
+            }
+            for info in infos
+        ]
+        return {
+            "programs": programs,
+            "note": (
+                "졸업요건이 아니라 학생이 선택해 이수하는 부·복수전공/인증 프로그램이다. "
+                "already_enrolled=true면 이미 계획/학적에 있으니 '새로 고려'가 아니라 "
+                "'진행 중'으로 다뤄라. 등록은 프로필 '학적 관리' 또는 로드맵 상단 "
+                "'AI융합' 패널에서 한다고 안내해라. total_credits(부전공 21·복수전공 36~48)를 "
+                "그대로 인용하고 임의로 바꾸지 마라."
             ),
         }
 

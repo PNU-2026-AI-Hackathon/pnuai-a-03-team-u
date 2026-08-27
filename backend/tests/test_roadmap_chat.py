@@ -3856,3 +3856,169 @@ class FullHorizonDetectionBoundaryTest(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertFalse(
                     roadmap_chat_mod._looks_like_full_horizon_request(message))
+
+
+class GetFusionProgramsToolTest(unittest.TestCase):
+    """`_ToolContext.get_fusion_programs` — 로드맵 챗이 융합·연계전공을 후보로 볼 수 있게
+    하는 조회 도구. `app.domains.academics.fusion_catalog.available_fusion_programs`를
+    그대로 쓰되, LLM이 학점을 지어내지 않도록 total_credits·참여학과를 실어 준다."""
+
+    def make_db(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        return sessionmaker(bind=engine)()
+
+    def _ctx(self, db, user):
+        roadmap = CourseRoadmap(id=1, user_id=user.id)
+        db.add(roadmap)
+        db.flush()
+        return _ToolContext(db, user, roadmap)
+
+    def _base(self, db):
+        db.add(School(id=1, name="부산대학교"))
+        db.add(College(id=1, school_id=1, name="테스트대학"))
+        db.add(Department(id=10, college_id=1, name="심리학과"))
+        db.add(Department(id=40, college_id=1, name="반도체융합전공"))
+        db.flush()
+
+    def test_self_contained_fusion_major_is_offered_with_credits(self):
+        db = self.make_db()
+        self._base(db)
+        db.add(Major(id=78, department_id=40, name="반도체융합전공"))
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=40, major_id=78, program_type="minor",
+            required_total_credits=21, curriculum_year="2026",
+        ))
+        db.add(Course(id=9, course_name="반도체공정", department_id=40,
+                      category="전공선택", credits=3, year="1", semester="1"))
+        db.flush()
+        db.add(ProgramCourse(department_id=40, major_id=78, course_id=9, curriculum_year="2026"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)
+        db.add(user)
+        db.flush()
+
+        result = self._ctx(db, user).get_fusion_programs()
+
+        program = next(p for p in result["programs"] if p["program_id"])
+        self.assertEqual("반도체융합전공", program["name"])
+        self.assertEqual("minor", program["program_type"])
+        self.assertEqual(21, program["total_credits"])
+        self.assertFalse(program["already_enrolled"])
+
+    def test_interdisciplinary_program_serializes_with_null_label_fields(self):
+        """SW연계전공은 program_type='interdisciplinary'라 program_type_label이 None이고,
+        total_credits도 None일 수 있다. 이 dict가 json.dumps로 LLM에 그대로 넘어가므로
+        None 필드가 있어도 직렬화가 깨지지 않아야 한다."""
+        import json
+
+        db = self.make_db()
+        self._base(db)
+        db.add(Department(id=20, college_id=1, name="경영학과"))
+        db.flush()
+        db.add(Major(id=66, department_id=20, name="빅데이터(SW연계전공)"))
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=20, major_id=66, program_type="interdisciplinary",
+            required_total_credits=None, curriculum_year="2026",
+        ))
+        # 인정과목 = 심리학과(학생 소속) 과목 → 참여학과에 심리학과가 들어가 게이트 통과
+        db.add(Course(id=1, course_name="심리통계", department_id=10,
+                      category="전공선택", credits=3, year="1", semester="1"))
+        db.flush()
+        db.add(ProgramCourse(department_id=20, major_id=66, course_id=1, curriculum_year="2026"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)
+        db.add(user)
+        db.flush()
+
+        result = self._ctx(db, user).get_fusion_programs()
+        program = next(p for p in result["programs"] if p["name"] == "빅데이터(SW연계전공)")
+        self.assertEqual("interdisciplinary", program["program_type"])
+        self.assertIsNone(program["program_type_label"])
+        self.assertIsNone(program["total_credits"])
+        self.assertEqual(["심리학과"], program["participating_departments"])
+        json.dumps(result, ensure_ascii=False)  # 직렬화가 깨지지 않는다
+
+    def test_cross_listed_program_is_gated_out_for_outside_department(self):
+        """교차인정이 실재하는 프로그램은 참여학과가 아닌 학생의 도구 결과에서 빠진다
+        (fusion_catalog.student_can_pursue 게이트를 도구도 그대로 탄다)."""
+        db = self.make_db()
+        self._base(db)
+        db.add(Department(id=20, college_id=1, name="경영학과"))
+        db.add(Department(id=30, college_id=1, name="정보컴퓨터공학부"))
+        db.flush()
+        db.add(Major(id=66, department_id=20, name="핀테크(SW연계전공)"))
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=20, major_id=66, program_type="interdisciplinary",
+            required_total_credits=48, curriculum_year="2026",
+        ))
+        db.add(Course(id=2, course_name="자료구조", department_id=30,
+                      category="전공선택", credits=3, year="1", semester="1"))
+        db.flush()
+        db.add(ProgramCourse(department_id=20, major_id=66, course_id=2, curriculum_year="2026"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)  # 심리학과 — 참여학과 {정보컴퓨터공학부}에 없음
+        db.add(user)
+        db.flush()
+
+        result = self._ctx(db, user).get_fusion_programs()
+        self.assertNotIn("핀테크(SW연계전공)", [p["name"] for p in result["programs"]])
+
+    def test_already_enrolled_program_is_flagged(self):
+        """이미 fusion_plan으로 저장한 minor/dual은 목록에 남되 already_enrolled=True."""
+        db = self.make_db()
+        self._base(db)
+        db.add(Major(id=78, department_id=40, name="반도체융합전공"))
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=40, major_id=78, program_type="minor",
+            required_total_credits=21, curriculum_year="2026",
+        ))
+        db.add(Course(id=9, course_name="반도체공정", department_id=40,
+                      category="전공선택", credits=3, year="1", semester="1"))
+        db.flush()
+        db.add(ProgramCourse(department_id=40, major_id=78, course_id=9, curriculum_year="2026"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)
+        db.add(user)
+        db.flush()
+        db.add(UserAcademicProgram(
+            user_id=1, department_id=40, major_id=78, program_type="minor",
+            curriculum_year="2026", status="active", source="fusion_plan",
+        ))
+        db.flush()
+
+        result = self._ctx(db, user).get_fusion_programs()
+        program = next(p for p in result["programs"] if p["name"] == "반도체융합전공")
+        self.assertTrue(program["already_enrolled"])
+
+    def test_no_eligible_program_returns_empty_with_do_not_mention_note(self):
+        db = self.make_db()
+        self._base(db)
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)
+        db.add(user)
+        db.flush()
+
+        result = self._ctx(db, user).get_fusion_programs()
+
+        self.assertEqual([], result["programs"])
+        self.assertIn("언급하지 마라", result["note"])
+
+    def test_dispatch_routes_to_the_tool(self):
+        db = self.make_db()
+        self._base(db)
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10)
+        db.add(user)
+        db.flush()
+
+        result = self._ctx(db, user).dispatch("get_fusion_programs", {})
+        self.assertIn("programs", result)
+
+
+if __name__ == "__main__":
+    unittest.main()
