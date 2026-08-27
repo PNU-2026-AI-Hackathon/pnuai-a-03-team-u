@@ -213,6 +213,8 @@ def map_academic_program_registrations(
         # (반도체 부전공 + 핀테크 부전공처럼) department_id까지 봐야 서로 안 덮어쓴다.
         # department_id가 정확히 일치하는 행을 우선 재사용하고, 없으면 과거에 dept
         # 해석 실패로 남은 NULL-dept 행 하나를 골라 승격한다.
+        # 한 호출 안에서 방금 add한 행은 autoflush=False라 이 쿼리에 안 잡히지만,
+        # 서로 department_id가 달라 candidates가 안 맞으므로 각자 새 행으로 생성된다.
         program = next(
             (c for c in candidates if c.department_id == department_id), None
         ) or next(

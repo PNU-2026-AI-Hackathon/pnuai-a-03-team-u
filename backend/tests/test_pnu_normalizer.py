@@ -376,10 +376,14 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
             ["3", "부전공", "반도체융합전공", "N", "선택"],
         ])
         db.flush()
-        total_minors = db.query(UserAcademicProgram).filter_by(
+        rerun_minors = db.query(UserAcademicProgram).filter_by(
             user_id=1, program_type="minor"
-        ).count()
-        self.assertEqual(2, total_minors)
+        ).all()
+        self.assertEqual(2, len(rerun_minors))
+        self.assertEqual(
+            {"핀테크융합전공", "반도체융합전공"},
+            {db.get(Department, p.department_id).name for p in rerun_minors},
+        )
 
     def test_unknown_label_and_short_rows_are_skipped(self):
         db = self.make_db()
