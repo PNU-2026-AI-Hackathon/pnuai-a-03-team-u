@@ -470,7 +470,9 @@ def _program_rule_judgment(
     has_groups = bool(special.get("groups"))
     # evaluate_program은 program_courses를 requirement 행의 curriculum_year로 필터한다
     # (program_evaluator.py). 게이트도 같은 연도로 봐야 "하이브리드로 갔는데 인정과목이
-    # 0건이라 전부 미충족" 같은 어긋남이 안 생긴다.
+    # 0건이라 전부 미충족" 같은 어긋남이 안 생긴다. (evaluate_program이 학번 정확 매칭에
+    # 실패해 curriculum_year=NULL 요건으로 폴백하면 게이트와 연도가 갈릴 수 있으나,
+    # 시드 스크립트가 그런 연도 불일치를 만들지 않는다.)
     has_program_courses = (
         db.query(ProgramCourse.id)
         .filter(
