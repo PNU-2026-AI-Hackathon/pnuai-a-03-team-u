@@ -81,30 +81,46 @@ _SSO = "https://my.pusan.ac.kr/modules/pusan/rsso/loginCheck.php"
 
 
 class _LegacyLoginPage:
-    """One-Stop 신규 로그인 뒤 My Pusan 구형 폼이 다시 나타난 상태."""
+    """One-Stop 신규 로그인 뒤 My Pusan 구형 폼이 다시 나타난 상태.
+
+    공지 팝업(`popup_27`)이 `#idpwTab`을 덮고 있어서, 팝업을 숨기기 전의 탭 click은
+    타임아웃한다(실제 장애 재현). `_HIDE_LOGIN_POPUPS_JS` evaluate 뒤에야 탭이 눌리고
+    `.tab-cont`가 펼쳐져 `#login_id`가 크기를 갖는다.
+    """
 
     def __init__(self):
         self.url = _LOGIN
         self.events: list[tuple] = []
+        self.popup_up = True
+        self.tab_expanded = False
 
     def goto(self, url, **kwargs):
         self.events.append(("goto", url, kwargs))
         self.url = _LOGIN
 
-    def wait_for_selector(self, selector, **_kwargs):
-        self.events.append(("wait", selector))
+    def wait_for_selector(self, selector, **kwargs):
+        self.events.append(("wait", selector, kwargs.get("state")))
+
+    def evaluate(self, script):
+        self.events.append(("evaluate", script))
+        if "layerPopupClose" in script or "popup_layer" in script:
+            self.popup_up = False           # 팝업 숨김
+            return 1
+        if "getBoundingClientRect" in script:
+            return self.tab_expanded         # 탭을 눌러야 폼이 크기를 갖는다
+        return None
 
     def fill(self, selector, value):
         self.events.append(("fill", selector, value))
 
     def click(self, selector, **_kwargs):
         self.events.append(("click", selector))
+        if selector == _LEGACY_LOGIN_TAB_SELECTOR:
+            if self.popup_up:
+                raise PlaywrightTimeoutError("tab covered by popup")
+            self.tab_expanded = True
+            return
         self.url = "https://my.pusan.ac.kr/"
-
-    def locator(self, selector):
-        # _dismiss_login_popups가 부르는 진입점. 팝업이 없는 상태를 흉내낸다.
-        self.events.append(("locator", selector))
-        return _NoopLocator()
 
     def wait_for_load_state(self, state, **_kwargs):
         self.events.append(("load", state))
@@ -113,42 +129,35 @@ class _LegacyLoginPage:
         self.events.append(("sleep", ms))
 
 
-class _NoopLocator:
-    def evaluate_all(self, _script):
-        return 0
-
-
 class OpenCertificatePageTest(unittest.TestCase):
-    def test_legacy_my_pusan_login_uses_its_own_form_after_onestop_login(self):
+    def test_legacy_my_pusan_login_hides_popup_before_clicking_tab(self):
         page = _LegacyLoginPage()
 
         self.assertIsNone(_login_to_legacy_my_pusan(page, "20260001", "test-password"))
 
+        kinds = [e[0] for e in page.events]
         self.assertEqual(("goto", LEGACY_MY_LOGIN_URL, {
             "wait_until": "domcontentloaded", "timeout": 10_000,
         }), page.events[0])
-        self.assertIn(("wait", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
-        self.assertIn(("click", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
-        # 로그인 공지 팝업이 `#idpwTab`을 덮으면 탭 click이 30초 타임아웃한다.
-        # 탭을 누르기 전에 팝업 닫기를 먼저 시도해야 한다.
-        self.assertLess(
-            next(i for i, e in enumerate(page.events) if e[0] == "locator"),
-            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
-        )
-        self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR), page.events)
-        self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR), page.events)
+        # 탭 골격은 attached로만 기다린다 (팝업에 가려져 visible이 아닐 수 있음).
+        self.assertIn(("wait", _LEGACY_LOGIN_TAB_SELECTOR, "attached"), page.events)
+        # 첫 팝업 숨김 evaluate가 첫 탭 click보다 앞선다.
+        first_hide = next(i for i, e in enumerate(page.events)
+                          if e[0] == "evaluate" and "popup_layer" in e[1])
+        first_tab_click = kinds.index("click")  # 첫 click은 탭
+        self.assertEqual(_LEGACY_LOGIN_TAB_SELECTOR, page.events[first_tab_click][1])
+        self.assertLess(first_hide, first_tab_click)
+        # 팝업에 가려진 첫 탭 click은 삼켜지고, 숨김 뒤 재시도로 폼이 펼쳐진다.
+        self.assertGreaterEqual(kinds.count("click"), 2)  # 탭(재시도) + btnLogin
+        # 폼이 펼쳐진 뒤에야 id/pw를 visible로 기다리고 채운다.
+        self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR, "visible"), page.events)
+        self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR, "visible"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password"), page.events)
         self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
-        # 구형 HTML은 폼이 처음에 숨겨져 있다. 순서가 뒤집히면 visible wait가
-        # 타임아웃해 이번 장애가 그대로 재발한다.
         self.assertLess(
-            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
-            page.events.index(("wait", _LEGACY_LOGIN_ID_SELECTOR)),
-        )
-        self.assertLess(
-            page.events.index(("click", _LEGACY_LOGIN_TAB_SELECTOR)),
             page.events.index(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001")),
+            page.events.index(("click", _LEGACY_LOGIN_BUTTON_SELECTOR)),
         )
 
     def test_normal_load_returns_none(self):
