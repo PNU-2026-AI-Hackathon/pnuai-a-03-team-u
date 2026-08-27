@@ -151,6 +151,28 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         db = _make_db(); _seed(db); user = _make_user(db, dept_id=None); db.commit()
         self.assertEqual([], list_available_fusion_programs(current_user=user, db=db))
 
+    def test_ai_track_via_special_rules_only(self):
+        """이름에 융합 키워드가 없고 special_rules.certification_type로만 잡히는 트랙 —
+        WHERE의 `program_type == "interdisciplinary"` OR항 + `is_ai_track` 경로 검증."""
+        db = _make_db(); _seed(db)
+        db.add(Department(id=70, college_id=1, name="스포츠과학과"))
+        db.flush()
+        db.add(Major(id=90, department_id=70, name="AI 스포츠과학"))  # 키워드 없음
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=70, major_id=90, program_type="interdisciplinary",
+            required_total_credits=21, curriculum_year="2026",
+            special_rules={"certification_type": "AI융합트랙"},
+        ))
+        db.flush()
+        db.add(ProgramCourse(department_id=70, major_id=90, course_id=1, curriculum_year=_YEAR))
+        db.add(ProgramCourse(department_id=70, major_id=90, course_id=2, curriculum_year=_YEAR))
+        user = _make_user(db, dept_id=18); db.commit()
+        result = list_available_fusion_programs(current_user=user, db=db)
+        track = next(o for o in result if o.major_id == 90)
+        self.assertEqual("track", track.kind)
+        self.assertEqual("AI융합트랙", track.kind_label)
+
     def test_ai_track_classified_as_track(self):
         db = _make_db(); _seed(db)
         db.add(Major(id=88, department_id=18, name="심리데이터사이언스(SW융합트랙)"))
