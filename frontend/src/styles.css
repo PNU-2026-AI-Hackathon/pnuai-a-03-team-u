@@ -4569,7 +4569,28 @@ body.theme-dark .activity-tags span {
 }
 
 .fusion-programs-modal {
-  gap: 14px;
+  gap: 12px;
+}
+
+.fusion-programs-contact {
+  flex: none;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--blue-soft);
+}
+
+.fusion-programs-contact a {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.fusion-programs-contact p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 .fusion-programs-list {
