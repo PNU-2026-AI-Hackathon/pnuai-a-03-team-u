@@ -427,6 +427,20 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
         map_academic_program_registrations(db, 1, [], reconcile_portal_snapshot=False)
         self.assertEqual("active", portal.status)
 
+    def test_header_only_snapshot_never_inactivates_programs(self):
+        """헤더만 온 부분 응답은 '모든 공식 학적 해제'가 아니다."""
+        db = self.make_db()
+        portal = map_academic_program_registrations(
+            db, 1, [["1", "복수전공", "수학과", "N", "선택"]]
+        )[0]
+        db.commit()
+
+        map_academic_program_registrations(
+            db, 1, [["No", "학적신청구분", "학과", "취소여부", ""]],
+            reconcile_portal_snapshot=True,
+        )
+        self.assertEqual("active", portal.status)
+
 
 if __name__ == "__main__":
     unittest.main()

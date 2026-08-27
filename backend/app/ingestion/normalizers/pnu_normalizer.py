@@ -213,7 +213,10 @@ def map_academic_program_registrations(
     # 주전공은 학생기본정보 표가 별도 authoritative source라 여기서 비활성화하지
     # 않는다. 나머지는 학적신청 표가 매번 현재 수강생의 전체 목록을 주므로, 이번
     # 스냅샷에 없는 과거 portal/legacy 행을 활성 상태로 남겨두면 졸업 판정이 중복된다.
-    if reconcile_portal_snapshot:
+    # 헤더만 오고 데이터 행이 비었거나 라벨이 바뀌어 전부 skip된 응답은 완전한
+    # 스냅샷이 아니다. 주전공을 포함해 적어도 하나의 인식 가능한 공식 행이 있어야
+    # "표에 없음"을 실제 해제로 해석한다.
+    if reconcile_portal_snapshot and seen_portal_programs:
         existing_portal_programs = (
             db.query(UserAcademicProgram)
             .filter(
