@@ -93,7 +93,7 @@
 ### 2. 상세설계
 #### 2.1. 시스템 구성도
 <p align="center">
-  <img src="docs/assets/planu-system-architecture.svg" alt="Plan-U 시스템 구성도" width="100%" />
+  <img src="docs/assets/planu-system-architecture.png" alt="Plan-U 시스템 구성도" width="100%" />
 </p>
 
 <details>
@@ -312,7 +312,7 @@ flowchart TB
 
 3.1이 화면 단위의 큰 흐름이라면, 아래는 그 흐름 안에서 **AI 에이전트가 실제로 어떤 도구를 몇 단계에 걸쳐 호출하는지**를 보여준다. Plan-U의 두 AI 기능(성장 로드맵 상담, 시간표 추천)은 LLM이 자유롭게 답을 지어내는 게 아니라, 정해진 도구(tool) 집합을 순서대로 호출하며 실제 DB 값을 확인한 뒤에만 답을 만든다 — 그리고 그 답은 하나도 자동으로 저장되지 않고, **사용자가 체크해서 승인한 것만** 반영된다. 두 에이전트는 **③에서 병렬로 갈라지는 독립 화면**이다 — 로드맵을 거치지 않고 바로 시간표 화면에서 AI 추천을 받아도 되고, 그 반대도 된다(3.1 참고).
 
-<p align="center"><img src="docs/assets/planu-ai-workflow-presentation.svg" alt="Plan-U AI 에이전트 도구 호출 흐름" width="100%" /></p>
+<p align="center"><img src="docs/assets/planu-ai-workflow-presentation.png" alt="Plan-U AI 에이전트 도구 호출 흐름" width="100%" /></p>
 
 <details>
 <summary>원본 Mermaid AI 도구 호출 흐름 보기</summary>
