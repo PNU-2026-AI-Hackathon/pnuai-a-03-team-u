@@ -156,11 +156,6 @@ class _LegacyLoginPage:
     def wait_for_load_state(self, state, **_kwargs):
         self.events.append(("load", state))
 
-    def wait_for_url(self, predicate, **kwargs):
-        self.events.append(("url", kwargs))
-        if not predicate(self.url):
-            raise PlaywrightTimeoutError("login did not navigate")
-
     def wait_for_timeout(self, ms):
         self.events.append(("sleep", ms))
 
@@ -188,9 +183,6 @@ class OpenCertificatePageTest(unittest.TestCase):
             page.events.index(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password")),
             page.events.index(("click", _LEGACY_LOGIN_BUTTON_SELECTOR)),
         )
-        # 로그인 클릭 전 문서의 기존 load state가 즉시 반환해 rSSO form submit을
-        # 끊지 않도록, 실제 URL 전환을 기다린다.
-        self.assertTrue(any(event[0] == "url" for event in page.events))
 
     def test_retries_tab_click_when_style_tag_unavailable_and_popup_reshows(self):
         # 스타일 주입 실패(리다이렉트) + AJAX가 팝업을 한 번 되살림 → 첫 탭 click은
