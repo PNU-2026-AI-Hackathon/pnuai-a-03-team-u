@@ -9790,10 +9790,67 @@ body.theme-dark .topnav .theme-mode-button {
   background: var(--blue-soft);
 }
 
+.timetable-proposal-head {
+  position: relative;
+}
+
 .timetable-proposal-head span {
   color: var(--blue-deep);
   font-size: 12px;
   font-weight: 600;
+}
+
+.timetable-proposal-switch {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.timetable-proposal-switch button {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--blue-soft);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--blue-deep);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.timetable-proposal-switch button:hover:not(:disabled) {
+  background: var(--blue-soft);
+}
+
+.timetable-proposal-switch button.is-active {
+  background: var(--blue-deep);
+  border-color: var(--blue-deep);
+  color: #fff;
+}
+
+.timetable-proposal-switch button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.timetable-proposal-switch-next {
+  font-size: 14px;
+}
+
+body.theme-dark .timetable-proposal-switch button {
+  background: #1f2937;
+  border-color: #374151;
+  color: #cbd5e1;
+}
+
+body.theme-dark .timetable-proposal-switch button.is-active {
+  background: var(--blue-deep);
+  color: #fff;
 }
 
 .timetable-proposal-head h4 {

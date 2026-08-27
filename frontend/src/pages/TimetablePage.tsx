@@ -174,7 +174,11 @@ export function TimetablePage() {
    * 비로소 로드맵에 반영된다(로드맵 챗의 "선택 승인"과 같은 구조).
    */
   const [roadmapId, setRoadmapId] = useState<number | null>(null);
-  const [suggestion, setSuggestion] = useState<TimetableChatSuggestion | null>(null);
+  // build_timetable가 후보 조합을 여러 개 줄 수 있다. 예전엔 첫 후보만 쓰고 나머지를
+  // 버렸다 — 이제 전부 들고 있다가 승인 카드 상단에서 골라 볼 수 있게 한다.
+  const [suggestions, setSuggestions] = useState<TimetableChatSuggestion[]>([]);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const suggestion = suggestions[suggestionIndex] ?? null;
   const [selectedOfferingIds, setSelectedOfferingIds] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
   const [isSaveChecking, setIsSaveChecking] = useState(false);
@@ -280,8 +284,7 @@ export function TimetablePage() {
       setChatSessions((current) => [created, ...current]);
       setActiveChatId(created.session_id);
       setChat([]);
-      setSuggestion(null);
-      setSelectedOfferingIds(new Set());
+      resetSuggestions();
     } catch {
       // 생성 실패 시 기존 세션 유지
     }
@@ -294,8 +297,7 @@ export function TimetablePage() {
     try {
       await clearTimetableChatMessages(activeChatId);
       setChat([]);
-      setSuggestion(null);
-      setSelectedOfferingIds(new Set());
+      resetSuggestions();
       setChatSessions((current) => current.map((s) =>
         s.session_id === activeChatId ? { ...s, message_count: 0 } : s));
     } catch {
@@ -573,20 +575,11 @@ export function TimetablePage() {
         ...current,
         { key: `a-${current.length}`, role: "assistant", content: response.reply },
       ]);
-      // 화면에 그릴 수 있는 분반이 실린 제안만 승인 카드로 띄운다.
-      const next = response.schedules.find((item) => item.offerings.length > 0) ?? null;
-      setSuggestion(next);
-      // 추천 조합에는 이미 담아둔 분반도 포함돼 있다(그래야 최종 시간표가 온전히
-      // 보인다). 기본 체크는 **새로 추가되는 것만** — 이미 담긴 걸 같이 세면
-      // "N개 담기" 숫자가 실제로 추가되는 개수와 어긋난다.
-      const alreadyPlaced = new Set(next?.locked_offering_ids ?? []);
-      setSelectedOfferingIds(
-        new Set(
-          (next?.offerings ?? [])
-            .map((o) => o.offering_id)
-            .filter((id) => !alreadyPlaced.has(id)),
-        ),
-      );
+      // 화면에 그릴 수 있는 분반이 실린 제안만 후보로 둔다.
+      const usable = response.schedules.filter((item) => item.offerings.length > 0);
+      setSuggestions(usable);
+      setSuggestionIndex(0);
+      setSelectedOfferingIds(offeringIdsToPreselect(usable[0] ?? null));
       setApplyResult(null);
       setApplyError("");
     } catch (caught) {
@@ -701,17 +694,40 @@ export function TimetablePage() {
     }
   }
 
+  /** 후보 조합의 "새로 담길 분반"만 기본 체크로 뽑는다. 이미 담긴 분반은 뺀다 —
+   *  같이 세면 "N개 담기" 숫자가 실제 추가 개수와 어긋난다. */
+  function offeringIdsToPreselect(s: TimetableChatSuggestion | null): Set<number> {
+    const alreadyPlaced = new Set(s?.locked_offering_ids ?? []);
+    return new Set(
+      (s?.offerings ?? [])
+        .map((o) => o.offering_id)
+        .filter((id) => !alreadyPlaced.has(id)),
+    );
+  }
+
+  function resetSuggestions() {
+    setSuggestions([]);
+    setSuggestionIndex(0);
+    setSelectedOfferingIds(new Set());
+  }
+
+  /** 상단 후보 스위처. 고른 후보에 맞춰 기본 체크를 다시 잡는다. */
+  function selectSuggestion(index: number) {
+    setSuggestionIndex(index);
+    setSelectedOfferingIds(offeringIdsToPreselect(suggestions[index] ?? null));
+    setApplyResult(null);
+    setApplyError("");
+  }
+
   async function acceptSuggestion() {
     if (!suggestion || selectedOfferingIds.size === 0) return;
     const picked = [...selectedOfferingIds];
-    setSuggestion(null);
-    setSelectedOfferingIds(new Set());
+    resetSuggestions();
     await addOfferings(picked);
   }
 
   function dismissSuggestion() {
-    setSuggestion(null);
-    setSelectedOfferingIds(new Set());
+    resetSuggestions();
   }
 
   const selectedCredits = (suggestion?.offerings ?? [])
@@ -1370,7 +1386,35 @@ export function TimetablePage() {
             <section className="timetable-proposal" aria-label="AI 시간표 추천 승인">
               <div className="timetable-proposal-head">
                 <span>추천 시간표</span>
-                <h4>{suggestion.offerings.length}개 분반 · {suggestion.total_credits}학점</h4>
+                {suggestions.length > 1 ? (
+                  <nav className="timetable-proposal-switch" aria-label="추천 후보 선택">
+                    {suggestions.map((_, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={i === suggestionIndex ? "is-active" : ""}
+                        aria-current={i === suggestionIndex ? "true" : undefined}
+                        disabled={isApplying}
+                        onClick={() => selectSuggestion(i)}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="timetable-proposal-switch-next"
+                      aria-label="다음 후보"
+                      disabled={isApplying || suggestionIndex >= suggestions.length - 1}
+                      onClick={() => selectSuggestion(suggestionIndex + 1)}
+                    >
+                      ›
+                    </button>
+                  </nav>
+                ) : null}
+                <h4>
+                  {suggestions.length > 1 ? `후보 ${suggestionIndex + 1}/${suggestions.length} · ` : ""}
+                  {suggestion.offerings.length}개 분반 · {suggestion.total_credits}학점
+                </h4>
                 {suggestion.rationale ? <p>{suggestion.rationale}</p> : null}
               </div>
               <ul>
