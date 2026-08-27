@@ -11,6 +11,10 @@
 `seed_interdisciplinary_majors_2026_08`은 `minor` / `dual`. 단 `primary` 행은 제외한다
 (지능형헬스사이언스융합전공·핀테크융합전공처럼 주전공 세부전공으로도 등록된 케이스 방어).
 
+"이수 계획에 저장"이 다루는 종류: 부전공(minor)·복수전공(dual), 그리고 연계전공
+(interdisciplinary + kind='linked'). AI융합트랙(interdisciplinary + kind='track')은
+전용 경로 `app/api/tracks.py`로 등록한다 — 여기선 조회만 되고 저장 버튼이 없다.
+
 엔드포인트:
 - GET /me/fusion-programs/available
 - POST /me/fusion-programs/enroll
@@ -27,11 +31,10 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.domains.academics.fusion_catalog import (
-    ENROLLMENT_TYPE_LABELS as _ENROLLMENT_TYPE_LABELS,
-)
-from app.domains.academics.fusion_catalog import (
+    PLAN_SAVE_PROGRAM_TYPES,
     available_fusion_programs,
     classify as _classify,
+    enrollable_label as _enrollable_label,
     participating_departments as _participating_departments,
     student_can_pursue as _student_can_pursue,
 )
@@ -60,7 +63,7 @@ class FusionProgramOption(BaseModel):
     kind: str  # "track" | "linked" | "convergence"
     kind_label: str  # "융합트랙" | "연계전공" | "융합전공"
     program_type: str | None  # 원시값: interdisciplinary | minor | dual
-    program_type_label: str | None  # "부전공" | "복수전공" | None
+    program_type_label: str | None  # "부전공" | "복수전공" | "연계전공" | None(=저장 불가)
     total_credits: int | None
     curriculum_year: str | None
     participating_departments: list[ParticipatingDepartment]
@@ -106,23 +109,29 @@ def list_available_fusion_programs(
 def _eligible_requirement(
     db: Session, user: User, program_id: int
 ) -> GraduationRequirement:
-    """등록 가능한 minor/dual 융합전공인지, 학생 학과가 참여하는지 확인한다."""
+    """이수 계획으로 저장 가능한 프로그램인지(부·복수전공 또는 연계전공),
+    학생 학과가 참여하는지 확인한다."""
     requirement = db.get(GraduationRequirement, program_id)
-    if requirement is None or requirement.program_type not in _ENROLLMENT_TYPE_LABELS:
+    if requirement is None:
         raise HTTPException(status_code=404, detail="등록 가능한 융합전공을 찾을 수 없습니다")
     dept = db.get(Department, requirement.department_id)
     major = db.get(Major, requirement.major_id) if requirement.major_id is not None else None
-    if dept is None or _classify(requirement, dept.name, major.name if major else None) is None:
+    classified = (
+        _classify(requirement, dept.name, major.name if major else None) if dept else None
+    )
+    if classified is None or _enrollable_label(requirement.program_type, classified[0]) is None:
         raise HTTPException(status_code=404, detail="등록 가능한 융합전공을 찾을 수 없습니다")
     if current_dept := user.department_id:
         parts = _participating_departments(
             db, requirement.department_id, requirement.major_id
         )
-        # 목록 조회와 같은 기준. 교차인정이 실재하는 프로그램(SW연계전공·핀테크 등)은
-        # 참여학과가 아닌 학생을 여기서 막고, 참여학과가 자기 자신뿐인 융합전공은
-        # 학과 무관 허용한다. 후자는 `source='fusion_plan'` 계획 플래그일 뿐이라
-        # (되돌리기 가능, 실제 학적 아님) 시드 미완으로 잘못 열려도 피해가 작다.
-        if _student_can_pursue(requirement.department_id, current_dept, parts):
+        # 목록 조회(`available_fusion_programs`)와 같은 기준. 연계전공은 비참여학과도
+        # 허용, 교차인정이 갈리는 융합전공·트랙(핀테크 등)은 참여학과 학생만.
+        # 참여학과가 자기 자신뿐인 융합전공은 학과 무관 허용 — `source='fusion_plan'`
+        # 계획 플래그일 뿐이라(되돌리기 가능) 시드 미완으로 잘못 열려도 피해가 작다.
+        if _student_can_pursue(
+            requirement.department_id, current_dept, parts, classified[0]
+        ):
             return requirement
     raise HTTPException(status_code=403, detail="현재 학과에서는 이수 가능한 융합전공이 아닙니다")
 
@@ -183,7 +192,8 @@ def cancel_fusion_program(
     if (
         program is None
         or program.user_id != current_user.id
-        or program.program_type not in _ENROLLMENT_TYPE_LABELS
+        or program.program_type not in PLAN_SAVE_PROGRAM_TYPES
+        # source 체크가 실제 학적(portal)·AI융합트랙(tracks.py, source=NULL) 취소를 막는다.
         or program.source != "fusion_plan"
     ):
         raise HTTPException(status_code=404, detail="융합전공 이수 계획을 찾을 수 없습니다")
@@ -201,7 +211,10 @@ def cancel_fusion_program(
         raise HTTPException(status_code=404, detail="융합전공 이수 기준을 찾을 수 없습니다")
     dept = db.get(Department, requirement.department_id)
     major = db.get(Major, requirement.major_id) if requirement.major_id is not None else None
-    if dept is None or _classify(requirement, dept.name, major.name if major else None) is None:
+    classified = (
+        _classify(requirement, dept.name, major.name if major else None) if dept else None
+    )
+    if classified is None or _enrollable_label(program.program_type, classified[0]) is None:
         raise HTTPException(status_code=400, detail="융합전공이 아닌 학적 프로그램입니다")
     program.status = "cancelled"
     db.commit()

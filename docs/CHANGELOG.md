@@ -14,6 +14,15 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-28 (blackest21) — "AI융합 가능" 패널에서 연계전공도 이수 계획 저장
+
+- **요청**: SW연계전공에는 "이수 계획에 저장" 버튼이 안 떴다 — 이수요건 데이터(GR 281~285, 48학점, `special_rules.groups`+`program_courses`)는 다 있는데, `enroll` 게이트 `ENROLLMENT_TYPE_LABELS`가 `{minor, dual}`뿐이라 `interdisciplinary`를 404로 막고, 프론트도 `program_type_label`이 있을 때만 버튼을 그렸다.
+- **fusion_catalog**: `enrollable_label(program_type, kind)` 추가 — `minor→부전공`, `dual→복수전공`, `interdisciplinary + kind='linked' → 연계전공`. AI융합트랙(`interdisciplinary + kind='track'`)은 제외(전용 경로 `tracks.py`). `FusionProgramInfo.program_type_label`이 이제 "연계전공"도 가질 수 있고, `enrolled` 조회 대상(`PLAN_SAVE_PROGRAM_TYPES`)에 `interdisciplinary` 포함.
+- **연계전공은 비참여학과 학생도 이수 가능**(학사 안내). `student_can_pursue(..., kind)`에 `kind='linked' → True` 분기 추가. 융합전공(`convergence`)·트랙은 종전대로 교차인정이 갈리면 참여학과만. `program_courses`가 아예 없으면(시드 미완) 여전히 제외.
+- **fusion_programs.py**: `_eligible_requirement`/`cancel_fusion_program`이 `enrollable_label`로 판정. `cancel`은 `source != 'fusion_plan'` 체크가 실제 학적·트랙 취소를 계속 막는다.
+- **frontend**: 연계전공은 `program_name`에 이미 "(SW연계전공)"이 있어 확인 다이얼로그에서 라벨 중복 제거.
+- pytest 810 통과(신규 3, 수정 3), 골든 TC01~TC12 통과, `npm run build`/`lint` 통과.
+
 ## 2026-08-28 (blackest21) — 내 정보 프로필에 담은 복수전공/연계·융합전공 표시
 
 - **증상**: "AI융합 가능" 패널에서 DX융합전공을 **복수전공**으로 담으면 `UserAcademicProgram(program_type='dual', source='fusion_plan')` 행은 정상 저장되고(졸업진행도·로드맵 챗·시간표 챗·"빠른 선택"·내 정보 "추가 이수과정 현황"은 이미 반영) 정작 내 정보 **프로필 헤더**에는 아무것도 안 떴다. 헤더가 `전`(주전공)과 `부`(program_type==='minor'의 major)만 렌더했기 때문. 복수전공·연계/융합전공 태그가 없었고, 학과 자체가 프로그램인 융합전공은 `major`가 비어 `부` 태그 조건도 못 탔다.

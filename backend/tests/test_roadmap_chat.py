@@ -3907,10 +3907,9 @@ class GetFusionProgramsToolTest(unittest.TestCase):
         self.assertEqual(21, program["total_credits"])
         self.assertFalse(program["already_enrolled"])
 
-    def test_interdisciplinary_program_serializes_with_null_label_fields(self):
-        """SW연계전공은 program_type='interdisciplinary'라 program_type_label이 None이고,
-        total_credits도 None일 수 있다. 이 dict가 json.dumps로 LLM에 그대로 넘어가므로
-        None 필드가 있어도 직렬화가 깨지지 않아야 한다."""
+    def test_interdisciplinary_program_serializes_with_null_credit_field(self):
+        """SW연계전공은 total_credits가 None일 수 있다. 이 dict가 json.dumps로 LLM에
+        그대로 넘어가므로 None 필드가 있어도 직렬화가 깨지지 않아야 한다."""
         import json
 
         db = self.make_db()
@@ -3936,23 +3935,23 @@ class GetFusionProgramsToolTest(unittest.TestCase):
         result = self._ctx(db, user).get_fusion_programs()
         program = next(p for p in result["programs"] if p["name"] == "빅데이터(SW연계전공)")
         self.assertEqual("interdisciplinary", program["program_type"])
-        self.assertIsNone(program["program_type_label"])
+        self.assertEqual("연계전공", program["program_type_label"])
         self.assertIsNone(program["total_credits"])
         self.assertEqual(["심리학과"], program["participating_departments"])
         json.dumps(result, ensure_ascii=False)  # 직렬화가 깨지지 않는다
 
-    def test_cross_listed_program_is_gated_out_for_outside_department(self):
-        """교차인정이 실재하는 프로그램은 참여학과가 아닌 학생의 도구 결과에서 빠진다
-        (fusion_catalog.student_can_pursue 게이트를 도구도 그대로 탄다)."""
+    def test_cross_listed_convergence_is_gated_out_for_outside_department(self):
+        """교차인정이 갈리는 융합전공(SW융합전공)은 참여학과가 아닌 학생의 도구
+        결과에서 빠진다. (연계전공 완화가 융합전공까지 열면 안 된다.)"""
         db = self.make_db()
         self._base(db)
         db.add(Department(id=20, college_id=1, name="경영학과"))
         db.add(Department(id=30, college_id=1, name="정보컴퓨터공학부"))
         db.flush()
-        db.add(Major(id=66, department_id=20, name="핀테크(SW연계전공)"))
+        db.add(Major(id=66, department_id=20, name="핀테크(SW융합전공)"))
         db.flush()
         db.add(GraduationRequirement(
-            department_id=20, major_id=66, program_type="interdisciplinary",
+            department_id=20, major_id=66, program_type="dual",
             required_total_credits=48, curriculum_year="2026",
         ))
         db.add(Course(id=2, course_name="자료구조", department_id=30,
@@ -3965,7 +3964,7 @@ class GetFusionProgramsToolTest(unittest.TestCase):
         db.flush()
 
         result = self._ctx(db, user).get_fusion_programs()
-        self.assertNotIn("핀테크(SW연계전공)", [p["name"] for p in result["programs"]])
+        self.assertNotIn("핀테크(SW융합전공)", [p["name"] for p in result["programs"]])
 
     def test_already_enrolled_program_is_flagged(self):
         """이미 fusion_plan으로 저장한 minor/dual은 목록에 남되 already_enrolled=True."""

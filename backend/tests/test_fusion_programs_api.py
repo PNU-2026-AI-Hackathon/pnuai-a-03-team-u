@@ -122,7 +122,7 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         self.assertEqual("경영학과", option.department_name)
         self.assertEqual(66, option.major_id)
         self.assertEqual("빅데이터(SW연계전공)", option.program_name)
-        self.assertIsNone(option.program_type_label)
+        self.assertEqual("연계전공", option.program_type_label)  # 이수 계획 저장 가능
         self.assertEqual(
             ["심리학과", "정보컴퓨터공학부"],
             [d.name for d in option.participating_departments],
@@ -313,20 +313,28 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         self.assertTrue(enrolled.enrolled)
         self.assertEqual("minor", enrolled.program_type)
 
-    def test_enroll_still_403_for_outside_department_on_cross_listed_program(self):
-        """실제로 참여학과가 갈리는 융합전공(SW연계전공·핀테크 등)은 참여학과가
-        아닌 학생이 저장하려 하면 여전히 403이어야 한다 — 이번 변경이 이 게이트를
+    def test_enroll_still_403_for_outside_department_on_cross_listed_convergence(self):
+        """참여학과가 갈리는 융합전공(핀테크 등, kind='convergence')은 참여학과가
+        아닌 학생이 저장하려 하면 여전히 403 — 연계전공(linked) 완화가 융합전공까지
         열어버리면 안 된다."""
         db = _make_db(); _seed(db)
-        # (20,66) 인정과목 = 심리학과(18)·정보컴퓨터공학부(30) → 참여 {18,30}
+        db.add(Major(id=71, department_id=20, name="핀테크(SW융합전공)"))
+        db.flush()
         requirement = GraduationRequirement(
-            department_id=20, major_id=66, program_type="dual",
-            required_total_credits=48, curriculum_year="2026",
+            department_id=20, major_id=71, program_type="dual",
+            required_total_credits=42, curriculum_year="2026",
         )
         db.add(requirement)
-        user = _make_user(db, dept_id=40)  # 반도체융합전공 — 참여 {18,30}에 없음
+        db.flush()
+        # 인정과목 = 정보컴퓨터공학부(30) 과목만 → 참여 {30}, 교차인정 갈림
+        db.add(ProgramCourse(department_id=20, major_id=71, course_id=2, curriculum_year=_YEAR))
+        user = _make_user(db, dept_id=18)  # 심리학과 — 참여 {30}에 없음
         db.commit()
 
+        # 목록에도 안 뜨고
+        listed = list_available_fusion_programs(current_user=user, db=db)
+        self.assertNotIn(requirement.id, [o.program_id for o in listed])
+        # 저장도 403
         with self.assertRaises(HTTPException) as error:
             enroll_fusion_program(
                 EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
@@ -356,6 +364,90 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         self.assertFalse(option.enrollment_editable)
         with self.assertRaises(HTTPException) as error:
             cancel_fusion_program(portal_program.id, current_user=user, db=db)
+        self.assertEqual(404, error.exception.status_code)
+
+    def test_enroll_and_cancel_linked_interdisciplinary_program(self):
+        """연계전공(interdisciplinary + kind='linked')도 부·복수전공과 똑같이
+        이수 계획으로 저장·취소·재등록된다."""
+        db = _make_db(); _seed(db)
+        user = _make_user(db, dept_id=18)
+        db.commit()
+        # _seed의 (20,66) linked 2026/48 행을 그대로 저장 대상으로 쓴다.
+        requirement = next(
+            gr for gr in db.query(GraduationRequirement).all()
+            if gr.department_id == 20 and gr.major_id == 66 and gr.curriculum_year == "2026"
+        )
+
+        enrolled = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+        )
+        self.assertTrue(enrolled.enrolled)
+        self.assertEqual("interdisciplinary", enrolled.program_type)
+        self.assertEqual("연계전공", enrolled.program_type_label)
+        self.assertTrue(enrolled.enrollment_editable)
+        enrollment_id = enrolled.user_academic_program_id
+        saved = db.get(UserAcademicProgram, enrollment_id)
+        self.assertEqual("fusion_plan", saved.source)
+        self.assertEqual("interdisciplinary", saved.program_type)
+
+        cancel_fusion_program(enrollment_id, current_user=user, db=db)
+        after_cancel = next(
+            o for o in list_available_fusion_programs(current_user=user, db=db)
+            if o.program_id == requirement.id
+        )
+        self.assertFalse(after_cancel.enrolled)
+
+        reactivated = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+        )
+        self.assertEqual(enrollment_id, reactivated.user_academic_program_id)
+
+    def test_linked_program_visible_and_enrollable_for_non_participating_student(self):
+        """SW연계전공은 참여학과가 아닌 학생도 이수 가능 (학사 안내) —
+        목록에 뜨고 저장도 된다."""
+        db = _make_db(); _seed(db)
+        # _seed의 (20,66) linked 참여학과 = {심리학과18, 정보컴퓨터공학부30}
+        user = _make_user(db, dept_id=40)  # 반도체융합전공 — 참여 아님
+        db.commit()
+
+        listed = list_available_fusion_programs(current_user=user, db=db)
+        option = next(o for o in listed if o.kind == "linked")
+        self.assertEqual("연계전공", option.program_type_label)
+
+        enrolled = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=option.program_id), current_user=user, db=db
+        )
+        self.assertTrue(enrolled.enrolled)
+        self.assertEqual("interdisciplinary", enrolled.program_type)
+
+    def test_ai_track_is_not_enrollable_as_a_plan(self):
+        """AI융합트랙(interdisciplinary + kind='track')은 패널에서 저장 불가 —
+        program_type_label이 없고 enroll도 404. (전용 경로: app/api/tracks.py)"""
+        db = _make_db(); _seed(db)
+        db.add(Major(id=88, department_id=18, name="심리데이터사이언스(SW융합트랙)"))
+        db.flush()
+        track_gr = GraduationRequirement(
+            department_id=18, major_id=88, program_type="interdisciplinary",
+            required_total_credits=21, curriculum_year="2026",
+            special_rules={"certification_type": "AI융합트랙", "not_graduation_requirement": True},
+        )
+        db.add(track_gr)
+        db.flush()
+        db.add(ProgramCourse(department_id=18, major_id=88, course_id=1, curriculum_year=_YEAR))
+        db.add(ProgramCourse(department_id=18, major_id=88, course_id=2, curriculum_year=_YEAR))
+        user = _make_user(db, dept_id=18); db.commit()
+
+        option = next(
+            o for o in list_available_fusion_programs(current_user=user, db=db)
+            if o.major_id == 88
+        )
+        self.assertEqual("track", option.kind)
+        self.assertIsNone(option.program_type_label)
+
+        with self.assertRaises(HTTPException) as error:
+            enroll_fusion_program(
+                EnrollFusionProgramRequest(program_id=track_gr.id), current_user=user, db=db
+            )
         self.assertEqual(404, error.exception.status_code)
 
 

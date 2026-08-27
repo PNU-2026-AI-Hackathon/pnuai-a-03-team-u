@@ -34,6 +34,24 @@ from app.domains.users.models import User
 ENROLLMENT_TYPE_LABELS = {"minor": "부전공", "dual": "복수전공"}
 KIND_ORDER = {"track": 0, "linked": 1, "convergence": 2}
 
+# 패널의 "이수 계획에 저장"이 다루는 UserAcademicProgram.program_type 전부.
+# interdisciplinary는 연계전공(kind='linked')만 — AI융합트랙(kind='track')은
+# 같은 program_type지만 전용 경로(app/api/tracks.py)로 등록한다.
+PLAN_SAVE_PROGRAM_TYPES = ("minor", "dual", "interdisciplinary")
+
+
+def enrollable_label(program_type: str | None, kind: str | None) -> str | None:
+    """이 프로그램을 패널에서 이수 계획으로 저장할 수 있으면 표시용 라벨, 아니면 None.
+
+    부전공/복수전공은 kind와 무관하게 저장 가능. 연계전공은 interdisciplinary +
+    kind='linked'일 때만 — AI융합트랙(kind='track')은 여기서 제외한다.
+    """
+    if program_type in ENROLLMENT_TYPE_LABELS:
+        return ENROLLMENT_TYPE_LABELS[program_type]
+    if program_type == "interdisciplinary" and kind == "linked":
+        return "연계전공"
+    return None
+
 
 @dataclass(frozen=True)
 class ParticipatingDept:
@@ -51,7 +69,7 @@ class FusionProgramInfo:
     kind: str  # "track" | "linked" | "convergence"
     kind_label: str  # "SW연계전공" | "AI융합트랙" | "융합전공" ...
     program_type: str | None  # 원시값: interdisciplinary | minor | dual
-    program_type_label: str | None  # "부전공" | "복수전공" | None
+    program_type_label: str | None  # "부전공" | "복수전공" | "연계전공" | None(=저장 불가)
     total_credits: int | None
     curriculum_year: str | None
     participating_departments: list[ParticipatingDept] = field(default_factory=list)
@@ -125,22 +143,30 @@ def student_can_pursue(
     home_dept: int | None,
     my_dept: int,
     participating: list[ParticipatingDept],
+    kind: str | None = None,
 ) -> bool:
     """학생이 이 프로그램을 이수 대상으로 볼 수 있는가.
 
-    판별 기준은 `program_type`이 아니라 **실제 교차인정(cross-listing) 여부**다.
+    판별 기준은 `program_type`이 아니라 프로그램 종류(`kind`)와 **실제
+    교차인정(cross-listing) 여부**다.
 
+    - `program_courses`가 아예 없는 프로그램(시드 미완): 확인할 근거가 없으므로
+      어느 학과에도 안 뜬다.
+    - 연계전공(`kind='linked'`, SW연계전공): 참여학과가 아닌 학생도 이수 가능하다
+      (학사 안내) — 학과 무관 노출.
     - 참여학과가 프로그램 자기 학과(`home_dept`) 하나뿐인 융합전공(반도체·DX·
       그린바이오 등 새 융합전공): AIS가 참여학과 과목까지 융합전공 유닛 코드 하나로
       통합 제공해서 `program_courses`의 개설학과가 그 융합전공 하나뿐이다. 참여학과
       게이트를 걸면 어느 학과 학생에게도 안 뜨므로 학과 무관 노출한다.
-    - 참여학과가 실제로 갈리는 프로그램(SW연계전공·SW융합트랙·핀테크융합전공):
+    - 참여학과가 실제로 갈리는 융합전공·융합트랙(SW융합트랙·핀테크융합전공):
       내 학과가 참여학과에 있을 때만 노출한다.
-    - `program_courses`가 아예 없는 프로그램(시드 미완): 확인할 근거가 없으므로
-      게이트 유지 — 어느 학과에도 안 뜬다.
     """
+    if not participating:
+        return False
+    if kind == "linked":
+        return True
     cross_listed = any(part.id != home_dept for part in participating)
-    if participating and not cross_listed:
+    if not cross_listed:
         return True
     return any(part.id == my_dept for part in participating)
 
@@ -210,7 +236,7 @@ def available_fusion_programs(db: Session, user: User) -> list[FusionProgramInfo
         select(UserAcademicProgram).where(
             UserAcademicProgram.user_id == user.id,
             UserAcademicProgram.status == "active",
-            UserAcademicProgram.program_type.in_(tuple(ENROLLMENT_TYPE_LABELS)),
+            UserAcademicProgram.program_type.in_(PLAN_SAVE_PROGRAM_TYPES),
         )
     ):
         enrolled_by_scope.setdefault(
@@ -224,11 +250,18 @@ def available_fusion_programs(db: Session, user: User) -> list[FusionProgramInfo
         parts = participating_departments(
             db, requirement.department_id, requirement.major_id
         )
-        if not student_can_pursue(requirement.department_id, my_dept, parts):
-            continue  # 교차인정 있는 프로그램인데 참여 학과에 내 학과가 없으면 스킵
+        if not student_can_pursue(requirement.department_id, my_dept, parts, kind):
+            continue  # 연계전공이 아니고, 교차인정 있는데 참여 학과에 내 학과가 없으면 스킵
         parts.sort(key=lambda part: part.name)
-        enrolled_programs = enrolled_by_scope.get(
-            (requirement.department_id, requirement.major_id, requirement.program_type), []
+        # 저장 불가한 종류(AI융합트랙 등)는 enrolled 계산에서 제외 — 트랙은 전용
+        # 경로로 등록해도 이 패널에선 계획으로 안 다룬다(종전 동작 유지).
+        label = enrollable_label(requirement.program_type, kind)
+        enrolled_programs = (
+            enrolled_by_scope.get(
+                (requirement.department_id, requirement.major_id, requirement.program_type), []
+            )
+            if label
+            else []
         )
         planned_program = next(
             (program for program in enrolled_programs if program.source == "fusion_plan"),
@@ -245,7 +278,7 @@ def available_fusion_programs(db: Session, user: User) -> list[FusionProgramInfo
                 kind=kind,
                 kind_label=kind_label,
                 program_type=requirement.program_type,
-                program_type_label=ENROLLMENT_TYPE_LABELS.get(requirement.program_type or ""),
+                program_type_label=label,
                 total_credits=requirement.required_total_credits,
                 curriculum_year=requirement.curriculum_year,
                 participating_departments=parts,
