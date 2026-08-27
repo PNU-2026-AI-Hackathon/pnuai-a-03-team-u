@@ -646,7 +646,7 @@ def _career_looks_mismatched(db: Session, user: User) -> bool:
 # 대안 제시를 빠뜨리는 실패(골든 케이스 14가 2/5~3/5로 흔들리던 원인)를 막는다.
 _ALT_MAJOR_HINTS = (
     "부전공", "복수전공", "이중전공", "융합전공", "연계전공", "융합트랙",
-    "부·복수", "복수·부", "전과",
+    "부·복수", "복수·부",
 )
 
 
@@ -3745,47 +3745,52 @@ def _fallback_summary(db: Session, pending: list[PendingRoadmapChange]) -> str:
 
 
 def _prepend_mismatch_advice(llm, ctx, user, message: str, reply: str, trace_config) -> str:
-    """진로-전공 mismatch 턴의 최종 답변 앞에 대안 전공 경로 안내를 덧붙인다.
+    """진로-전공 mismatch 턴의 최종 답변 **앞에** 대안 전공 경로 안내 문단을 덧붙인다.
 
-    `get_fusion_programs`로 이수 가능한 융합·연계전공을 확인해 함께 제시한다.
-    보정 결과가 여전히 대안 경로를 안 담으면(모델이 지시를 무시) 원문을 그대로 둔다.
+    LLM에는 안내 문단만 생성시키고(본문은 안 건드림), 결합은 코드에서
+    `advice + "\\n\\n" + reply`로 한다 — 예전엔 "[기존 답변]을 그대로 이어라"라고
+    시켜 전체를 갈아끼웠는데, max_tokens 상한에서 본문이 잘려도 키워드만 있으면
+    통과돼 원문이 조용히 훼손될 수 있었다(독립 리뷰 지적).
+
+    안내 문단이 대안 경로를 안 담거나(모델이 지시 무시) 생성이 실패하면 원문 유지.
     """
     try:
-        fusion = ctx.get_fusion_programs()
-    except Exception:  # noqa: BLE001 - 조회 실패 시 융합전공 없이 일반 안내만
-        fusion = {"programs": []}
-    fusion_names = ", ".join(
-        f"{p['name']}({p['total_credits']}학점)"
-        if p.get("total_credits")
-        else str(p["name"])
-        for p in fusion.get("programs", [])[:4]
-    )
-    fusion_line = (
-        f"이수 가능한 융합·연계전공: {fusion_names}." if fusion_names
-        else "이수 가능한 융합·연계전공은 확인되지 않았다 — 일반 학과 부·복수전공으로 안내하라."
-    )
-    try:
-        patched = llm.invoke(
+        try:
+            fusion = ctx.get_fusion_programs()
+        except Exception:  # noqa: BLE001 - 조회 실패 시 융합전공 없이 일반 안내만
+            fusion = {"programs": []}
+        programs = fusion.get("programs", []) if isinstance(fusion, dict) else []
+        fusion_names = ", ".join(
+            f"{p.get('name')}({p['total_credits']}학점)"
+            if p.get("total_credits")
+            else str(p.get("name"))
+            for p in programs[:4]
+            if p.get("name")
+        )
+        fusion_line = (
+            f"이수 가능한 융합·연계전공: {fusion_names}." if fusion_names
+            else "이수 가능한 융합·연계전공은 확인되지 않았다 — 일반 학과 부·복수전공만 안내하라."
+        )
+        generated = llm.invoke(
             [
                 SystemMessage(content=(
-                    "학생의 진로 목표와 주전공 학과가 어긋난다. 아래 [기존 답변]은 그 사실과 "
-                    "대안 전공 경로 제안을 빠뜨렸다. [기존 답변]의 **맨 앞에** 2~3문장을 덧붙여라:\n"
+                    "학생의 진로 목표와 주전공 학과가 어긋난다. 이 학생에게 보여줄 "
+                    "**안내 문단만** 2~3문장으로 작성해라 (다른 말·머리말·인사 없이 문단 자체만):\n"
                     f"- 학생 진로: {user.career_goal or '미상'}\n"
+                    f"- 학생 질문: {message}\n"
                     "- (1) 진로와 주전공이 어긋난다는 점을 한 문장으로 짚는다.\n"
                     "- (2) 진로에 맞는 학과의 **부전공(21학점)** 또는 **복수전공(36학점)** 을 "
                     "명시적으로 제안한다. 등록은 프로필 '학적 관리'에서 한다.\n"
-                    f"- (3) {fusion_line} 있으면 학점과 함께 함께 제안하고 로드맵 상단 "
-                    "'AI융합' 패널에서 저장할 수 있다고 안내한다.\n"
-                    "[기존 답변] 본문은 **한 글자도 바꾸지 말고** 그대로 뒤에 이어라. "
-                    "새로 덧붙인 문단만 출력물 앞에 오면 된다."
+                    f"- (3) {fusion_line} 있으면 학점과 함께 제안하고 로드맵 상단 "
+                    "'AI융합' 패널에서 저장할 수 있다고 안내한다."
                 )),
-                HumanMessage(content=f"학생 질문: {message}\n\n[기존 답변]\n{reply}"),
+                HumanMessage(content="위 조건으로 안내 문단만 써줘."),
             ],
             config=trace_config,
         )
-        text = patched.content if isinstance(patched.content, str) else ""
-        if text and _reply_suggests_alternative_major(text):
-            return text
+        advice = generated.content.strip() if isinstance(generated.content, str) else ""
+        if advice and _reply_suggests_alternative_major(advice):
+            return f"{advice}\n\n{reply}"
     except Exception:  # noqa: BLE001 - 보정 실패 시 원문 유지
         pass
     return reply

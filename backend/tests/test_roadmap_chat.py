@@ -4037,6 +4037,13 @@ class MismatchAdvicePostPatchTest(unittest.TestCase):
         self.assertFalse(f(""))
         self.assertFalse(f(None))
 
+    def test_전과_같은_부분문자열은_오탐하지_않는다(self):
+        """'전과목'·'전과정'이 '전과'를 포함한다고 대안 제안이 있는 것으로 치면
+        멀쩡히 빠진 케이스가 안 고쳐진다(독립 리뷰 지적)."""
+        f = roadmap_chat_mod._reply_suggests_alternative_major
+        self.assertFalse(f("전과목 42학점을 이수해야 합니다"))
+        self.assertFalse(f("교양 전과정을 균형 있게 들으세요"))
+
     def _fake_llm(self, patched_text):
         class _LLM:
             def invoke(self, messages, config=None):
@@ -4056,15 +4063,16 @@ class MismatchAdvicePostPatchTest(unittest.TestCase):
         u.career_goal = "백엔드 개발자"
         return u
 
-    def test_prepends_when_patch_returns_advice(self):
+    def test_prepends_advice_and_preserves_body_verbatim(self):
+        body = "## 이번 학기\n1) 현대문학의이해\n2) 국어학개론\n\n이 변경을 반영할까요?"
         out = roadmap_chat_mod._prepend_mismatch_advice(
-            self._fake_llm("국문학과와 백엔드 개발자는 방향이 어긋납니다. 정보컴퓨터공학부 "
-                           "부전공(21학점)을 권합니다.\n\n원래 로드맵 안내..."),
-            self._fake_ctx([]), self._user(), "국문인데 백엔드 하고 싶어요", "원래 로드맵 안내...",
-            None,
+            self._fake_llm("국문학과와 백엔드 개발자는 방향이 어긋납니다. "
+                           "정보컴퓨터공학부 부전공(21학점)을 권합니다."),
+            self._fake_ctx([]), self._user(), "국문인데 백엔드 하고 싶어요", body, None,
         )
         self.assertIn("부전공", out)
-        self.assertIn("원래 로드맵 안내", out)
+        # 본문은 한 글자도 안 바뀌고 뒤에 그대로 붙는다.
+        self.assertTrue(out.endswith(body))
 
     def test_keeps_original_when_patch_still_lacks_advice(self):
         original = "이번 학기 현대문학의이해부터 들으세요."
@@ -4101,6 +4109,69 @@ class MismatchAdvicePostPatchTest(unittest.TestCase):
         )
         self.assertIn("반도체융합전공(48학점)", captured["sys"])
         self.assertIn("반도체융합전공", out)
+
+    # --- run_roadmap_chat 배선 (독립 리뷰 지적: 통합 경로 미검증) ---
+
+    def _integration_db(self, career_goal, dept_courses):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=_ROADMAP_TEST_TABLES)
+        db = sessionmaker(bind=engine)()
+        db.add_all([
+            School(id=1, name="부산대학교"),
+            College(id=1, school_id=1, name="인문대학"),
+            Department(id=10, college_id=1, name="국어국문학과"),
+        ])
+        for i, name in enumerate(dept_courses):
+            db.add(Course(id=800 + i, course_name=name, department_id=10,
+                          category="전공선택", credits=3, year="2", semester="1"))
+        user = User(id=1, email="t@example.com", password_hash="x", name="테스트",
+                    department_id=10, career_goal=career_goal)
+        db.add(user)
+        db.add(UserAcademicProgram(user_id=1, program_type="primary",
+                                   department_id=10, curriculum_year=2024))
+        db.add(GraduationRequirement(department_id=10, program_type="primary",
+                                     curriculum_year="2024", required_total_credits=130))
+        roadmap = CourseRoadmap(id=1, user_id=1)
+        db.add(roadmap)
+        db.flush()
+        return db, user, roadmap
+
+    def _run(self, db, user, roadmap, message, reply_text):
+        llm = _ScriptedLLM([
+            [{"name": "finish_response", "args": {"message": reply_text}, "id": "c1"}],
+        ])
+        spy = MagicMock(side_effect=lambda *a, **k: "보정됨: 정보컴퓨터공학부 부전공(21학점)\n\n" + a[4])
+        with patch.object(roadmap_chat_mod, "_build_llm", return_value=llm), \
+                patch.object(roadmap_chat_mod, "_current_academic_term", return_value=(2026, 1)), \
+                patch.object(roadmap_chat_mod, "_prepend_mismatch_advice", spy):
+            result = run_roadmap_chat(db=db, user=user, roadmap=roadmap, message=message)
+        return result, spy
+
+    def test_mismatch_turn_routes_final_text_through_prepend(self):
+        db, user, roadmap = self._integration_db(
+            "백엔드 개발자", ["현대문학의이해", "국어학개론"])  # CS 키워드 전무 → mismatch
+        result, spy = self._run(
+            db, user, roadmap, "국문인데 백엔드 하고 싶어요",
+            "이번 학기 현대문학의이해부터 들으세요.")  # 대안 제안 없는 답변
+        spy.assert_called_once()
+        self.assertTrue(result["reply"].startswith("보정됨"))
+
+    def test_no_op_when_reply_already_has_advice(self):
+        db, user, roadmap = self._integration_db(
+            "백엔드 개발자", ["현대문학의이해", "국어학개론"])
+        result, spy = self._run(
+            db, user, roadmap, "국문인데 백엔드 하고 싶어요",
+            "정보컴퓨터공학부 복수전공(36학점)을 고려해보세요.")  # 이미 대안 포함
+        spy.assert_not_called()
+
+    def test_no_op_when_not_a_mismatch_student(self):
+        db, user, roadmap = self._integration_db(
+            "백엔드 개발자",
+            ["데이터베이스", "운영체제", "네트워크"])  # 진로 키워드가 학과에 있음 → mismatch 아님
+        result, spy = self._run(
+            db, user, roadmap, "뭐 들으면 좋아요?",
+            "이번 학기 데이터베이스부터 들으세요.")
+        spy.assert_not_called()
 
 
 if __name__ == "__main__":
