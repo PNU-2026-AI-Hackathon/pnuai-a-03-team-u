@@ -142,6 +142,10 @@ def list_available_fusion_programs(
         .join(Department, Department.id == GraduationRequirement.department_id)
         .outerjoin(Major, Major.id == GraduationRequirement.major_id)
         .where(
+            # 주전공 세부전공(지능형헬스사이언스융합전공·핀테크융합전공 등)이 이름에
+            # '융합전공'을 갖고 primary GR로도 등록돼 있어 제외한다. SQL상 program_type
+            # 이 NULL인 행도 함께 빠지는데(NULL != 'primary' → not true), 융합 프로그램
+            # 중 program_type NULL인 건 없어 무해하다.
             GraduationRequirement.program_type != "primary",
             or_(
                 Major.name.like("%융합전공%"),
