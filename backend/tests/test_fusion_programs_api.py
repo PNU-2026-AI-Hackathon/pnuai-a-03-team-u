@@ -134,6 +134,25 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         result = list_available_fusion_programs(current_user=user, db=db)
         self.assertNotIn(40, [o.department_id for o in result])
 
+    def test_self_contained_fusion_major_shown_regardless_of_department(self):
+        """반도체·DX 등 새 융합전공 — AIS가 참여학과 과목까지 융합전공 유닛 코드
+        하나로 통합해서 program_courses 개설학과가 그 융합전공 자신뿐이다.
+        참여학과 게이트를 걸면 아무에게도 안 뜨므로 학과 무관 노출한다."""
+        db = _make_db(); _seed(db)
+        db.add(Major(id=78, department_id=40, name="반도체융합전공"))
+        db.flush()
+        db.add(GraduationRequirement(
+            department_id=40, major_id=78, program_type="minor",
+            required_total_credits=21, curriculum_year="2026",
+        ))
+        db.flush()
+        # 융합전공 과목이 전부 자기 학과(40) 소속 → 참여학과 = {40}
+        db.add(Course(id=9, course_code="SC900", course_name="반도체공정", department_id=40, credits=3.0))
+        db.add(ProgramCourse(department_id=40, major_id=78, course_id=9, curriculum_year=_YEAR))
+        user = _make_user(db, dept_id=18); db.commit()
+        result = list_available_fusion_programs(current_user=user, db=db)
+        self.assertIn(78, [o.major_id for o in result])
+
     def test_no_program_courses_excluded(self):
         db = _make_db(); _seed(db)
         db.add(Major(id=77, department_id=20, name="에너지IoT(SW연계전공)"))

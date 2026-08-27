@@ -133,6 +133,30 @@ def _participating_departments(
     return [ParticipatingDepartment(id=row[0], name=row[1]) for row in db.execute(stmt).all()]
 
 
+def _student_can_pursue(
+    home_dept: int | None,
+    my_dept: int,
+    participating: list[ParticipatingDepartment],
+) -> bool:
+    """학생이 이 프로그램을 이수 대상으로 볼 수 있는가.
+
+    판별 기준은 `program_type`이 아니라 **실제 교차인정(cross-listing) 여부**다.
+
+    - 참여학과가 프로그램 자기 학과(`home_dept`) 하나뿐인 융합전공(반도체·DX·
+      그린바이오 등 새 융합전공): AIS가 참여학과 과목까지 융합전공 유닛 코드 하나로
+      통합 제공해서 `program_courses`의 개설학과가 그 융합전공 하나뿐이다. 참여학과
+      게이트를 걸면 어느 학과 학생에게도 안 뜨므로 학과 무관 노출한다.
+    - 참여학과가 실제로 갈리는 프로그램(SW연계전공·SW융합트랙·핀테크융합전공):
+      내 학과가 참여학과에 있을 때만 노출한다.
+    - `program_courses`가 아예 없는 프로그램(시드 미완): 확인할 근거가 없으므로
+      게이트 유지 — 어느 학과에도 안 뜬다.
+    """
+    cross_listed = any(part.id != home_dept for part in participating)
+    if participating and not cross_listed:
+        return True
+    return any(part.id == my_dept for part in participating)
+
+
 @router.get("/available", response_model=list[FusionProgramOption])
 def list_available_fusion_programs(
     current_user: User = Depends(get_current_user),
@@ -222,8 +246,8 @@ def list_available_fusion_programs(
         parts = _participating_departments(
             db, requirement.department_id, requirement.major_id
         )
-        if not any(part.id == my_dept for part in parts):
-            continue  # 참여 학과에 내 학과가 없으면 스킵 (시드 미완이면 여기서 빠짐)
+        if not _student_can_pursue(requirement.department_id, my_dept, parts):
+            continue  # 교차인정 있는 프로그램인데 참여 학과에 내 학과가 없으면 스킵
         parts.sort(key=lambda part: part.name)
         enrolled_programs = enrolled_by_scope.get(
             (requirement.department_id, requirement.major_id, requirement.program_type), []
@@ -269,9 +293,10 @@ def _eligible_requirement(
     if dept is None or _classify(requirement, dept.name, major.name if major else None) is None:
         raise HTTPException(status_code=404, detail="등록 가능한 융합전공을 찾을 수 없습니다")
     if current_dept := user.department_id:
-        if any(part.id == current_dept for part in _participating_departments(
+        parts = _participating_departments(
             db, requirement.department_id, requirement.major_id
-        )):
+        )
+        if _student_can_pursue(requirement.department_id, current_dept, parts):
             return requirement
     raise HTTPException(status_code=403, detail="현재 학과에서는 이수 가능한 융합전공이 아닙니다")
 
