@@ -28,7 +28,7 @@ import type { DepartmentSearchResult } from "../api/departments";
 import { getCourseRecords, getGraduationProgress, isMockStudentDataEnabled } from "../api/studentInfo";
 import type { CourseRecord, GraduationProgram } from "../api/studentInfo";
 import { listEnrolledTracks, listTrackAiCommonCourses } from "../api/tracks";
-import { listAvailableFusionPrograms } from "../api/fusionPrograms";
+import { cancelFusionProgram, enrollFusionProgram, listAvailableFusionPrograms } from "../api/fusionPrograms";
 import type { FusionProgramOption } from "../api/fusionPrograms";
 import type { EnrolledTrack } from "../api/tracks";
 import { isMockAuthEnabled, visibleGrades } from "../api/auth";
@@ -1535,6 +1535,8 @@ function ConnectedRoadmapPage() {
   // 목록이 비면 버튼을 숨긴다(비참여 학과·학과 미지정이면 서버가 빈 배열).
   const [fusionPrograms, setFusionPrograms] = useState<FusionProgramOption[]>([]);
   const [isFusionPanelOpen, setIsFusionPanelOpen] = useState(false);
+  const [isFusionSaving, setIsFusionSaving] = useState(false);
+  const [fusionPanelError, setFusionPanelError] = useState("");
   const fusionPanelRef = useRef<HTMLDivElement>(null);
   // 트랙 빠른 선택을 눌렀을 때만 채운다 — department_id/major_id 필터로는 안 잡히는
   // AI융합 공통교과목(학과 소속이 아닌 이름 목록)을 결과 목록에 별도로 얹는다.
@@ -1569,6 +1571,43 @@ function ConnectedRoadmapPage() {
     const nextRoadmap = await getCurrentRoadmap();
     setRoadmap(nextRoadmap);
     return nextRoadmap;
+  }
+
+  async function refreshAcademicPrograms() {
+    const result = await getGraduationProgress(true);
+    const primaryProgram = result.programs.find((program) => program.program_type === "primary")
+      ?? result.programs[0]
+      ?? null;
+    setGraduation(primaryProgram);
+    setAcademicPrograms(result.programs);
+  }
+
+  async function handleFusionProgramClick(program: FusionProgramOption) {
+    if (isFusionSaving || !program.program_type_label) return;
+    const action = program.enrolled ? "취소" : "저장";
+    if (!window.confirm(`${program.program_name} ${program.program_type_label} 이수 계획을 ${action}하시겠습니까?`)) {
+      return;
+    }
+    setIsFusionSaving(true);
+    setFusionPanelError("");
+    try {
+      if (program.enrolled) {
+        if (program.user_academic_program_id === null) return;
+        await cancelFusionProgram(program.user_academic_program_id);
+      } else {
+        await enrollFusionProgram(program.program_id);
+      }
+      const [options] = await Promise.all([
+        listAvailableFusionPrograms(),
+        refreshAcademicPrograms().catch(() => undefined),
+        listEnrolledTracks().then(setEnrolledTracks).catch(() => undefined),
+      ]);
+      setFusionPrograms(options);
+    } catch (error) {
+      setFusionPanelError(getApiErrorMessage(error, `융합전공 이수 계획을 ${action}하지 못했습니다.`));
+    } finally {
+      setIsFusionSaving(false);
+    }
   }
 
   function startMetaEditing() {
@@ -1692,7 +1731,7 @@ function ConnectedRoadmapPage() {
     try {
       const [nextRoadmap, graduationResult, curriculumResult] = await Promise.all([
         getCurrentRoadmap(),
-        getGraduationProgress().catch(() => null),
+        getGraduationProgress(true).catch(() => null),
         getMyCurriculum().catch(() => null),
       ]);
       setRoadmap(nextRoadmap);
@@ -3159,8 +3198,9 @@ function ConnectedRoadmapPage() {
                   <p>연계전공·융합전공 신청 자격·절차는 교육원에 직접 문의하세요.</p>
                 </aside>
                 <div className="fusion-programs-list">
+                  {fusionPanelError ? <p className="fusion-program-error" role="alert">{fusionPanelError}</p> : null}
                   {fusionPrograms.map((program) => (
-                    <article className="fusion-program-card" key={program.program_id}>
+                    <article className={`fusion-program-card${program.enrolled ? " is-enrolled" : ""}`} key={program.program_id}>
                       <div className="fusion-program-card-head">
                         <h5>{program.program_name}</h5>
                         <span className={`program-type-badge${program.kind === "track" ? " is-track" : ""}`}>
@@ -3183,6 +3223,16 @@ function ConnectedRoadmapPage() {
                           </span>
                         ))}
                       </div>
+                      {program.program_type_label && (!program.enrolled || program.enrollment_editable) ? (
+                        <button
+                          type="button"
+                          className={`fusion-program-enroll${program.enrolled ? " is-enrolled" : ""}`}
+                          disabled={isFusionSaving}
+                          onClick={() => void handleFusionProgramClick(program)}
+                        >
+                          {program.enrolled ? "이수 계획 취소" : "이수 계획에 저장"}
+                        </button>
+                      ) : program.enrolled ? <span className="fusion-program-official">학적에 등록됨</span> : null}
                     </article>
                   ))}
                 </div>

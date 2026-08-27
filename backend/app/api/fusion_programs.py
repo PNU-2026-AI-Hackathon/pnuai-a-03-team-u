@@ -1,4 +1,4 @@
-"""이수 가능한 융합전공 / 연계전공 / AI(SW)융합트랙 조회 — 읽기 전용.
+"""이수 가능한 융합전공 / 연계전공 / AI(SW)융합트랙 조회·이수계획 저장.
 
 로드맵 화면의 "AI융합 가능" 버튼이 쓴다. 학생 소속 학과
 (`current_user.department_id`)가 그 프로그램의 **참여 학과**
@@ -11,12 +11,15 @@
 `seed_interdisciplinary_majors_2026_08`은 `minor` / `dual`. 단 `primary` 행은 제외한다
 (지능형헬스사이언스융합전공·핀테크융합전공처럼 주전공 세부전공으로도 등록된 케이스 방어).
 
-엔드포인트: GET /me/fusion-programs/available
+엔드포인트:
+- GET /me/fusion-programs/available
+- POST /me/fusion-programs/enroll
+- DELETE /me/fusion-programs/{user_academic_program_id}
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -28,6 +31,7 @@ from app.domains.academics.models import (
     GraduationRequirement,
     Major,
     ProgramCourse,
+    UserAcademicProgram,
 )
 from app.domains.academics.tracks import is_ai_track
 from app.domains.courses.models import Course
@@ -59,6 +63,13 @@ class FusionProgramOption(BaseModel):
     total_credits: int | None
     curriculum_year: str | None
     participating_departments: list[ParticipatingDepartment]
+    enrolled: bool
+    user_academic_program_id: int | None
+    enrollment_editable: bool
+
+
+class EnrollFusionProgramRequest(BaseModel):
+    program_id: int
 
 
 def _suffix_label(name: str | None) -> str | None:
@@ -192,6 +203,18 @@ def list_available_fusion_programs(
         if not (key[2] == "interdisciplinary" and (key[0], key[1]) in enrollment_scopes)
     }
 
+    enrolled_by_scope: dict[tuple[int | None, int | None, str], list[UserAcademicProgram]] = {}
+    for program in db.scalars(
+        select(UserAcademicProgram).where(
+            UserAcademicProgram.user_id == current_user.id,
+            UserAcademicProgram.status == "active",
+            UserAcademicProgram.program_type.in_(tuple(_ENROLLMENT_TYPE_LABELS)),
+        )
+    ):
+        enrolled_by_scope.setdefault(
+            (program.department_id, program.major_id, program.program_type), []
+        ).append(program)
+
     out: list[FusionProgramOption] = []
     for requirement, dept_name, major_id, major_name, (kind, kind_label) in best.values():
         if (requirement.department_id, requirement.major_id) == my_program:
@@ -202,6 +225,12 @@ def list_available_fusion_programs(
         if not any(part.id == my_dept for part in parts):
             continue  # 참여 학과에 내 학과가 없으면 스킵 (시드 미완이면 여기서 빠짐)
         parts.sort(key=lambda part: part.name)
+        enrolled_programs = enrolled_by_scope.get(
+            (requirement.department_id, requirement.major_id, requirement.program_type), []
+        )
+        planned_program = next(
+            (program for program in enrolled_programs if program.source == "fusion_plan"), None
+        )
         out.append(
             FusionProgramOption(
                 program_id=requirement.id,
@@ -218,8 +247,110 @@ def list_available_fusion_programs(
                 total_credits=requirement.required_total_credits,
                 curriculum_year=requirement.curriculum_year,
                 participating_departments=parts,
+                enrolled=bool(enrolled_programs),
+                user_academic_program_id=(planned_program or (enrolled_programs[0] if enrolled_programs else None)).id if enrolled_programs else None,
+                enrollment_editable=planned_program is not None,
             )
         )
 
     out.sort(key=lambda option: (_KIND_ORDER.get(option.kind, 9), option.program_name))
     return out
+
+
+def _eligible_requirement(
+    db: Session, user: User, program_id: int
+) -> GraduationRequirement:
+    """등록 가능한 minor/dual 융합전공인지, 학생 학과가 참여하는지 확인한다."""
+    requirement = db.get(GraduationRequirement, program_id)
+    if requirement is None or requirement.program_type not in _ENROLLMENT_TYPE_LABELS:
+        raise HTTPException(status_code=404, detail="등록 가능한 융합전공을 찾을 수 없습니다")
+    dept = db.get(Department, requirement.department_id)
+    major = db.get(Major, requirement.major_id) if requirement.major_id is not None else None
+    if dept is None or _classify(requirement, dept.name, major.name if major else None) is None:
+        raise HTTPException(status_code=404, detail="등록 가능한 융합전공을 찾을 수 없습니다")
+    if current_dept := user.department_id:
+        if any(part.id == current_dept for part in _participating_departments(
+            db, requirement.department_id, requirement.major_id
+        )):
+            return requirement
+    raise HTTPException(status_code=403, detail="현재 학과에서는 이수 가능한 융합전공이 아닙니다")
+
+
+@router.post("/enroll", response_model=FusionProgramOption, status_code=201)
+def enroll_fusion_program(
+    payload: EnrollFusionProgramRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FusionProgramOption:
+    """융합전공을 이수 계획에 저장한다. 취소 이력이 있으면 같은 행을 되살린다."""
+    requirement = _eligible_requirement(db, current_user, payload.program_id)
+    programs = db.scalars(
+        select(UserAcademicProgram)
+        .where(
+            UserAcademicProgram.user_id == current_user.id,
+            UserAcademicProgram.department_id == requirement.department_id,
+            UserAcademicProgram.major_id.is_(None)
+            if requirement.major_id is None
+            else UserAcademicProgram.major_id == requirement.major_id,
+            UserAcademicProgram.program_type == requirement.program_type,
+        )
+        .order_by(UserAcademicProgram.id.desc())
+    ).all()
+    if any(program.status == "active" and program.source != "fusion_plan" for program in programs):
+        raise HTTPException(status_code=409, detail="학교 학적에 이미 등록된 융합전공입니다")
+    program = next((program for program in programs if program.source == "fusion_plan"), None)
+    if program is None:
+        program = UserAcademicProgram(
+            user_id=current_user.id,
+            department_id=requirement.department_id,
+            major_id=requirement.major_id,
+            program_type=requirement.program_type,
+            curriculum_year=requirement.curriculum_year,
+            status="active",
+            source="fusion_plan",
+        )
+        db.add(program)
+    else:
+        program.status = "active"
+        program.curriculum_year = requirement.curriculum_year
+    db.commit()
+
+    return next(
+        option for option in list_available_fusion_programs(current_user=current_user, db=db)
+        if option.program_id == requirement.id
+    )
+
+
+@router.delete("/{user_academic_program_id}", status_code=204)
+def cancel_fusion_program(
+    user_academic_program_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """융합전공 이수 계획을 취소한다. 이력은 남기고 status만 변경한다."""
+    program = db.get(UserAcademicProgram, user_academic_program_id)
+    if (
+        program is None
+        or program.user_id != current_user.id
+        or program.program_type not in _ENROLLMENT_TYPE_LABELS
+        or program.source != "fusion_plan"
+    ):
+        raise HTTPException(status_code=404, detail="융합전공 이수 계획을 찾을 수 없습니다")
+    requirement = db.scalars(
+        select(GraduationRequirement).where(
+            GraduationRequirement.department_id == program.department_id,
+            GraduationRequirement.major_id.is_(None)
+            if program.major_id is None
+            else GraduationRequirement.major_id == program.major_id,
+            GraduationRequirement.program_type == program.program_type,
+            GraduationRequirement.curriculum_year == program.curriculum_year,
+        )
+    ).first()
+    if requirement is None:
+        raise HTTPException(status_code=404, detail="융합전공 이수 기준을 찾을 수 없습니다")
+    dept = db.get(Department, requirement.department_id)
+    major = db.get(Major, requirement.major_id) if requirement.major_id is not None else None
+    if dept is None or _classify(requirement, dept.name, major.name if major else None) is None:
+        raise HTTPException(status_code=400, detail="융합전공이 아닌 학적 프로그램입니다")
+    program.status = "cancelled"
+    db.commit()

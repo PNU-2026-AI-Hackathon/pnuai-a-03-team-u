@@ -359,6 +359,29 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
         self.assertEqual(existing_dept_id, saved[0].department_id)
         self.assertEqual(1, len(db.query(Department).filter_by(name="수학과").all()))
 
+    def test_portal_sync_preserves_fusion_plan_with_same_scope(self):
+        """One-Stop 실제 학적 재동기화가 로드맵 저장 계획을 덮거나 다중행 오류를 내면 안 된다."""
+        db = self.make_db()
+        rows = [["1", "복수전공", "수학과", "N", "선택"]]
+        portal = map_academic_program_registrations(db, 1, rows)[0]
+        db.flush()
+        db.add(UserAcademicProgram(
+            user_id=1,
+            department_id=portal.department_id,
+            major_id=portal.major_id,
+            program_type="dual",
+            status="active",
+            source="fusion_plan",
+        ))
+        db.commit()
+
+        saved = map_academic_program_registrations(db, 1, rows)
+        db.commit()
+        programs = db.query(UserAcademicProgram).filter_by(program_type="dual").all()
+        self.assertEqual(2, len(programs))
+        self.assertEqual("portal", saved[0].source)
+        self.assertEqual({"portal", "fusion_plan"}, {program.source for program in programs})
+
 
 if __name__ == "__main__":
     unittest.main()

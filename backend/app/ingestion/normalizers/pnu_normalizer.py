@@ -8,6 +8,7 @@ GraduationRequirement 기준과 StudentCourseRecord를 그때그때 대조해서
 
 import re
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.security import encrypt_secret
@@ -176,7 +177,17 @@ def map_academic_program_registrations(
 
         program = (
             db.query(UserAcademicProgram)
-            .filter_by(user_id=user_id, program_type=program_type, major_id=major_id)
+            .filter(
+                UserAcademicProgram.user_id == user_id,
+                UserAcademicProgram.program_type == program_type,
+                UserAcademicProgram.major_id == major_id,
+                # 로드맵에서 저장한 계획은 실제 One-Stop 학적 동기화가 덮어쓰거나
+                # .one_or_none()을 다중행 오류로 만들면 안 된다.
+                or_(
+                    UserAcademicProgram.source.is_(None),
+                    UserAcademicProgram.source == "portal",
+                ),
+            )
             .one_or_none()
         )
         if program is None:
@@ -184,6 +195,7 @@ def map_academic_program_registrations(
             db.add(program)
         program.department_id = department_id
         program.major_id = major_id
+        program.source = "portal"
         saved.append(program)
 
     db.flush()

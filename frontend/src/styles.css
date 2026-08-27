@@ -4633,6 +4633,45 @@ body.theme-dark .activity-tags span {
   font-weight: 700;
 }
 
+.fusion-program-card.is-enrolled {
+  border-color: var(--blue);
+}
+
+.fusion-program-enroll {
+  align-self: flex-end;
+  padding: 6px 9px;
+  border: 1px solid var(--blue);
+  border-radius: 7px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fusion-program-enroll.is-enrolled {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.fusion-program-enroll:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+.fusion-program-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.fusion-program-official {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 /* 다크 테마: --panel 카드가 --panel 모달 바탕에 묻히고 --gray-line 테두리가
    거의 안 보여서, substitution-modal 다크 처리와 같은 톤으로 살짝 띄운다. */
 body.theme-dark .fusion-program-card {
