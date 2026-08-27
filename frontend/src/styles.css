@@ -9794,6 +9794,12 @@ body.theme-dark .topnav .theme-mode-button {
   position: relative;
 }
 
+/* 후보 스위처가 있는 카드는 우상단 스위처가 좁은 화면에서 h4 꼬리("…학점")를
+   덮지 않게 자리를 비운다. */
+.timetable-proposal-head.has-switch h4 {
+  padding-right: 116px;
+}
+
 .timetable-proposal-head span {
   color: var(--blue-deep);
   font-size: 12px;

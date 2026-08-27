@@ -1384,7 +1384,13 @@ export function TimetablePage() {
 
           {suggestion ? (
             <section className="timetable-proposal" aria-label="AI 시간표 추천 승인">
-              <div className="timetable-proposal-head">
+              <div
+                className={
+                  suggestions.length > 1
+                    ? "timetable-proposal-head has-switch"
+                    : "timetable-proposal-head"
+                }
+              >
                 <span>추천 시간표</span>
                 {suggestions.length > 1 ? (
                   <nav className="timetable-proposal-switch" aria-label="추천 후보 선택">
@@ -1393,6 +1399,7 @@ export function TimetablePage() {
                         key={i}
                         type="button"
                         className={i === suggestionIndex ? "is-active" : ""}
+                        aria-label={`후보 ${i + 1}`}
                         aria-current={i === suggestionIndex ? "true" : undefined}
                         disabled={isApplying}
                         onClick={() => selectSuggestion(i)}
