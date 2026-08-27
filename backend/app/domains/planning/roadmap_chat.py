@@ -3688,10 +3688,6 @@ def run_roadmap_chat(
             raise ValueError(f"session_id={session_id}는 이 로드맵의 세션이 아닙니다")
     else:
         session = _get_or_create_default_session(db, roadmap, message)
-    # 마지막 assistant 메시지를 commit하면 SQLAlchemy는 기본적으로 모든 ORM 객체를
-    # 만료시킨다. SQLite 테스트 환경에서는 그 뒤 session 행을 다시 읽는 과정에서
-    # ObjectDeletedError가 날 수 있으므로, 이 턴에서 이미 확정된 PK는 값으로 보존한다.
-    chat_session_id = session.id
 
     # Langfuse trace: 이 대화 턴 전체(DB 작업 포함)를 하나의 agent-typed root observation으로
     # 감싼다. root 시점을 함수 초입으로 앞당겨야 UI latency가 실제 소요시간과 일치한다.
@@ -3700,7 +3696,7 @@ def run_roadmap_chat(
     with observe_agent_call(
         agent="roadmap_chat",
         user_id=user.id,
-        session_id=chat_session_id,
+        session_id=session.id,
         user_message=message,
     ) as trace:
         # 페이즈 1: 사용자 메시지 저장 (DB write).
@@ -3708,7 +3704,7 @@ def run_roadmap_chat(
             db.add(
                 CourseRoadmapChatMessage(
                     roadmap_id=roadmap.id,
-                    session_id=chat_session_id,
+                    session_id=session.id,
                     role="user",
                     content=message,
                 )
@@ -3717,7 +3713,7 @@ def run_roadmap_chat(
 
         # 페이즈 2: 히스토리 로드 + 학생 컨텍스트 빌드 + 조건부 규칙 assembly (DB read heavy).
         with trace.span("load_history_and_context", as_type="retriever"):
-            history = _load_history(db, chat_session_id)
+            history = _load_history(db, session.id)
             context_block = _build_student_context_block(db, user)
             # message를 넘기는 이유: 범위 한정 요청("그것만요") 규칙은 학생 DB 상태가
             # 아니라 이번 턴 문장으로만 판정된다.
@@ -3968,7 +3964,7 @@ def run_roadmap_chat(
             db.add(
                 CourseRoadmapChatMessage(
                     roadmap_id=roadmap.id,
-                    session_id=chat_session_id,
+                    session_id=session.id,
                     role="assistant",
                     content=final_text,
                 )
@@ -3992,7 +3988,7 @@ def run_roadmap_chat(
     return {
         "reply": final_text,
         "pending_changes": ctx.pending_changes,
-        "session_id": chat_session_id,
+        "session_id": session.id,
         # 아래 둘은 API 응답에는 안 쓰이고 평가 하니스(tests/eval)가 읽는다. timetable_chat의
         # 반환 형태와 맞춰 두 에이전트를 같은 기준으로 채점할 수 있게 한다.
         "finished": finished,          # finish_response로 정상 종료했는지 (폴백 요약이면 False)
