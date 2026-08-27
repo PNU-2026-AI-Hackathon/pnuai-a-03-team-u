@@ -296,6 +296,10 @@ def _eligible_requirement(
         parts = _participating_departments(
             db, requirement.department_id, requirement.major_id
         )
+        # 목록 조회와 같은 기준. 교차인정이 실재하는 프로그램(SW연계전공·핀테크 등)은
+        # 참여학과가 아닌 학생을 여기서 막고, 참여학과가 자기 자신뿐인 융합전공은
+        # 학과 무관 허용한다. 후자는 `source='fusion_plan'` 계획 플래그일 뿐이라
+        # (되돌리기 가능, 실제 학적 아님) 시드 미완으로 잘못 열려도 피해가 작다.
         if _student_can_pursue(requirement.department_id, current_dept, parts):
             return requirement
     raise HTTPException(status_code=403, detail="현재 학과에서는 이수 가능한 융합전공이 아닙니다")

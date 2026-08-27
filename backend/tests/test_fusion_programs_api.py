@@ -286,6 +286,53 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         self.assertTrue(reactivated.enrolled)
         self.assertEqual(enrollment_id, reactivated.user_academic_program_id)
 
+    def test_enroll_allows_outside_department_into_self_contained_fusion_major(self):
+        """참여학과가 자기 학과뿐인 새 융합전공(반도체·DX 등)은 어느 학과 학생이든
+        패널에서 저장(=이수계획 등록)할 수 있어야 한다 — 그렇지 않으면 목록엔 뜨는데
+        저장은 403이 되는 반쪽짜리가 된다."""
+        db = _make_db(); _seed(db)
+        db.add(Department(id=45, college_id=1, name="지식재산융합전공"))
+        db.flush()
+        db.add(Major(id=79, department_id=45, name="지식재산융합전공"))
+        db.flush()
+        requirement = GraduationRequirement(
+            department_id=45, major_id=79, program_type="minor",
+            required_total_credits=21, curriculum_year="2026",
+        )
+        db.add(requirement)
+        db.flush()
+        db.add(Course(id=10, course_code="IP100", course_name="지식재산개론",
+                      department_id=45, credits=3.0))
+        db.add(ProgramCourse(department_id=45, major_id=79, course_id=10, curriculum_year=_YEAR))
+        user = _make_user(db, dept_id=18)  # 심리학과 — 참여학과 아님
+        db.commit()
+
+        enrolled = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+        )
+        self.assertTrue(enrolled.enrolled)
+        self.assertEqual("minor", enrolled.program_type)
+
+    def test_enroll_still_403_for_outside_department_on_cross_listed_program(self):
+        """실제로 참여학과가 갈리는 융합전공(SW연계전공·핀테크 등)은 참여학과가
+        아닌 학생이 저장하려 하면 여전히 403이어야 한다 — 이번 변경이 이 게이트를
+        열어버리면 안 된다."""
+        db = _make_db(); _seed(db)
+        # (20,66) 인정과목 = 심리학과(18)·정보컴퓨터공학부(30) → 참여 {18,30}
+        requirement = GraduationRequirement(
+            department_id=20, major_id=66, program_type="dual",
+            required_total_credits=48, curriculum_year="2026",
+        )
+        db.add(requirement)
+        user = _make_user(db, dept_id=40)  # 반도체융합전공 — 참여 {18,30}에 없음
+        db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            enroll_fusion_program(
+                EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+            )
+        self.assertEqual(403, error.exception.status_code)
+
     def test_portal_program_is_shown_but_not_cancellable_as_a_plan(self):
         """실제 학교 학적(UAP)은 패널에서 취소할 수 없어야 한다."""
         db = _make_db(); _seed(db)
