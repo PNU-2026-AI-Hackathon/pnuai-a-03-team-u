@@ -78,6 +78,9 @@ class UserAcademicProgram(TimestampMixin, Base):
     program_type: Mapped[str] = mapped_column(String(20), default="primary")
     curriculum_year: Mapped[str | None] = mapped_column(String(10))
     status: Mapped[str] = mapped_column(String(20), default="active")
+    # One-Stop 동기화 학적과 사용자가 로드맵에서 임시로 저장한 이수 계획을 구분한다.
+    # 실제 학적은 절대 화면의 "취소"로 변경하면 안 된다.
+    source: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
 
 
 class StudentCourseRecord(TimestampMixin, Base):

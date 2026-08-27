@@ -9,10 +9,16 @@
 
 import unittest
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.api.fusion_programs import list_available_fusion_programs
+from app.api.fusion_programs import (
+    EnrollFusionProgramRequest,
+    cancel_fusion_program,
+    enroll_fusion_program,
+    list_available_fusion_programs,
+)
 from app.core.db import Base
 from app.domains.academics.models import (
     College,
@@ -228,6 +234,63 @@ class FusionProgramsAvailableTest(unittest.TestCase):
         result = list_available_fusion_programs(current_user=user, db=db)
         self.assertNotIn("primary", [o.program_type for o in result])
         self.assertNotIn(50, [o.department_id for o in result])
+
+    def test_enroll_cancel_and_reactivate_fusion_program(self):
+        """minor/dual 융합전공은 UAP 한 행을 재사용해 저장·취소·재등록한다."""
+        db = _make_db(); _seed(db)
+        requirement = GraduationRequirement(
+            department_id=20, major_id=66, program_type="dual",
+            required_total_credits=48, curriculum_year="2026",
+        )
+        db.add(requirement)
+        user = _make_user(db, dept_id=18)
+        db.commit()
+
+        enrolled = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+        )
+        self.assertTrue(enrolled.enrolled)
+        self.assertEqual("dual", enrolled.program_type)
+        enrollment_id = enrolled.user_academic_program_id
+        self.assertIsNotNone(enrollment_id)
+
+        cancel_fusion_program(enrollment_id, current_user=user, db=db)
+        cancelled = next(
+            option for option in list_available_fusion_programs(current_user=user, db=db)
+            if option.program_id == requirement.id
+        )
+        self.assertFalse(cancelled.enrolled)
+
+        reactivated = enroll_fusion_program(
+            EnrollFusionProgramRequest(program_id=requirement.id), current_user=user, db=db
+        )
+        self.assertTrue(reactivated.enrolled)
+        self.assertEqual(enrollment_id, reactivated.user_academic_program_id)
+
+    def test_portal_program_is_shown_but_not_cancellable_as_a_plan(self):
+        """실제 학교 학적(UAP)은 패널에서 취소할 수 없어야 한다."""
+        db = _make_db(); _seed(db)
+        requirement = GraduationRequirement(
+            department_id=20, major_id=66, program_type="dual",
+            required_total_credits=48, curriculum_year="2026",
+        )
+        db.add(requirement)
+        user = _make_user(db, dept_id=18)
+        portal_program = UserAcademicProgram(
+            user_id=user.id, department_id=20, major_id=66, program_type="dual",
+            curriculum_year="2026", status="active", source="portal",
+        )
+        db.add(portal_program); db.commit()
+
+        option = next(
+            option for option in list_available_fusion_programs(current_user=user, db=db)
+            if option.program_id == requirement.id
+        )
+        self.assertTrue(option.enrolled)
+        self.assertFalse(option.enrollment_editable)
+        with self.assertRaises(HTTPException) as error:
+            cancel_fusion_program(portal_program.id, current_user=user, db=db)
+        self.assertEqual(404, error.exception.status_code)
 
 
 if __name__ == "__main__":

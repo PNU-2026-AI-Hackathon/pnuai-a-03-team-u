@@ -20,6 +20,9 @@ export type FusionProgramOption = {
   total_credits: number | null;
   curriculum_year: string | null;
   participating_departments: ParticipatingDepartment[];
+  enrolled: boolean;
+  user_academic_program_id: number | null;
+  enrollment_editable: boolean;
 };
 
 export async function listAvailableFusionPrograms() {
@@ -27,4 +30,16 @@ export async function listAvailableFusionPrograms() {
     "/me/fusion-programs/available",
   );
   return data;
+}
+
+export async function enrollFusionProgram(programId: number) {
+  const { data } = await apiClient.post<FusionProgramOption>(
+    "/me/fusion-programs/enroll",
+    { program_id: programId },
+  );
+  return data;
+}
+
+export async function cancelFusionProgram(userAcademicProgramId: number) {
+  await apiClient.delete(`/me/fusion-programs/${userAcademicProgramId}`);
 }
