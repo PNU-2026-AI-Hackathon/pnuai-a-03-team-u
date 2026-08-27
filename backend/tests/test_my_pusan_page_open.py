@@ -18,6 +18,7 @@ from app.ingestion.crawlers.my_pusan_extracurricular import (
     _LEGACY_LOGIN_BUTTON_SELECTOR,
     _LEGACY_LOGIN_ID_SELECTOR,
     _LEGACY_LOGIN_PW_SELECTOR,
+    _LEGACY_LOGIN_TAB_SELECTOR,
     _login_to_legacy_my_pusan,
     _open_certificate_page,
 )
@@ -116,6 +117,8 @@ class OpenCertificatePageTest(unittest.TestCase):
         self.assertEqual(("goto", LEGACY_MY_LOGIN_URL, {
             "wait_until": "domcontentloaded", "timeout": 10_000,
         }), page.events[0])
+        self.assertIn(("wait", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
+        self.assertIn(("click", _LEGACY_LOGIN_TAB_SELECTOR), page.events)
         self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR), page.events)
         self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)

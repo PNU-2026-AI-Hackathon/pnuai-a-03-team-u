@@ -40,6 +40,7 @@ LEGACY_MY_LOGIN_URL = "https://login.pusan.ac.kr/my/loginPage"
 _LEGACY_LOGIN_ID_SELECTOR = "#login_id"
 _LEGACY_LOGIN_PW_SELECTOR = "#login_pw"
 _LEGACY_LOGIN_BUTTON_SELECTOR = "#btnLogin"
+_LEGACY_LOGIN_TAB_SELECTOR = "#idpwTab > a"
 _LEGACY_LOGIN_TIMEOUT_MS = 12_000
 
 # data-name 값 → 어느 도메인 모델로 upsert할지. eco(이수 프로그램)/award(수상)/
@@ -279,6 +280,15 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
         if _LOGIN_HOST not in target.url:
             return None
 
+        # 실제 구형 HTML은 #login_id/#login_pw를 처음에 display:none으로 렌더링한다.
+        # “아이디 로그인” 탭을 열지 않으면 selector는 DOM에 있어도 visible 대기에서
+        # 타임아웃한다. 2026-08-27 공개 응답으로 확인한 구조다.
+        target.wait_for_selector(
+            _LEGACY_LOGIN_TAB_SELECTOR,
+            state="visible",
+            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+        )
+        target.click(_LEGACY_LOGIN_TAB_SELECTOR)
         target.wait_for_selector(
             _LEGACY_LOGIN_ID_SELECTOR,
             state="visible",
