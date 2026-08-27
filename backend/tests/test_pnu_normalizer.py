@@ -65,6 +65,19 @@ class SplitCollegeDepartmentMajorTest(unittest.TestCase):
     def test_department_only(self):
         self.assertEqual((None, "심리학과", None), _split_college_department_major("심리학과"))
 
+    def test_bare_program_ending_in_전공_is_department_not_submajor(self):
+        """부·복수전공 표는 '핀테크융합전공'처럼 프로그램명 한 토큰만 준다. 이걸
+        세부전공(major)으로 떼면 department가 None이 돼 학적이 학과에 안 붙는다."""
+        self.assertEqual(
+            (None, "핀테크융합전공", None),
+            _split_college_department_major("핀테크융합전공"),
+        )
+        # 단과대만 앞에 붙어도 마찬가지 — 뒤 토큰이 프로그램 자체다.
+        self.assertEqual(
+            ("경영대학", "핀테크융합전공", None),
+            _split_college_department_major("경영대학 핀테크융합전공"),
+        )
+
     def test_empty_input(self):
         self.assertEqual((None, None, None), _split_college_department_major(""))
         self.assertEqual((None, None, None), _split_college_department_major(None))
@@ -326,6 +339,21 @@ class MapAcademicProgramRegistrationsTest(unittest.TestCase):
             ["3", "부전공", "경영학과", "N", "선택"],
         ])
         self.assertEqual(["primary", "dual", "minor"], [p.program_type for p in saved])
+
+    def test_bare_program_name_ending_in_전공_gets_a_department(self):
+        """'핀테크융합전공'처럼 프로그램명 한 토큰짜리 부전공도 department_id가 붙어야
+        한다 — 안 붙으면 AI융합 패널·졸업판정이 그 프로그램을 찾지 못한다
+        (한고은 계정 실제 증상, 2026-08-27)."""
+        db = self.make_db()
+        saved = map_academic_program_registrations(db, 1, [
+            ["1", "주전공", "경영학과", "N", "선택"],
+            ["2", "부전공", "핀테크융합전공", "N", "선택"],
+        ])
+        minor = next(p for p in saved if p.program_type == "minor")
+        self.assertIsNotNone(minor.department_id)
+        dept = db.get(Department, minor.department_id)
+        self.assertEqual("핀테크융합전공", dept.name)
+        self.assertIsNone(minor.major_id)
 
     def test_unknown_label_and_short_rows_are_skipped(self):
         db = self.make_db()

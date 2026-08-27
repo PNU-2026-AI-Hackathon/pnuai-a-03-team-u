@@ -14,6 +14,36 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-27 (blackest21) — portal-sync 학적 반영 수정: my.pusan SSO 대기 회귀 되돌림 + 부전공 프로그램명 파싱 (PR #297)
+
+- **#295(다른 세션에서 머지됨)가 my.pusan 비교과 크롤을 회귀시켰다.** `#btnLogin` click
+  뒤 `wait_for_load_state`+`wait_for_timeout(500)`을 `wait_for_url(url != loginPage)`로
+  바꿨는데, 첫 리다이렉트 홉에서 즉시 반환하는 바람에 이어지는 `_open_certificate_page`의
+  `goto`가 진행 중인 rSSO 리다이렉트 체인을 끊어 `net::ERR_ABORTED` → "my.pusan.ac.kr
+  연결 중 오류" (사용자 실계정에서 재현). 실계정 A/B: #295 있으면 1/4, 되돌리면 5/5.
+  #294 상태(`wait_for_timeout(500)` + `_open_certificate_page` 폴링 루프)로 되돌렸다.
+- **`_split_college_department_major`가 "핀테크융합전공"처럼 한 토큰짜리 프로그램명을
+  세부전공(major)으로 떼어내 department를 None으로 만들던 버그.** 그러면
+  `_resolve_registration_hierarchy`가 곧장 `(None, None)`을 반환해, 부전공
+  `UserAcademicProgram` 행이 `department_id`·`major_id` 없이 저장된다 → AI융합 패널·
+  졸업판정이 그 프로그램을 못 찾는다(한고은 계정: 경영 주전공 + 핀테크융합전공 부전공이
+  안 뜸). 남은 토큰이 없고 major만 있으면 그 토큰을 department로 취급하도록 수정.
+  기존 NULL-dept 행은 다음 portal-sync에서 upsert가 자동 복구.
+- 참고: 졸업예정정보(menuCD=…089)의 학적신청 표(table[0], 헤더 `학적신청구분`) 크롤링
+  자체는 정상 — 실계정에서 `['1','주전공','정보컴퓨터공학부 컴퓨터공학전공','N','선택']`
+  확인. 문제는 파싱 단계였다.
+
+## 2026-08-27 (blackest21) — AI융합 패널 노출 수정 · 로드맵 챗 융합전공 제안 · my.pusan 비교과 크롤 수정 (PR #291~#294)
+
+한 세션에서 네 갈래를 처리했다.
+
+- **#291 AI융합 패널이 새 융합전공(반도체·DX·그린바이오·미래자동차·EES·이차전지·지식재산·지능형헬스)을 아무에게도 안 보여주던 것.** 이 8개는 AIS 위젯이 참여학과 과목까지 융합전공 유닛 코드 하나로 통합 제공해서 `program_courses`의 개설학과가 그 융합전공 자신뿐 → "참여학과에 내 학과가 있어야 노출" 게이트에 전부 걸렸다. 게이트 판별을 `program_type`이 아니라 **실제 교차인정 여부**로 바꿨다(`_student_can_pursue`): 참여학과가 자기 자신뿐이면 학과 무관 노출, 실제로 갈리면(SW연계전공·SW융합트랙·핀테크) 종전대로 겹칠 때만. 목록 조회와 `POST /enroll` 403 게이트 둘 다 적용.
+- **#292 로드맵 챗이 진로-전공 mismatch 학생에게 융합·연계전공도 대안으로 제안** (핸드오프 항목 3). `app/api/fusion_programs.py`의 목록·게이트 로직을 `app/domains/academics/fusion_catalog.py`로 추출해 api·planning 두 호출부가 공유하게 하고, `roadmap_chat`에 `get_fusion_programs` 도구 + `career_dept_mismatch` 규칙 확장을 붙였다.
+- **#293 골든 케이스 14(국문과 + 백엔드 진로)가 `--live` 2/5~3/5로 흔들리던 것.** 답변이 졸업위험·전공필수 배치에 매몰돼 부·복수전공 제안을 빠뜨렸다. 프롬프트 규칙만으론 안 잡혀서, `run_roadmap_chat` 최종 답변이 대안 경로를 안 담으면 짧은 LLM 호출로 안내 문단만 생성해 답변 **앞에** prepend하는 결정적 후처리(`_prepend_mismatch_advice`)를 뒀다. `--live --runs 5` ×2 = 10/10.
+- **#294 my.pusan 비교과(이수 프로그램·자격증·어학) 크롤이 portal-sync 전체 순서로 돌리면 ~1/3 실패하던 것.** `login.pusan.ac.kr/my/loginPage`의 공지 팝업(`.popup_layer`)이 `#idpwTab`을 덮어 탭 click 타임아웃 → `.tab-cont` 안 펼쳐져 `#login_id` 0×0 → visible 대기도 타임아웃. `_dismiss_login_popups`(닫기-링크 DOM click)는 팝업이 AJAX로 늦게 주입돼 0개를 닫았다. `add_style_tag(".popup_layer{display:none !important}")`로 이후 뜨는 팝업까지 타이밍 무관하게 억제 + 폼이 크기를 가질 때까지 (숨김→탭 실제 click→확인) 재시도. 실계정 재현 8/8. `_dismiss_login_popups`는 유일 호출부가 사라져 제거.
+- 네 PR 모두 독립 리뷰 세션을 거쳤고, #293·#294는 리뷰 지적(키워드 오탐·본문 훼손 위험·팝업 재출현 race·테스트 커버리지)을 반영하고 재리뷰까지 돌렸다. pytest 786 pass, 골든 TC01~TC12 통과.
+- 미결: 핸드오프 5b(AI융합계산과학 전공기초 25학점 소스), 5d(SW융합 A/D/X 트랙 라벨)는 외부/사용자 데이터 필요.
+
 ## 2026-08-25 (blackest21) — README 2.3 보안 섹션·기술 선정 이유 표 가독성 정리 (PR #251)
 
 사용자 요청("보안 관련 내용이 직관성이 떨어진다", "선정 이유 열이 너무 길다")에 따라

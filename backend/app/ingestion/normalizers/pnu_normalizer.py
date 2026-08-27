@@ -66,6 +66,16 @@ def _split_college_department_major(raw: str | None) -> tuple[str | None, str | 
         tokens = tokens[1:]
 
     department = " ".join(tokens) or None
+
+    # 학적신청 표의 부·복수전공이나 융합전공 소속처럼 "…전공" 한 토큰만 온 경우,
+    # 그건 세부전공이 아니라 그 프로그램 자체(우리 스키마의 Department)다. major로
+    # 떼어내 department를 None으로 두면 `_resolve_registration_hierarchy`가
+    # `if not department_name: return None, None`으로 곧장 빠져나가, 부전공
+    # UserAcademicProgram 행이 department_id·major_id 없이 저장된다
+    # (핀테크융합전공 부전공이 학적에 안 붙는 실제 증상, 2026-08-27).
+    if department is None and major is not None:
+        department, major = major, None
+
     return college, department, major
 
 

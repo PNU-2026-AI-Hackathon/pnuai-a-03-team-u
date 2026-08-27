@@ -74,9 +74,6 @@ _LEGACY_LOGIN_PW_SELECTOR = "#login_pw"
 _LEGACY_LOGIN_BUTTON_SELECTOR = "#btnLogin"
 _LEGACY_LOGIN_TAB_SELECTOR = "#idpwTab > a"
 _LEGACY_LOGIN_TIMEOUT_MS = 12_000
-# `wait_for_load_state()`는 이미 열린 문서가 domcontentloaded 상태이면 로그인 click
-# 직후에도 즉시 반환한다. rSSO form submit의 첫 URL 전환만 기다릴 별도 예산이다.
-_LEGACY_LOGIN_TRANSITION_TIMEOUT_MS = 5_000
 
 # data-name 값 → 어느 도메인 모델로 upsert할지. eco(이수 프로그램)/award(수상)/
 # performance(연수)/group(동아리)/volunteer(봉사)/etc(기타)는 모두 UserActivity로 합친다.
@@ -370,20 +367,14 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
             target.click(_LEGACY_LOGIN_BUTTON_SELECTOR, timeout=_LEGACY_LOGIN_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             return "my.pusan.ac.kr용 통합로그인 버튼을 누르지 못했습니다."
-        # `wait_for_load_state`만 쓰면 클릭 전 문서가 이미 domcontentloaded 상태인
-        # 경우 즉시 반환한다. 그러면 form submit/rSSO 토큰 발급이 시작되기 전에 다음
-        # `_open_certificate_page`가 certificate URL로 다시 이동해 세션을 끊어 버린다.
-        # 먼저 **첫 URL 전환**만 기다린 뒤, 최종 착지는 `_open_certificate_page`의
-        # 루프 감지 로직으로 판정한다. 비밀번호 오류 등으로 전환이 없더라도 전체
-        # 동기화를 오래 붙잡지 않도록 짧은 예산만 사용한다.
+        # 구형 SSO는 click 뒤 여러 redirect를 거친다. 여기서 networkidle을 오래
+        # 기다리지 않고, 다음 `_open_certificate_page`가 기존의 루프 감지 로직으로
+        # 최종 착지를 판정하게 한다.
         try:
-            target.wait_for_url(
-                lambda url: url != LEGACY_MY_LOGIN_URL,
-                wait_until="domcontentloaded",
-                timeout=_LEGACY_LOGIN_TRANSITION_TIMEOUT_MS,
-            )
+            target.wait_for_load_state("domcontentloaded", timeout=_LEGACY_LOGIN_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             pass
+        target.wait_for_timeout(500)
         return None
     except PlaywrightTimeoutError:
         return "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다."
