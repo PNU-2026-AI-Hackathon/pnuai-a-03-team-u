@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.api.auth import SignupRequest, signup
+from app.api.auth import SignupRequest, _load_user_response, signup
 from app.api.curriculum import get_my_curriculum
 from app.api.graduation import CategoryProgressResponse, GraduationOverrideInput
 from app.api.portal_sync import (
@@ -269,6 +269,35 @@ class ConnectedProfileRoadmapApiTest(unittest.TestCase):
             db=self.db,
         )
         self.assertTrue(result["advisor_consulted"])
+
+    def test_academic_programs_response_includes_active_hides_cancelled(self):
+        # AI융합 패널에서 담은 융합전공(fusion_plan)은 active면 노출,
+        # 취소하면 status='cancelled'로만 남는데 "내 전공" 목록에서 빠져야 한다.
+        self.db.add_all([
+            UserAcademicProgram(
+                user_id=self.user.id,
+                department_id=self.department.id,
+                major_id=None,
+                program_type="dual",
+                curriculum_year="2026",
+                status="active",
+                source="fusion_plan",
+            ),
+            UserAcademicProgram(
+                user_id=self.user.id,
+                department_id=self.department.id,
+                major_id=self.major.id,
+                program_type="minor",
+                curriculum_year="2026",
+                status="cancelled",
+                source="fusion_plan",
+            ),
+        ])
+        self.db.commit()
+
+        response = _load_user_response(self.db, self.user)
+        types = sorted(p.program_type for p in response.academic_programs)
+        self.assertEqual(types, ["dual", "primary"])
 
     def test_curriculum_uses_course_and_user_status(self):
         completed = Course(

@@ -31,6 +31,7 @@ from app.core.security import (
 )
 from app.domains.academics.hierarchy import resolve_hierarchy
 from app.domains.academics.models import Department, Major, UserAcademicProgram
+from app.domains.academics.program_status import is_active_program_status
 from app.domains.users.admission import AdmissionType, normalize_admission_type
 from app.domains.users.models import PasswordResetToken, User
 
@@ -224,7 +225,11 @@ def _load_user_response(db: Session, user: User) -> UserResponse:
                 department=_department_name(db, p.department_id),
                 program_type=p.program_type,
             )
+            # 취소·자퇴·졸업 등 비활성 학적은 "내 전공" 목록에서 뺀다 — AI융합 패널에서
+            # 융합전공을 담았다 취소하면 status='cancelled'로만 남는데, 그대로 노출하면
+            # 프로필에 유령 복수전공이 뜬다.
             for p in programs
+            if is_active_program_status(p.status)
         ],
     )
 

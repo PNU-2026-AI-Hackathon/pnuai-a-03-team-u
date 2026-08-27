@@ -98,6 +98,13 @@ const programTypeLabels: Record<string, string> = {
   interdisciplinary: "연계·융합전공",
 };
 
+// 프로필 헤더의 학적 태그(전/부/복/융)용 한 글자 라벨.
+const programTypeShortTag: Record<string, string> = {
+  minor: "부",
+  dual: "복",
+  interdisciplinary: "융",
+};
+
 type DeleteTarget = {
   kind: "activity" | "certification" | "language";
   id: number;
@@ -680,7 +687,19 @@ export function InfoPage() {
   const profileMajor = profileOverrides?.major ?? baseProfileMajor;
   const academicYear = normalizeAcademicYear(profileOverrides?.academicYear) ?? baseAcademicYear;
   const profileProgramNames = getDistinctProgramNames(profileDepartment, profileMajor);
-  const profileMinorMajor = user?.academic_programs?.find((program) => program.program_type === "minor")?.major ?? "";
+  // 주전공 외 학적(부전공·복수전공·연계/융합전공). AI융합 패널에서 담은 융합전공도
+  // UserAcademicProgram으로 저장돼 여기로 들어온다 — 학과 자체가 프로그램이면 major가
+  // 비어 있으므로 department로 폴백한다.
+  const secondaryPrograms = (user?.academic_programs ?? [])
+    .filter((program) => program.program_type !== "primary")
+    .map((program) => ({
+      tag: programTypeShortTag[program.program_type] ?? "추가",
+      name:
+        program.major
+        || program.department
+        || programTypeLabels[program.program_type]
+        || "추가 전공",
+    }));
   const currentSemesterLabel = `${new Date().getMonth() + 1 <= 8 ? 1 : 2}학기 재학 중`;
   const totalCredits = displayedGraduation?.required_total_credits;
   const overallGpa = calculateGpa(displayedCourses);
@@ -1268,12 +1287,12 @@ export function InfoPage() {
                 ) : (
                   <span>학적 정보를 불러오면 표시됩니다.</span>
                 )}
-                {profileMinorMajor ? (
-                  <span>
-                    <em className="program-tag">부</em>
-                    {profileMinorMajor}
+                {secondaryPrograms.map((program, index) => (
+                  <span key={`${program.tag}-${program.name}-${index}`}>
+                    <em className="program-tag">{program.tag}</em>
+                    {program.name}
                   </span>
-                ) : null}
+                ))}
               </p>
               <p>
                 {academicYear ? `${academicYear}학년 · 졸업요건 점검 중` : "학년 정보 없음"}
