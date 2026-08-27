@@ -29,9 +29,39 @@ import re
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from app.ingestion.crawlers.pnu_session import _dismiss_login_popups
-
 _logger = logging.getLogger(__name__)
+
+# 통합로그인 페이지의 공지 팝업(`.popup_layer#popup_NN`)이 `#idpwTab`을 덮으면 탭
+# click이 타임아웃한다. 팝업은 `getNoticeList` AJAX 콜백이 페이지 로드 뒤 body에
+# append하고 jQuery `.show()`로 띄우므로(= 인라인 `display:block`), 한 번 닫아도
+# 그 뒤 콜백이 다시 띄울 수 있다. 스타일시트 `!important` 규칙은 인라인
+# `display:block`을 이기므로, 이걸 head에 한 번 주입하면 이후 뜨는 팝업까지
+# 타이밍 무관하게 안 보이게 만든다. (2026-08-27 실측: 팝업 안 닫기-링크를 DOM
+# click하는 방식은 팝업이 AJAX로 늦게 주입돼 0개를 닫았다.)
+_SUPPRESS_POPUPS_CSS = ".popup_layer{display:none !important}"
+
+# 스타일 주입이 실패한(리다이렉트 중 등) 경우의 폴백: 이미 뜬 팝업을 직접 숨긴다.
+_HIDE_LOGIN_POPUPS_JS = r"""(() => {
+  let n = 0;
+  document.querySelectorAll('.popup_layer').forEach(p => {
+    const m = (p.id || '').match(/(\d+)/);
+    try {
+      if (m && typeof layerPopupClose === 'function') { layerPopupClose(+m[1]); }
+    } catch (e) {}
+    p.style.display = 'none';
+    n++;
+  });
+  return n;
+})()"""
+
+# `#idpwTab > a`(아이디 로그인 탭)를 눌러야 `.tab-cont`가 display:block이 되고
+# 그제서야 `#login_id`/`#login_pw`가 실제 크기를 갖는다. 탭을 안 누르면 필드가
+# display:block이어도 0x0이라 Playwright의 `state="visible"` 대기가 타임아웃한다.
+_LOGIN_FORM_HAS_BOX_JS = (
+    "(() => { const e = document.querySelector('#login_id');"
+    " if (!e) return false; const r = e.getBoundingClientRect();"
+    " return r.width * r.height > 0; })()"
+)
 
 CERTIFICATE_URL = "https://my.pusan.ac.kr/ko/extracurricular/career/certificate"
 LEGACY_MY_LOGIN_URL = "https://login.pusan.ac.kr/my/loginPage"
@@ -282,37 +312,61 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
         if _LOGIN_HOST not in target.url:
             return None
 
-        # 부산대가 통합로그인 페이지에 로그인 공지 팝업을 띄우면 `#idpwTab` 위를
-        # 덮는다. Playwright의 일반 click은 가려진 요소를 안 눌러 30초 타임아웃이
-        # 나므로(pnu_session._dismiss_login_popups 주석 참고), 탭을 누르기 전에
-        # DOM click으로 먼저 닫는다. 실패해도 로그인을 중단하지 않는다.
-        _dismiss_login_popups(target)
+        # 공지 팝업을 타이밍 무관하게 억제한다 (뒤늦게 뜨는 것까지). 실패해도 아래
+        # 루프의 evaluate 폴백이 이미 뜬 팝업은 숨긴다.
+        try:
+            target.add_style_tag(content=_SUPPRESS_POPUPS_CSS)
+        except Exception:  # noqa: BLE001 - 리다이렉트 중 등
+            pass
 
-        # 실제 구형 HTML은 #login_id/#login_pw를 처음에 display:none으로 렌더링한다.
-        # “아이디 로그인” 탭을 열지 않으면 selector는 DOM에 있어도 visible 대기에서
-        # 타임아웃한다. 2026-08-27 공개 응답으로 확인한 구조다.
-        target.wait_for_selector(
-            _LEGACY_LOGIN_TAB_SELECTOR,
-            state="visible",
-            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
-        )
-        # timeout 없이 두면 Playwright 기본 30초를 쓴다 — 팝업이 남아 있거나
-        # 애니메이션이 늦으면 이 함수의 나머지 대기(_LEGACY_LOGIN_TIMEOUT_MS)와
-        # 어긋나므로 명시적으로 맞춘다.
-        target.click(_LEGACY_LOGIN_TAB_SELECTOR, timeout=_LEGACY_LOGIN_TIMEOUT_MS)
-        target.wait_for_selector(
-            _LEGACY_LOGIN_ID_SELECTOR,
-            state="visible",
-            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
-        )
-        target.wait_for_selector(
-            _LEGACY_LOGIN_PW_SELECTOR,
-            state="visible",
-            timeout=_LEGACY_LOGIN_TIMEOUT_MS,
-        )
+        # 탭/폼 골격이 DOM에 붙을 때까지 기다린다.
+        try:
+            target.wait_for_selector(
+                _LEGACY_LOGIN_TAB_SELECTOR,
+                state="attached",
+                timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+            )
+        except PlaywrightTimeoutError:
+            return "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다."
+
+        # `#idpwTab > a`를 눌러야 `.tab-cont`가 펼쳐져 `#login_id`가 실제 크기를 갖는다
+        # (안 누르면 display:block이어도 0x0 → state="visible" 대기 타임아웃). 스타일
+        # 억제가 실패했을 때를 대비해 매 회차 evaluate로도 팝업을 숨기고, 폼이 크기를
+        # 가질 때까지 (숨김 → 탭 실제 click → 확인)을 반복한다.
+        for attempt in range(4):
+            try:
+                target.evaluate(_HIDE_LOGIN_POPUPS_JS)
+            except Exception:  # noqa: BLE001 - 리다이렉트 중이면 evaluate가 터진다
+                pass
+            try:
+                target.click(_LEGACY_LOGIN_TAB_SELECTOR, timeout=3_000)
+            except PlaywrightTimeoutError:
+                pass  # 아직 팝업에 가려짐 — 다음 회차에서 다시 숨기고 시도
+            try:
+                if target.evaluate(_LOGIN_FORM_HAS_BOX_JS):
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            if attempt < 3:
+                target.wait_for_timeout(400)
+
+        try:
+            target.wait_for_selector(
+                _LEGACY_LOGIN_ID_SELECTOR, state="visible",
+                timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+            )
+            target.wait_for_selector(
+                _LEGACY_LOGIN_PW_SELECTOR, state="visible",
+                timeout=_LEGACY_LOGIN_TIMEOUT_MS,
+            )
+        except PlaywrightTimeoutError:
+            return "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다."
         target.fill(_LEGACY_LOGIN_ID_SELECTOR, login_id)
         target.fill(_LEGACY_LOGIN_PW_SELECTOR, login_pw)
-        target.click(_LEGACY_LOGIN_BUTTON_SELECTOR)
+        try:
+            target.click(_LEGACY_LOGIN_BUTTON_SELECTOR, timeout=_LEGACY_LOGIN_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            return "my.pusan.ac.kr용 통합로그인 버튼을 누르지 못했습니다."
         # 구형 SSO는 click 뒤 여러 redirect를 거친다. 여기서 networkidle을 오래
         # 기다리지 않고, 다음 `_open_certificate_page`가 기존의 루프 감지 로직으로
         # 최종 착지를 판정하게 한다.
