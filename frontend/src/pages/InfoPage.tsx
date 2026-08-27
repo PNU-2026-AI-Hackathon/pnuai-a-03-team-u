@@ -31,11 +31,13 @@ import { entryGrade, updateMyProfile } from "../api/auth";
 import type { AdmissionType } from "../api/auth";
 import {
   clearGraduationOverride,
+  FALLBACK_LIBERAL_AREAS,
   getCourseRecords,
   getGraduationProgress,
   isMockStudentDataEnabled,
   replaceCourseRecords,
   saveGraduationOverride,
+  setCourseLiberalArea,
   setCourseSubstitutions,
   syncPortalData,
 } from "../api/studentInfo";
@@ -189,23 +191,18 @@ const TRANSFER_SUBSTITUTION_GRADES = new Set(["1", "2", "전학년"]);
 const LIBERAL_ARTS_CATEGORY_MARK = "교양";
 const MAJOR_CATEGORY_MARK = "전공";
 
-/** One-Stop 졸업예정정보에서 내려오는 효원균형교양 세부영역.
- *
- * 백엔드는 이 값을 `student_course_records.liberal_area` 전용 컬럼에 저장한다.
- * 목록과 순서는 백엔드 `BALANCED_LIBERAL_AREAS`와 반드시 같이 유지해야 한다. */
-const COMPLETED_LIBERAL_AREAS = [
-  "사상과역사",
-  "사회와문화",
-  "문학과예술",
-  "과학과기술",
-  "건강과레포츠",
-  "외국어",
-  "융복합",
-  "효원브릿지",
-] as const;
+/** 효원균형·창의교양 세부영역 목록. 학생의 교양 체계(구체계/신체계)에 따라 이름이
+ *  달라서(외국어↔세계와 소통 등) 백엔드가 이수기록마다 `liberal_area_options`로
+ *  내려준다. 그게 없을 때만(목 데이터 등) `FALLBACK_LIBERAL_AREAS`로 폴백한다. */
+function resolveLiberalAreaList(courses: CourseRecord[]): string[] {
+  const fromApi = courses
+    .flatMap((course) => course.liberal_area_options ?? [])
+    .filter(Boolean);
+  return fromApi.length > 0 ? [...new Set(fromApi)] : [...FALLBACK_LIBERAL_AREAS];
+}
 
 function summarizeCompletedLiberalAreas(courses: CourseRecord[]) {
-  return COMPLETED_LIBERAL_AREAS.map((area) => {
+  return resolveLiberalAreaList(courses).map((area) => {
     const directMatches = courses.filter(
       (course) => course.liberal_area === area || course.category === area,
     );
@@ -387,6 +384,11 @@ export function InfoPage() {
   const substitutionPopoverRef = useRef<HTMLDivElement | null>(null);
 
   const [substitutionError, setSubstitutionError] = useState("");
+  const [liberalAreaSavingId, setLiberalAreaSavingId] = useState<number | null>(null);
+  const [liberalAreaError, setLiberalAreaError] = useState("");
+  // 에러를 어느 행에 붙일지. savingId는 finally에서 바로 null이 돼서 그걸로 게이트하면
+  // 메시지가 한 프레임도 안 보인다 (applySubstitution이 targetId로 게이트하는 이유).
+  const [liberalAreaErrorId, setLiberalAreaErrorId] = useState<number | null>(null);
   const [graduationEditDraft, setGraduationEditDraft] = useState<GraduationProgram | null>(null);
   const [hasGraduationEdited, setHasGraduationEdited] = useState(false);
   const [graduationEditError, setGraduationEditError] = useState("");
@@ -909,6 +911,26 @@ export function InfoPage() {
     }
   }
 
+  /** 교양선택 과목의 균형/창의교양 세부영역을 학생이 직접 고른다.
+   *  졸업예정정보가 세부영역을 안 주거나 자동 매칭이 틀렸을 때 바로잡는 용도. */
+  async function applyLiberalArea(course: CourseRecord, area: string) {
+    setLiberalAreaSavingId(course.id);
+    setLiberalAreaError("");
+    setLiberalAreaErrorId(null);
+    try {
+      const updated = await setCourseLiberalArea(course.id, area || null);
+      const merge = (records: CourseRecord[]) =>
+        records.map((record) => (record.id === updated.id ? { ...record, ...updated } : record));
+      setCourses(merge);
+      setCourseEditDraft(merge);
+    } catch (error) {
+      setLiberalAreaError(getErrorMessage(error, "세부영역을 저장하지 못했습니다."));
+      setLiberalAreaErrorId(course.id);
+    } finally {
+      setLiberalAreaSavingId(null);
+    }
+  }
+
   function updateGraduationTotal(field: "earned_total_credits" | "required_total_credits", value: string) {
     setHasGraduationEdited(true);
     setGraduationEditError("");
@@ -1374,7 +1396,7 @@ export function InfoPage() {
                     <p>교양 영역</p>
                     <h4 id="liberal-area-summary-title">효원균형교양 이수 현황</h4>
                   </div>
-                  <strong>{completedLiberalAreaCount}/{COMPLETED_LIBERAL_AREAS.length}개 영역 확인</strong>
+                  <strong>{completedLiberalAreaCount}/{liberalAreaStatuses.length}개 영역 확인</strong>
                 </div>
                 <ul className="liberal-area-grid">
                   {liberalAreaStatuses.map((status) => (
@@ -1521,7 +1543,7 @@ export function InfoPage() {
                     <option value="교양필수">교양필수</option>
                     <option value="교양선택">교양선택</option>
                     <optgroup label="교양 세부영역">
-                      {COMPLETED_LIBERAL_AREAS.map((area) => <option value={area} key={area}>{area}</option>)}
+                      {resolveLiberalAreaList(displayedCourses).map((area) => <option value={area} key={area}>{area}</option>)}
                     </optgroup>
                     <option value="일반선택">일반선택</option>
                   </select>
@@ -1800,6 +1822,39 @@ export function InfoPage() {
                                   )}
                                   {substitutionError && substitutionTargetId === course.id ? (
                                     <p className="profile-edit-error" role="alert">{substitutionError}</p>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              {/* 교양선택 과목의 효원균형/창의교양 세부영역. 졸업예정정보가
+                                  세부영역을 안 주는 경우가 많고 수강편람 매칭도 빈틈이 있어
+                                  자동값이 비거나 틀렸을 때 학생이 바로잡게 한다. */}
+                              {course.liberal_area_editable && !isProfileEditing ? (
+                                <div className="course-liberal-area">
+                                  <label>
+                                    <span>효원균형·창의교양 영역</span>
+                                    <select
+                                      value={course.liberal_area ?? ""}
+                                      disabled={liberalAreaSavingId === course.id}
+                                      onChange={(event) => applyLiberalArea(course, event.target.value)}
+                                    >
+                                      <option value="">미지정</option>
+                                      {(course.liberal_area_options ?? []).map((area) => (
+                                        <option key={area} value={area}>{area}</option>
+                                      ))}
+                                      {/* 자동값이 학생 체계 목록에 없을 때도 보이게 —
+                                          안 그러면 select가 빈칸으로 보이고 실수로 지워진다. */}
+                                      {course.liberal_area && !(course.liberal_area_options ?? []).includes(course.liberal_area) ? (
+                                        <option value={course.liberal_area}>{course.liberal_area}</option>
+                                      ) : null}
+                                    </select>
+                                  </label>
+                                  {liberalAreaSavingId === course.id ? (
+                                    <span className="course-liberal-area-hint">저장 중…</span>
+                                  ) : course.liberal_area && course.liberal_area_source !== "override" ? (
+                                    <span className="course-liberal-area-hint">자동 판정</span>
+                                  ) : null}
+                                  {liberalAreaError && liberalAreaErrorId === course.id ? (
+                                    <p className="profile-edit-error" role="alert">{liberalAreaError}</p>
                                   ) : null}
                                 </div>
                               ) : null}
