@@ -492,6 +492,7 @@ def _onestop_area_by_course(requirement_items: list[dict]) -> dict[str, str]:
     카탈로그 폴백으로 넘어간다. 표가 채워져 오는 계정/연도에서는 이 값이 우선.
     """
     out: dict[str, str] = {}
+    unknown: set[str] = set()
     for row in requirement_items:
         if row.get("requirement_area") != "general_education_area_completion":
             continue
@@ -504,6 +505,15 @@ def _onestop_area_by_course(requirement_items: list[dict]) -> dict[str, str]:
         known = _match_known_liberal_area(area) if area else None
         if known:
             out[_norm_name(course)] = known
+        elif area:
+            unknown.add(area)
+    if unknown:
+        # 학교가 균형교양 영역을 추가·개명했다는 신호. 조용히 흘리면 놓친다.
+        logging.getLogger(__name__).warning(
+            "One-Stop 균형교양 영역명을 판정 엔진이 모른다: %s. "
+            "graduation_progress.LIBERAL_AREAS_* 갱신이 필요한지 확인할 것.",
+            sorted(unknown),
+        )
     return out
 
 
@@ -553,17 +563,20 @@ def _refine_liberal_area_categories(
         area: str | None = None
         source: str | None = None
         if rec.liberal_area_override:
+            # 학생이 자기 체계 안에서 고른 값이라 그대로 신뢰한다(remap 안 함).
             area, source = rec.liberal_area_override, "override"
         elif key in onestop_map:
             area, source = onestop_map[key], "onestop"
         elif key in catalog_map:
             area, source = catalog_map[key], "catalog"
 
-        # 카탈로그/One-Stop이 신체계 이름으로 줘도 학생 체계 표기로 맞춘다
-        # ("세계와 소통" → 구체계 학생에겐 "외국어"). 그 체계에 없는 영역이면 버린다.
-        area = liberal_area_in_generation(area, generation)
-        if area is None:
-            source = None
+        # 자동 매칭값만 학생 체계 표기로 맞춘다("세계와 소통" → 구체계 학생에겐
+        # "외국어"). 그 체계에 없는 영역이면 버린다. override는 이미 학생 체계 값이라
+        # 이 remap을 태우면 안 된다(연도 파싱이 흔들리면 멀쩡한 지정이 사라질 수 있다).
+        if source in ("onestop", "catalog"):
+            area = liberal_area_in_generation(area, generation)
+            if area is None:
+                source = None
 
         if rec.liberal_area != area or rec.liberal_area_source != source:
             rec.liberal_area = area
@@ -657,8 +670,21 @@ def replace_course_records(
             # liberal_area_completions()가 이미 다른 이수구분으로 옮겨간 과목을 계속 그
             # 세부영역 이수로 잘못 집계한다. 여기서 강제로 지운다.
             liberal_area = None
+        # 폼에서 세부영역을 바꾸거나 지웠으면 학생 지정(override)으로 저장한다 —
+        # 안 그러면 다음 portal-sync의 `_refine_liberal_area_categories`가 자동 매칭으로
+        # 이 값을 덮어써 버린다(크롤 대상 행은 map_grades가 매번 liberal_area를 비운다).
+        # 값이 그대로면 기존 override를 건드리지 않는다(자동값을 override로 승격 안 함).
+        if category == "교양선택":
+            if liberal_area != record.liberal_area:
+                record.liberal_area_override = liberal_area
+        else:
+            record.liberal_area_override = None
         record.category = category
         record.liberal_area = liberal_area
+        if record.liberal_area_override is not None:
+            record.liberal_area_source = "override"
+        elif liberal_area is None:
+            record.liberal_area_source = None
         record.credits = course.credits
         record.year = course.year.strip() if course.year else None
         record.semester = course.semester.strip() if course.semester else None

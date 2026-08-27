@@ -16,10 +16,13 @@ from sqlalchemy.orm import sessionmaker
 from fastapi import HTTPException
 
 from app.api.portal_sync import (
+    CourseRecordInput,
+    CourseRecordsReplaceRequest,
     LiberalAreaRequest,
     _match_known_liberal_area,
     _refine_liberal_area_categories,
     list_course_records,
+    replace_course_records,
     set_course_liberal_area,
 )
 from app.core.db import Base
@@ -296,6 +299,46 @@ class SetCourseLiberalAreaEndpointTest(unittest.TestCase):
                 current_user=self.user, db=self.db,
             )
         self.assertEqual(422, e.exception.status_code)
+
+    def test_내정보편집으로_바꾼_세부영역은_다음_sync에_안_지워진다(self):
+        """replace_course_records로 세부영역을 바꾸면 override로 저장돼야 한다 —
+        안 그러면 다음 portal-sync의 _refine이 자동 매칭으로 덮어써 사라진다
+        (독립 리뷰 지적: 수동 편집 유실 회귀)."""
+        # 교양선택인데 카탈로그·One-Stop 어디에도 없는 과목.
+        replace_course_records(
+            CourseRecordsReplaceRequest(courses=[
+                CourseRecordInput(id=1, course_name="한국사의흐름", category="교양선택",
+                                  liberal_area="사상과역사", credits=3),
+                CourseRecordInput(id=2, course_name="자료구조", category="전공필수", credits=3),
+            ]),
+            current_user=self.user, db=self.db,
+        )
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertEqual("사상과역사", rec.liberal_area_override)
+        self.assertEqual("override", rec.liberal_area_source)
+
+        _refine_liberal_area_categories(self.db, self.user.id, [])  # 자동 매칭 근거 없음
+        self.db.commit()
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertEqual("사상과역사", rec.liberal_area)  # 유지된다
+
+    def test_replace가_값을_안_바꾸면_자동값을_override로_승격하지_않는다(self):
+        rec = self.db.get(StudentCourseRecord, 1)
+        rec.liberal_area = "사회와문화"
+        rec.liberal_area_source = "catalog"
+        self.db.commit()
+
+        replace_course_records(
+            CourseRecordsReplaceRequest(courses=[
+                CourseRecordInput(id=1, course_name="한국사의흐름", category="교양선택",
+                                  liberal_area="사회와문화", credits=3),
+                CourseRecordInput(id=2, course_name="자료구조", category="전공필수", credits=3),
+            ]),
+            current_user=self.user, db=self.db,
+        )
+        rec = self.db.get(StudentCourseRecord, 1)
+        self.assertIsNone(rec.liberal_area_override)  # 그대로면 승격 안 함
+        self.assertEqual("catalog", rec.liberal_area_source)
 
     def test_남의_기록은_404(self):
         other = User(id=2, email="o@example.com", password_hash="x", name="남")
