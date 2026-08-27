@@ -295,13 +295,19 @@ def _open_certificate_page(target: Page) -> str | None:
     )
 
 
-def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str | None:
+def _login_to_legacy_my_pusan(
+    target: Page, login_id: str, login_pw: str, alerts: list[str] | None = None
+) -> str | None:
     """My Pusan 전용 구형 통합로그인을 수행한다.
 
     One-Stop의 새 로그인 이후에도 My Pusan에 이미 rSSO 세션이 있으면 로그인 host가
     곧바로 My Pusan으로 되돌아갈 수 있다. 그 경우 입력폼을 억지로 기다리지 않고
     성공으로 두며, 실제 인증서 접근 성공 여부는 호출자가 `_open_certificate_page`로
     다시 판정한다.
+
+    `alerts`가 주어지면, 로그인 버튼 클릭 뒤 캡처된 브라우저 alert(비밀번호 오류·
+    약관 동의 등)를 실패 사유에 담는다 — 안 그러면 "로그인 페이지로 돌아왔습니다"
+    라는 원인 불명 문구만 남는다.
     """
     try:
         target.goto(
@@ -375,6 +381,10 @@ def _login_to_legacy_my_pusan(target: Page, login_id: str, login_pw: str) -> str
         except PlaywrightTimeoutError:
             pass
         target.wait_for_timeout(500)
+        # 비밀번호 오류·약관 동의 등은 페이지 이동 없이 alert()로만 뜬다. Playwright가
+        # 조용히 자동 닫으므로 캡처해뒀다가 여기서 실패로 확정한다.
+        if alerts:
+            return f"my.pusan.ac.kr 로그인 실패: {alerts[-1]}"
         return None
     except PlaywrightTimeoutError:
         return "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다."
@@ -400,6 +410,18 @@ def fetch_extracurricular_certificate(
     """
     context = page.context
     target = context.new_page()
+    # 구형 통합로그인은 비밀번호 오류 등을 페이지 이동 없이 네이티브 alert로만 알린다.
+    # 핸들러가 없으면 Playwright가 조용히 닫아 실패 사유를 영영 알 수 없다.
+    legacy_alerts: list[str] = []
+
+    def _capture_dialog(dialog):
+        legacy_alerts.append(dialog.message)
+        try:
+            dialog.dismiss()
+        except Exception:  # noqa: BLE001
+            pass
+
+    target.on("dialog", _capture_dialog)
     try:
         failure = _open_certificate_page(target)
         # One-Stop 신규 로그인은 My Pusan의 레거시 rSSO 쿠키를 만들지 않는다. 인증서
@@ -412,7 +434,9 @@ def fetch_extracurricular_certificate(
             and "로그인이 되지 않아 로그인 페이지로 돌아왔습니다" in failure
         )
         if needs_legacy_login and login_id and login_pw:
-            legacy_failure = _login_to_legacy_my_pusan(target, login_id, login_pw)
+            legacy_failure = _login_to_legacy_my_pusan(
+                target, login_id, login_pw, alerts=legacy_alerts
+            )
             if legacy_failure is None:
                 failure = _open_certificate_page(target)
             else:
