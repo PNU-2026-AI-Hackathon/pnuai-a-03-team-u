@@ -15,12 +15,14 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import Session
 
 from app.domains.academics.models import (
     GraduationRequirement,
     ProgramCourse,
     StudentCourseRecord,
+    StudentCourseSubstitution,
     StudentGraduationCategory,
     UserAcademicProgram,
 )
@@ -466,6 +468,9 @@ def _program_rule_judgment(
 
     special = requirement.special_rules or {}
     has_groups = bool(special.get("groups"))
+    # evaluate_program은 program_courses를 requirement 행의 curriculum_year로 필터한다
+    # (program_evaluator.py). 게이트도 같은 연도로 봐야 "하이브리드로 갔는데 인정과목이
+    # 0건이라 전부 미충족" 같은 어긋남이 안 생긴다.
     has_program_courses = (
         db.query(ProgramCourse.id)
         .filter(
@@ -473,6 +478,7 @@ def _program_rule_judgment(
             ProgramCourse.major_id == program.major_id
             if program.major_id is not None
             else ProgramCourse.major_id.is_(None),
+            ProgramCourse.curriculum_year == requirement.curriculum_year,
         )
         .first()
         is not None
@@ -480,21 +486,34 @@ def _program_rule_judgment(
     if not has_groups and not has_program_courses:
         return None
 
-    result = evaluate_program(
-        db,
-        user_id,
-        program.department_id,
-        program.major_id,
-        program.program_type,
-        curriculum_year=program.curriculum_year,
-    )
+    try:
+        result = evaluate_program(
+            db,
+            user_id,
+            program.department_id,
+            program.major_id,
+            program.program_type,
+            curriculum_year=program.curriculum_year,
+        )
+    except MultipleResultsFound:
+        # graduation_requirements에 unique 제약이 없어 같은 조건 행이 여럿일 수 있다
+        # (TC11 참고). flat 경로는 _find_in_scope가 .first()로 결정적으로 고르지만
+        # evaluate_program은 .scalar_one_or_none()이라 여기서 터진다. 프로그램 하나
+        # 때문에 전체 판정이 500나지 않게 flat로 폴백한다(중복 경고는 flat 쪽이 붙인다).
+        return None
     if result is None:
         # _find_requirement가 학과 단위로 폴백해 잡았는데 evaluate_program은
         # major_id 정확 매칭이라 못 찾는 경우 등. flat로 폴백시킨다.
         return None
 
     earned = Decimal(str(result.total_credits_earned))
-    required = requirement.required_total_credits
+    # satisfied(result.completed)가 실제로 대조하는 총량과 remaining을 맞춘다 —
+    # evaluate_program은 special_rules.total_credits > required_total_credits 순으로 본다.
+    required = (
+        result.total_credits_required
+        if result.total_credits_required is not None
+        else requirement.required_total_credits
+    )
     remaining = (
         max(Decimal(required) - earned, Decimal("0")) if required is not None else None
     )
@@ -527,7 +546,7 @@ def _liberal_area_warnings(
     # 미마이그레이션 DB·단위 테스트엔 이 테이블들이 없다. 자문용이므로 조용히 스킵.
     if not (
         conn_inspect.has_table(StudentGraduationCategory.__tablename__)
-        and conn_inspect.has_table("student_course_substitutions")
+        and conn_inspect.has_table(StudentCourseSubstitution.__tablename__)
     ):
         return warnings
 

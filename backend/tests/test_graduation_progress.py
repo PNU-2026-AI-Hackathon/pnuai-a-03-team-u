@@ -523,6 +523,31 @@ class NonPrimaryRuleJudgmentTest(_Base):
         self.assertFalse(any("총 이수학점만 대조됨" in w for w in primary.warnings), primary.warnings)
         self.assertFalse(any("프로그램 지정 과목 기준" in w for w in primary.warnings), primary.warnings)
 
+    def test_duplicate_minor_requirement_rows_do_not_500(self):
+        """graduation_requirements에 unique 제약이 없어 같은 조건 행이 여럿일 수 있다.
+        evaluate_program은 .scalar_one_or_none()이라 MultipleResultsFound를 던지는데,
+        그게 compute_graduation_progress 전체(주전공 포함)를 500내면 안 된다."""
+        db = self.make_db()
+        db.add(GraduationRequirement(
+            department_id=10, program_type="primary", curriculum_year="2024",
+            required_total_credits=130,
+        ))
+        db.add(UserAcademicProgram(user_id=1, department_id=10, major_id=None,
+                                   program_type="minor", curriculum_year="2024"))
+        rules = {"total_credits": 9, "groups": [{"type": "min_courses", "n": 3, "label": "필수"}]}
+        for total in (9, 12):  # 같은 (dept, major, type, year)에 두 행
+            db.add(GraduationRequirement(
+                department_id=10, program_type="minor", curriculum_year="2024",
+                required_total_credits=total, special_rules=rules,
+            ))
+        db.add(StudentCourseRecord(user_id=1, raw_course_name="잡", category="전공선택", credits=30))
+        db.commit()
+        results = compute_graduation_progress(db, 1)  # 예전엔 여기서 MultipleResultsFound
+        types = {p.program_type for p in results}
+        self.assertEqual({"primary", "minor"}, types)  # 주전공 결과가 사라지지 않았다
+        minor = next(p for p in results if p.program_type == "minor")
+        self.assertTrue(any("총 이수학점만 대조됨" in w for w in minor.warnings), minor.warnings)
+
 
 class LiberalAreaAdvisoryWarningTest(_Base):
     """주전공 결과에 균형/창의교양 세부영역 자문 경고를 얹는다(satisfied는 불변)."""
