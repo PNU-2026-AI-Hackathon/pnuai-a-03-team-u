@@ -11,6 +11,7 @@ from app.api.auth import router as auth_router
 from app.api.courses import router as courses_router
 from app.api.curriculum import router as curriculum_router
 from app.api.departments import router as departments_router
+from app.api.fusion_programs import router as fusion_programs_router
 from app.api.graduation import router as graduation_router
 from app.api.portal_sync import router as portal_sync_router
 from app.api.profile import router as profile_router
@@ -168,6 +169,7 @@ app.include_router(timetable_agent_router)
 app.include_router(timetables_router)
 app.include_router(tracks_router)
 app.include_router(tracks_public_router)
+app.include_router(fusion_programs_router)
 
 
 @app.get("/health")
