@@ -21,28 +21,29 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.core.db import get_db
+from app.domains.academics.fusion_catalog import (
+    ENROLLMENT_TYPE_LABELS as _ENROLLMENT_TYPE_LABELS,
+)
+from app.domains.academics.fusion_catalog import (
+    available_fusion_programs,
+    classify as _classify,
+    participating_departments as _participating_departments,
+    student_can_pursue as _student_can_pursue,
+)
 from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
-    ProgramCourse,
     UserAcademicProgram,
 )
-from app.domains.academics.tracks import is_ai_track
-from app.domains.courses.models import Course
 from app.domains.users.models import User
 
 router = APIRouter(prefix="/me/fusion-programs", tags=["fusion-programs"])
-
-# roadmap_chat._PROGRAM_TYPE_LABELS와 같은 값. planning 패키지를 import하면
-# program_evaluator 등 무거운 의존이 딸려와서 여기서만 얇게 복제한다.
-_ENROLLMENT_TYPE_LABELS = {"minor": "부전공", "dual": "복수전공"}
-_KIND_ORDER = {"track": 0, "linked": 1, "convergence": 2}
 
 
 class ParticipatingDepartment(BaseModel):
@@ -72,213 +73,34 @@ class EnrollFusionProgramRequest(BaseModel):
     program_id: int
 
 
-def _suffix_label(name: str | None) -> str | None:
-    """majors.name의 괄호 접미사에서 유형 라벨을 뽑는다.
-
-    '빅데이터(SW연계전공)' → 'SW연계전공', '소셜데이터사이언스(SW융합트랙)' → 'SW융합트랙'.
-    seed_sw_convergence_programs.py가 붙이는 접미사와 정확히 맞물린다.
-    """
-    if not name or "(" not in name or ")" not in name:
-        return None
-    inner = name[name.rfind("(") + 1 : name.rfind(")")].strip()
-    if any(token in inner for token in ("연계전공", "융합전공", "융합트랙")):
-        return inner
-    return None
-
-
-def _classify(
-    requirement: GraduationRequirement, dept_name: str, major_name: str | None
-) -> tuple[str, str] | None:
-    """(kind, kind_label) 또는 None(융합 프로그램 아님).
-
-    kind는 프론트 스타일링용 3분류(track/linked/convergence). kind_label은
-    사용자에게 보이는 정확한 명칭 — AI융합교육원 프로그램은 접미사 그대로
-    (SW연계전공 / SW융합전공 / SW융합트랙), AI융합트랙 인증은 'AI융합트랙',
-    그 외(반도체·DX 등)는 일반 '융합전공'.
-    """
-    hay = f"{major_name or ''} {dept_name or ''}"
-    suffix = _suffix_label(major_name)
-    if is_ai_track(requirement):
-        return "track", "AI융합트랙"
-    if "융합트랙" in hay:
-        return "track", suffix or "융합트랙"
-    if "연계전공" in hay:
-        return "linked", suffix or "연계전공"
-    if "융합전공" in hay:
-        return "convergence", suffix or "융합전공"
-    return None
-
-
-def _participating_departments(
-    db: Session, dept_id: int, major_id: int | None
-) -> list[ParticipatingDepartment]:
-    """프로그램이 인정하는 과목들의 distinct 개설 학과.
-
-    `curriculum_year`로 필터하지 않는다 —
-    `curriculum_retriever._program_course_scope_ids`와 같은 근거(교차인정은 연도
-    무관 사실, 시드가 '2026' 하드코딩이라 실재학생과 exact match 안 됨).
-    """
-    stmt = (
-        select(Department.id, Department.name)
-        .distinct()
-        .join(Course, Course.department_id == Department.id)
-        .join(ProgramCourse, ProgramCourse.course_id == Course.id)
-        .where(ProgramCourse.department_id == dept_id)
-    )
-    stmt = stmt.where(
-        ProgramCourse.major_id == major_id
-        if major_id is not None
-        else ProgramCourse.major_id.is_(None)
-    )
-    return [ParticipatingDepartment(id=row[0], name=row[1]) for row in db.execute(stmt).all()]
-
-
-def _student_can_pursue(
-    home_dept: int | None,
-    my_dept: int,
-    participating: list[ParticipatingDepartment],
-) -> bool:
-    """학생이 이 프로그램을 이수 대상으로 볼 수 있는가.
-
-    판별 기준은 `program_type`이 아니라 **실제 교차인정(cross-listing) 여부**다.
-
-    - 참여학과가 프로그램 자기 학과(`home_dept`) 하나뿐인 융합전공(반도체·DX·
-      그린바이오 등 새 융합전공): AIS가 참여학과 과목까지 융합전공 유닛 코드 하나로
-      통합 제공해서 `program_courses`의 개설학과가 그 융합전공 하나뿐이다. 참여학과
-      게이트를 걸면 어느 학과 학생에게도 안 뜨므로 학과 무관 노출한다.
-    - 참여학과가 실제로 갈리는 프로그램(SW연계전공·SW융합트랙·핀테크융합전공):
-      내 학과가 참여학과에 있을 때만 노출한다.
-    - `program_courses`가 아예 없는 프로그램(시드 미완): 확인할 근거가 없으므로
-      게이트 유지 — 어느 학과에도 안 뜬다.
-    """
-    cross_listed = any(part.id != home_dept for part in participating)
-    if participating and not cross_listed:
-        return True
-    return any(part.id == my_dept for part in participating)
-
-
 @router.get("/available", response_model=list[FusionProgramOption])
 def list_available_fusion_programs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[FusionProgramOption]:
-    if current_user.department_id is None:
-        return []
-    my_dept = current_user.department_id
-    my_program = (current_user.department_id, current_user.major_id)
-
-    rows = db.execute(
-        select(
-            GraduationRequirement,
-            Department.name,
-            Major.id,
-            Major.name,
+    return [
+        FusionProgramOption(
+            program_id=info.program_id,
+            department_id=info.department_id,
+            department_name=info.department_name,
+            major_id=info.major_id,
+            program_name=info.program_name,
+            kind=info.kind,
+            kind_label=info.kind_label,
+            program_type=info.program_type,
+            program_type_label=info.program_type_label,
+            total_credits=info.total_credits,
+            curriculum_year=info.curriculum_year,
+            participating_departments=[
+                ParticipatingDepartment(id=part.id, name=part.name)
+                for part in info.participating_departments
+            ],
+            enrolled=info.enrolled,
+            user_academic_program_id=info.user_academic_program_id,
+            enrollment_editable=info.enrollment_editable,
         )
-        .join(Department, Department.id == GraduationRequirement.department_id)
-        .outerjoin(Major, Major.id == GraduationRequirement.major_id)
-        .where(
-            # 주전공 세부전공(지능형헬스사이언스융합전공·핀테크융합전공 등)이 이름에
-            # '융합전공'을 갖고 primary GR로도 등록돼 있어 제외한다. SQL상 program_type
-            # 이 NULL인 행도 함께 빠지는데(NULL != 'primary' → not true), 융합 프로그램
-            # 중 program_type NULL인 건 없어 무해하다.
-            GraduationRequirement.program_type != "primary",
-            or_(
-                Major.name.like("%융합전공%"),
-                Major.name.like("%연계전공%"),
-                Major.name.like("%융합트랙%"),
-                Department.name.like("%융합전공%"),
-                Department.name.like("%연계전공%"),
-                Department.name.like("%융합트랙%"),
-                # is_ai_track는 special_rules 기반이라 이름 LIKE로 안 잡힌다.
-                # interdisciplinary 후보를 넉넉히 끌어와 _classify가 최종 판별.
-                GraduationRequirement.program_type == "interdisciplinary",
-            ),
-        )
-    ).all()
-
-    # (dept, major, program_type)별로 curriculum_year 사전식 최댓값 한 행만 남긴다.
-    best: dict[tuple[int | None, int | None, str | None], tuple] = {}
-    for requirement, dept_name, major_id, major_name in rows:
-        classified = _classify(requirement, dept_name, major_name)
-        if classified is None:
-            continue
-        key = (
-            requirement.department_id,
-            requirement.major_id,
-            requirement.program_type,
-        )
-        current = best.get(key)
-        if current is None or (requirement.curriculum_year or "") > (
-            current[0].curriculum_year or ""
-        ):
-            best[key] = (requirement, dept_name, major_id, major_name, classified)
-
-    # 같은 (dept, major)에 minor/dual 행이 있으면 interdisciplinary 행은 버린다.
-    # (핀테크융합전공처럼 interdisciplinary(42) + dual(42)이 중복으로 뜨는 것 방지.
-    #  SW연계전공은 interdisciplinary만 있어 그대로 남는다.)
-    enrollment_scopes = {
-        (dept, major)
-        for (dept, major, ptype) in best
-        if ptype in ("minor", "dual")
-    }
-    best = {
-        key: value
-        for key, value in best.items()
-        if not (key[2] == "interdisciplinary" and (key[0], key[1]) in enrollment_scopes)
-    }
-
-    enrolled_by_scope: dict[tuple[int | None, int | None, str], list[UserAcademicProgram]] = {}
-    for program in db.scalars(
-        select(UserAcademicProgram).where(
-            UserAcademicProgram.user_id == current_user.id,
-            UserAcademicProgram.status == "active",
-            UserAcademicProgram.program_type.in_(tuple(_ENROLLMENT_TYPE_LABELS)),
-        )
-    ):
-        enrolled_by_scope.setdefault(
-            (program.department_id, program.major_id, program.program_type), []
-        ).append(program)
-
-    out: list[FusionProgramOption] = []
-    for requirement, dept_name, major_id, major_name, (kind, kind_label) in best.values():
-        if (requirement.department_id, requirement.major_id) == my_program:
-            continue  # 본인 주전공 프로그램 제외
-        parts = _participating_departments(
-            db, requirement.department_id, requirement.major_id
-        )
-        if not _student_can_pursue(requirement.department_id, my_dept, parts):
-            continue  # 교차인정 있는 프로그램인데 참여 학과에 내 학과가 없으면 스킵
-        parts.sort(key=lambda part: part.name)
-        enrolled_programs = enrolled_by_scope.get(
-            (requirement.department_id, requirement.major_id, requirement.program_type), []
-        )
-        planned_program = next(
-            (program for program in enrolled_programs if program.source == "fusion_plan"), None
-        )
-        out.append(
-            FusionProgramOption(
-                program_id=requirement.id,
-                department_id=requirement.department_id,
-                department_name=dept_name,
-                major_id=major_id,
-                program_name=major_name or dept_name,
-                kind=kind,
-                kind_label=kind_label,
-                program_type=requirement.program_type,
-                program_type_label=_ENROLLMENT_TYPE_LABELS.get(
-                    requirement.program_type or ""
-                ),
-                total_credits=requirement.required_total_credits,
-                curriculum_year=requirement.curriculum_year,
-                participating_departments=parts,
-                enrolled=bool(enrolled_programs),
-                user_academic_program_id=(planned_program or (enrolled_programs[0] if enrolled_programs else None)).id if enrolled_programs else None,
-                enrollment_editable=planned_program is not None,
-            )
-        )
-
-    out.sort(key=lambda option: (_KIND_ORDER.get(option.kind, 9), option.program_name))
-    return out
+        for info in available_fusion_programs(db, current_user)
+    ]
 
 
 def _eligible_requirement(
