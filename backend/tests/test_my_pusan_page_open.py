@@ -19,6 +19,7 @@ from app.ingestion.crawlers.my_pusan_extracurricular import (
     _LEGACY_LOGIN_ID_SELECTOR,
     _LEGACY_LOGIN_PW_SELECTOR,
     _LEGACY_LOGIN_TAB_SELECTOR,
+    _SUPPRESS_POPUPS_CSS,
     _login_to_legacy_my_pusan,
     _open_certificate_page,
 )
@@ -83,31 +84,57 @@ _SSO = "https://my.pusan.ac.kr/modules/pusan/rsso/loginCheck.php"
 class _LegacyLoginPage:
     """One-Stop 신규 로그인 뒤 My Pusan 구형 폼이 다시 나타난 상태.
 
-    공지 팝업(`popup_27`)이 `#idpwTab`을 덮고 있어서, 팝업을 숨기기 전의 탭 click은
-    타임아웃한다(실제 장애 재현). `_HIDE_LOGIN_POPUPS_JS` evaluate 뒤에야 탭이 눌리고
-    `.tab-cont`가 펼쳐져 `#login_id`가 크기를 갖는다.
+    공지 팝업(`.popup_layer`)이 `#idpwTab`을 덮고 있어 탭 click이 타임아웃한다.
+    두 대응을 재현한다:
+      - `add_style_tag(_SUPPRESS_POPUPS_CSS)` → 팝업이 타이밍 무관하게 안 보이게 됨.
+      - `evaluate(_HIDE_LOGIN_POPUPS_JS)` → 이미 뜬 팝업만 숨김. `reshow`가 남아 있으면
+        다음 `wait_for_timeout`에서 AJAX가 다시 띄운 것처럼 팝업이 되살아난다.
+    탭 click은 팝업이 안 덮을 때만 성공하고, 성공하면 `.tab-cont`가 펼쳐져
+    `#login_id`/`#login_pw`가 visible이 된다.
     """
 
-    def __init__(self):
+    def __init__(self, *, style_tag_raises=False, reshow=0, tab_never_expands=False):
         self.url = _LOGIN
         self.events: list[tuple] = []
-        self.popup_up = True
+        self.style_suppressed = False
+        self.popup_shown = True
         self.tab_expanded = False
+        self._style_tag_raises = style_tag_raises
+        self._reshow = reshow
+        self._tab_never_expands = tab_never_expands
+
+    @property
+    def _popup_covers_tab(self):
+        return self.popup_shown and not self.style_suppressed
 
     def goto(self, url, **kwargs):
         self.events.append(("goto", url, kwargs))
         self.url = _LOGIN
 
+    def add_style_tag(self, content=None):
+        self.events.append(("add_style_tag", content))
+        if self._style_tag_raises:
+            raise PlaywrightTimeoutError("navigating")
+        if content == _SUPPRESS_POPUPS_CSS:
+            self.style_suppressed = True
+
     def wait_for_selector(self, selector, **kwargs):
-        self.events.append(("wait", selector, kwargs.get("state")))
+        state = kwargs.get("state")
+        self.events.append(("wait", selector, state))
+        if (
+            state == "visible"
+            and selector in (_LEGACY_LOGIN_ID_SELECTOR, _LEGACY_LOGIN_PW_SELECTOR)
+            and not self.tab_expanded
+        ):
+            raise PlaywrightTimeoutError("field has no box until tab expands")
 
     def evaluate(self, script):
         self.events.append(("evaluate", script))
-        if "layerPopupClose" in script or "popup_layer" in script:
-            self.popup_up = False           # 팝업 숨김
+        if "popup_layer" in script:
+            self.popup_shown = False
             return 1
         if "getBoundingClientRect" in script:
-            return self.tab_expanded         # 탭을 눌러야 폼이 크기를 갖는다
+            return self.tab_expanded
         return None
 
     def fill(self, selector, value):
@@ -116,9 +143,13 @@ class _LegacyLoginPage:
     def click(self, selector, **_kwargs):
         self.events.append(("click", selector))
         if selector == _LEGACY_LOGIN_TAB_SELECTOR:
-            if self.popup_up:
+            if self._reshow > 0:       # AJAX가 hide 직후 다시 띄운 상태
+                self._reshow -= 1
+                self.popup_shown = True
+            if self._popup_covers_tab:
                 raise PlaywrightTimeoutError("tab covered by popup")
-            self.tab_expanded = True
+            if not self._tab_never_expands:
+                self.tab_expanded = True
             return
         self.url = "https://my.pusan.ac.kr/"
 
@@ -130,35 +161,52 @@ class _LegacyLoginPage:
 
 
 class OpenCertificatePageTest(unittest.TestCase):
-    def test_legacy_my_pusan_login_hides_popup_before_clicking_tab(self):
+    def test_style_tag_suppresses_popup_then_tab_click_and_login(self):
         page = _LegacyLoginPage()
 
         self.assertIsNone(_login_to_legacy_my_pusan(page, "20260001", "test-password"))
 
-        kinds = [e[0] for e in page.events]
         self.assertEqual(("goto", LEGACY_MY_LOGIN_URL, {
             "wait_until": "domcontentloaded", "timeout": 10_000,
         }), page.events[0])
-        # 탭 골격은 attached로만 기다린다 (팝업에 가려져 visible이 아닐 수 있음).
-        self.assertIn(("wait", _LEGACY_LOGIN_TAB_SELECTOR, "attached"), page.events)
-        # 첫 팝업 숨김 evaluate가 첫 탭 click보다 앞선다.
-        first_hide = next(i for i, e in enumerate(page.events)
-                          if e[0] == "evaluate" and "popup_layer" in e[1])
-        first_tab_click = kinds.index("click")  # 첫 click은 탭
-        self.assertEqual(_LEGACY_LOGIN_TAB_SELECTOR, page.events[first_tab_click][1])
-        self.assertLess(first_hide, first_tab_click)
-        # 팝업에 가려진 첫 탭 click은 삼켜지고, 숨김 뒤 재시도로 폼이 펼쳐진다.
-        self.assertGreaterEqual(kinds.count("click"), 2)  # 탭(재시도) + btnLogin
-        # 폼이 펼쳐진 뒤에야 id/pw를 visible로 기다리고 채운다.
+        # 팝업 억제 스타일이 탭 대기보다 먼저 주입된다.
+        self.assertIn(("add_style_tag", _SUPPRESS_POPUPS_CSS), page.events)
+        self.assertLess(
+            page.events.index(("add_style_tag", _SUPPRESS_POPUPS_CSS)),
+            page.events.index(("wait", _LEGACY_LOGIN_TAB_SELECTOR, "attached")),
+        )
+        # 폼이 펼쳐진 뒤 id/pw를 visible로 기다리고 채운 다음 로그인 버튼.
         self.assertIn(("wait", _LEGACY_LOGIN_ID_SELECTOR, "visible"), page.events)
-        self.assertIn(("wait", _LEGACY_LOGIN_PW_SELECTOR, "visible"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
         self.assertIn(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password"), page.events)
-        self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
         self.assertLess(
-            page.events.index(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001")),
+            page.events.index(("fill", _LEGACY_LOGIN_PW_SELECTOR, "test-password")),
             page.events.index(("click", _LEGACY_LOGIN_BUTTON_SELECTOR)),
         )
+
+    def test_retries_tab_click_when_style_tag_unavailable_and_popup_reshows(self):
+        # 스타일 주입 실패(리다이렉트) + AJAX가 팝업을 한 번 되살림 → 첫 탭 click은
+        # 가려져 삼켜지고, 다음 회차 숨김 뒤 재시도로 성공해야 한다.
+        page = _LegacyLoginPage(style_tag_raises=True, reshow=1)
+
+        self.assertIsNone(_login_to_legacy_my_pusan(page, "20260001", "test-password"))
+
+        tab_clicks = [e for e in page.events if e == ("click", _LEGACY_LOGIN_TAB_SELECTOR)]
+        self.assertGreaterEqual(len(tab_clicks), 2, "재시도가 없으면 이 장애가 재발한다")
+        self.assertIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
+        self.assertIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
+
+    def test_returns_failure_when_form_never_expands(self):
+        page = _LegacyLoginPage(tab_never_expands=True)
+
+        reason = _login_to_legacy_my_pusan(page, "20260001", "test-password")
+
+        self.assertEqual(
+            "my.pusan.ac.kr용 통합로그인 페이지의 입력폼을 열지 못했습니다.", reason
+        )
+        # 폼이 안 열렸으면 자격증명 입력·로그인 버튼 click을 하면 안 된다.
+        self.assertNotIn(("fill", _LEGACY_LOGIN_ID_SELECTOR, "20260001"), page.events)
+        self.assertNotIn(("click", _LEGACY_LOGIN_BUTTON_SELECTOR), page.events)
 
     def test_normal_load_returns_none(self):
         page = _FakePage([_CERT] * 10, ready_at=2)
