@@ -4022,3 +4022,86 @@ class GetFusionProgramsToolTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MismatchAdvicePostPatchTest(unittest.TestCase):
+    """`_prepend_mismatch_advice` — 진로-전공 mismatch 턴의 최종 답변이 대안 전공
+    경로를 빠뜨렸을 때 답변 앞에 그 안내를 결정적으로 붙인다. career_dept_mismatch
+    프롬프트 규칙만으로는 골든 케이스 14가 2/5~3/5로 흔들려서 후처리로 고정한다."""
+
+    def test_reply_suggests_alternative_major_keyword_detection(self):
+        f = roadmap_chat_mod._reply_suggests_alternative_major
+        self.assertTrue(f("정보컴퓨터공학부 복수전공(36학점)을 고려하세요"))
+        self.assertTrue(f("반도체융합전공 부전공도 가능합니다"))
+        self.assertFalse(f("이번 학기에 현대문학의이해부터 들으세요"))
+        self.assertFalse(f(""))
+        self.assertFalse(f(None))
+
+    def _fake_llm(self, patched_text):
+        class _LLM:
+            def invoke(self, messages, config=None):
+                m = MagicMock()
+                m.content = patched_text
+                return m
+        return _LLM()
+
+    def _fake_ctx(self, programs):
+        class _Ctx:
+            def get_fusion_programs(self_inner):
+                return {"programs": programs}
+        return _Ctx()
+
+    def _user(self):
+        u = MagicMock()
+        u.career_goal = "백엔드 개발자"
+        return u
+
+    def test_prepends_when_patch_returns_advice(self):
+        out = roadmap_chat_mod._prepend_mismatch_advice(
+            self._fake_llm("국문학과와 백엔드 개발자는 방향이 어긋납니다. 정보컴퓨터공학부 "
+                           "부전공(21학점)을 권합니다.\n\n원래 로드맵 안내..."),
+            self._fake_ctx([]), self._user(), "국문인데 백엔드 하고 싶어요", "원래 로드맵 안내...",
+            None,
+        )
+        self.assertIn("부전공", out)
+        self.assertIn("원래 로드맵 안내", out)
+
+    def test_keeps_original_when_patch_still_lacks_advice(self):
+        original = "이번 학기 현대문학의이해부터 들으세요."
+        out = roadmap_chat_mod._prepend_mismatch_advice(
+            self._fake_llm("그냥 국문 전공 과목만 다시 나열함"),
+            self._fake_ctx([]), self._user(), "질문", original, None,
+        )
+        self.assertEqual(original, out)
+
+    def test_keeps_original_when_llm_raises(self):
+        class _Boom:
+            def invoke(self, messages, config=None):
+                raise RuntimeError("llm down")
+        original = "원문 그대로"
+        out = roadmap_chat_mod._prepend_mismatch_advice(
+            _Boom(), self._fake_ctx([]), self._user(), "질문", original, None,
+        )
+        self.assertEqual(original, out)
+
+    def test_includes_fusion_program_names_in_instruction(self):
+        captured = {}
+
+        class _LLM:
+            def invoke(self_inner, messages, config=None):
+                captured["sys"] = messages[0].content
+                m = MagicMock()
+                m.content = "진로와 전공이 어긋납니다. 반도체융합전공 복수전공(48학점)을 제안합니다.\n\n본문"
+                return m
+
+        out = roadmap_chat_mod._prepend_mismatch_advice(
+            _LLM(),
+            self._fake_ctx([{"name": "반도체융합전공", "total_credits": 48}]),
+            self._user(), "질문", "본문", None,
+        )
+        self.assertIn("반도체융합전공(48학점)", captured["sys"])
+        self.assertIn("반도체융합전공", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
