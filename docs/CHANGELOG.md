@@ -14,6 +14,17 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-28 (blackest21) — SW융합트랙: 같은 학부 형제 전공에 잘못 노출되던 것 수정
+
+- **증상**: `바이오메디컬디바이스&데이터(SW융합트랙)`(GR 278)이 의생명공학전공 대상인데 **데이터사이언스전공** 학생 화면(내 정보 트랙 목록·로드맵 챗·AI융합 패널)에도 떴다.
+- **원인**: 트랙 게이트가 `graduation_requirements.department_id`(=의생명융합공학부 **학부**)만 봤다. 이 학부엔 데이터사이언스전공(major 1)·의생명공학전공(major 33)이 형제로 있는데 `find_ai_tracks_for_department`는 전공을 안 봐서 둘 다 통과. (디자인학과 GR 277도 같은 구조 — 3개 전공 중 디자인앤테크놀로지전공 대상.)
+- **수정**: `track_scope_major_ids(gr)` 추가 — 트랙 `program_courses` 중 **그 학부가 개설한 전공 지정 과목**(`courses.department_id == gr.department_id AND courses.major_id IS NOT NULL`; SW융합공통은 소프트웨어융합교육원 개설이라 제외)의 `major_id` 집합. 비면 전공 제한 없음(종전 학과 단위 동작).
+  - `find_ai_tracks_for_department(db, dept_id, major_id=None)` — `major_id` 주면 scope에 없는 트랙 제외. 회원가입 홍보(`preview_tracks`)는 전공 확정 전이라 `None`으로 호출(종전대로).
+  - `api/tracks.py`: `list_available_tracks`가 `current_user.major_id` 전달. `enroll_track`은 scope 불일치면 403.
+  - `fusion_catalog.available_fusion_programs`: `kind=='track'`이면 같은 scope 체크.
+  - `roadmap_chat`의 트랙 조회 2곳도 `user.major_id` 전달.
+- pytest 819 통과(신규 9: `TrackMajorScopeTest`, `TrackMajorScopeApiTest`), 골든 TC01~TC12 통과.
+
 ## 2026-08-28 (blackest21) — "AI융합 가능" 패널에서 연계전공도 이수 계획 저장
 
 - **요청**: SW연계전공에는 "이수 계획에 저장" 버튼이 안 떴다 — 이수요건 데이터(GR 281~285, 48학점, `special_rules.groups`+`program_courses`)는 다 있는데, `enroll` 게이트 `ENROLLMENT_TYPE_LABELS`가 `{minor, dual}`뿐이라 `interdisciplinary`를 404로 막고, 프론트도 `program_type_label`이 있을 때만 버튼을 그렸다.

@@ -26,7 +26,7 @@ from app.domains.academics.models import (
     ProgramCourse,
     UserAcademicProgram,
 )
-from app.domains.academics.tracks import is_ai_track
+from app.domains.academics.tracks import is_ai_track, track_scope_major_ids
 from app.domains.courses.models import Course
 from app.domains.users.models import User
 
@@ -252,6 +252,10 @@ def available_fusion_programs(db: Session, user: User) -> list[FusionProgramInfo
         )
         if not student_can_pursue(requirement.department_id, my_dept, parts, kind):
             continue  # 연계전공이 아니고, 교차인정 있는데 참여 학과에 내 학과가 없으면 스킵
+        if kind == "track" and user.major_id is not None:
+            scope = track_scope_major_ids(db, requirement)
+            if scope and user.major_id not in scope:
+                continue  # 같은 학부의 다른 전공 대상 트랙 (바이오메디컬디바이스 등)
         parts.sort(key=lambda part: part.name)
         # 저장 불가한 종류(AI융합트랙 등)는 enrolled 계산에서 제외 — 트랙은 전용
         # 경로로 등록해도 이 패널에선 계획으로 안 다룬다(종전 동작 유지).

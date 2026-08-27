@@ -207,5 +207,63 @@ class EnrollmentTest(unittest.TestCase):
         self.assertEqual(1, len(list_enrolled_tracks(current_user=user, db=db)))
 
 
+def _seed_multi_major_dept(db: Session):
+    """한 학부(dept 1) 아래 형제 전공 2개 + 그중 한 전공(33) 대상 트랙."""
+    db.add(School(id=1, name="테스트")); db.flush()
+    db.add(College(id=1, school_id=1, name="공과대학")); db.flush()
+    db.add(Department(id=1, college_id=1, name="의생명융합공학부"))
+    db.add(Department(id=118, college_id=1, name="소프트웨어융합교육원"))
+    db.flush()
+    db.add_all([
+        Major(id=1, department_id=1, name="데이터사이언스전공"),
+        Major(id=33, department_id=1, name="의생명공학전공"),
+        Major(id=73, department_id=1, name="바이오메디컬디바이스&데이터(SW융합트랙)"),
+    ])
+    db.flush()
+    db.add(GraduationRequirement(
+        department_id=1, major_id=73, program_type="interdisciplinary",
+        required_total_credits=21,
+        special_rules={"certification_type": "AI융합트랙", "not_graduation_requirement": True},
+    ))
+    db.add_all([
+        Course(id=6069, course_name="바이오센서공학", department_id=1, major_id=33, credits=3),
+        Course(id=6512, course_name="데이터분석입문", department_id=118, major_id=None, credits=3),
+    ])
+    db.flush()
+    db.add(ProgramCourse(department_id=1, major_id=73, course_id=6069))
+    db.add(ProgramCourse(department_id=1, major_id=73, course_id=6512))
+    db.flush()
+
+
+class TrackMajorScopeApiTest(unittest.TestCase):
+    def test_available_hides_track_from_sibling_major(self):
+        db = _make_db(); _seed_multi_major_dept(db)
+        user = _make_user(db, dept_id=1); user.major_id = 1  # 데이터사이언스전공
+        db.commit()
+        self.assertEqual([], list_available_tracks(current_user=user, db=db))
+
+    def test_available_shows_track_to_target_major(self):
+        db = _make_db(); _seed_multi_major_dept(db)
+        user = _make_user(db, dept_id=1); user.major_id = 33  # 의생명공학전공
+        db.commit()
+        result = list_available_tracks(current_user=user, db=db)
+        self.assertEqual([73], [t.major_id for t in result])
+
+    def test_enroll_rejected_for_sibling_major(self):
+        db = _make_db(); _seed_multi_major_dept(db)
+        user = _make_user(db, dept_id=1); user.major_id = 1
+        db.commit()
+        with self.assertRaises(HTTPException) as ctx:
+            enroll_track(EnrollRequest(major_id=73), current_user=user, db=db)
+        self.assertEqual(403, ctx.exception.status_code)
+
+    def test_enroll_allowed_for_target_major(self):
+        db = _make_db(); _seed_multi_major_dept(db)
+        user = _make_user(db, dept_id=1); user.major_id = 33
+        db.commit()
+        e = enroll_track(EnrollRequest(major_id=73), current_user=user, db=db)
+        self.assertEqual(73, e.major_id)
+
+
 if __name__ == "__main__":
     unittest.main()
