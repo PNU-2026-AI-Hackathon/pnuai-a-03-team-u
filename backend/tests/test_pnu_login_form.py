@@ -2,10 +2,13 @@
 
 from app.ingestion.crawlers.pnu_session import (
     ONESTOP_LOGIN_URL,
+    _LOGIN_RESULT_TIMEOUT_MS,
     _ONESTOP_LOGIN_BUTTON_SELECTOR,
     _ONESTOP_LOGIN_ID_SELECTOR,
     _ONESTOP_LOGIN_PW_SELECTOR,
+    _login_failure_message,
     _reach_login_form,
+    _wait_for_initial_login_result,
 )
 
 
@@ -34,3 +37,33 @@ def test_reach_login_form_uses_current_onestop_login_block():
         f"wait:{_ONESTOP_LOGIN_PW_SELECTOR}",
         f"wait:{_ONESTOP_LOGIN_BUTTON_SELECTOR}",
     ]
+
+
+class _FailedLoginPage:
+    def __init__(self, diagnostics, *, alert_after_first_poll=False):
+        self.url = ONESTOP_LOGIN_URL
+        self.diagnostics = diagnostics
+        self.alert_after_first_poll = alert_after_first_poll
+        self.polls = 0
+
+    def wait_for_timeout(self, _ms):
+        self.polls += 1
+        if self.alert_after_first_poll and self.polls == 1:
+            self.diagnostics["alerts"].append("아이디 또는 비밀번호 정보를 확인해주세요!")
+
+
+def test_wrong_password_alert_is_detected_before_full_networkidle_wait():
+    diagnostics = {"alerts": [], "popups": [], "sso_responses": [], "console": [], "pageerrors": []}
+    page = _FailedLoginPage(diagnostics, alert_after_first_poll=True)
+
+    assert _wait_for_initial_login_result(page, diagnostics) is False
+    assert page.polls == 1
+    assert "비밀번호" in _login_failure_message(diagnostics)
+
+
+def test_login_page_without_any_response_has_bounded_fast_failure():
+    diagnostics = {"alerts": [], "popups": [], "sso_responses": [], "console": [], "pageerrors": []}
+    page = _FailedLoginPage(diagnostics)
+
+    assert _wait_for_initial_login_result(page, diagnostics) is False
+    assert page.polls == _LOGIN_RESULT_TIMEOUT_MS // 100
