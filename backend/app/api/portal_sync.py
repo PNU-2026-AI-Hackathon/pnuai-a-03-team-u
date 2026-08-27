@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.core.db import get_db
 from app.core.ratelimit import PORTAL_SYNC_LIMIT, limiter
-from app.domains.academics.graduation_progress import BALANCED_LIBERAL_AREAS
+from app.domains.academics.graduation_progress import (
+    BALANCED_LIBERAL_AREAS,
+    LIBERAL_AREAS_BY_GENERATION,
+    liberal_area_in_generation,
+    resolve_liberal_area_generation,
+)
 from app.domains.academics.course_substitution import (
     is_transfer_credit_record,
     set_substitutions,
@@ -120,6 +125,12 @@ class CourseRecordResponse(BaseModel):
     course_name: str = Field(validation_alias="raw_course_name")
     category: str | None
     liberal_area: str | None
+    # liberal_area 판정 근거: 'override'(학생 지정) | 'onestop' | 'catalog' | None.
+    liberal_area_source: str | None = None
+    # 이 행에 학생이 세부영역을 직접 지정할 수 있는가 (교양선택류만 True).
+    liberal_area_editable: bool = False
+    # 이 학생의 교양 체계에서 고를 수 있는 세부영역 목록 (2021 구체계 / 2026 신체계).
+    liberal_area_options: list[str] = []
     credits: float | None
     year: str | None
     semester: str | None
@@ -145,10 +156,33 @@ class SubstitutedCourseResponse(BaseModel):
     category: str | None = None
 
 
+def _primary_curriculum_year(db: Session, user_id: int) -> str | None:
+    primary = db.scalars(
+        select(UserAcademicProgram)
+        .where(
+            UserAcademicProgram.user_id == user_id,
+            UserAcademicProgram.program_type == "primary",
+        )
+        .order_by(UserAcademicProgram.id)
+    ).first()
+    return primary.curriculum_year if primary else None
+
+
+def _liberal_area_options_for_user(db: Session, user_id: int) -> list[str]:
+    """이 학생의 교양 체계(2021 구체계 / 2026 신체계)에서 고를 수 있는 세부영역 목록."""
+    generation = resolve_liberal_area_generation(_primary_curriculum_year(db, user_id))
+    return list(LIBERAL_AREAS_BY_GENERATION[generation])
+
+
 def _course_record_responses(
-    db: Session, records: list[StudentCourseRecord]
+    db: Session, records: list[StudentCourseRecord], *, user_id: int | None = None
 ) -> list[CourseRecordResponse]:
     """이수기록 ORM 행을 응답 모델로. 대체 과목은 한 번에 모아서 붙인다(N+1 방지)."""
+    options = (
+        _liberal_area_options_for_user(db, user_id)
+        if user_id is not None and records
+        else []
+    )
     record_ids = [r.id for r in records]
     by_record: dict[int, list[SubstitutedCourseResponse]] = {}
     if record_ids:
@@ -171,6 +205,8 @@ def _course_record_responses(
         response = CourseRecordResponse.model_validate(record)
         response.is_transfer_credit = is_transfer_credit_record(record)
         response.substitutes = by_record.get(record.id, [])
+        response.liberal_area_editable = record.category in _LIBERAL_CATEGORIES
+        response.liberal_area_options = options if response.liberal_area_editable else []
         responses.append(response)
     return responses
 
@@ -390,7 +426,7 @@ def sync_portal_data(
 
     return PortalSyncResponse(
         student_record=_public_student_record(student_record),
-        courses=_course_record_responses(db, saved_records),
+        courses=_course_record_responses(db, saved_records, user_id=current_user.id),
         academic_programs=[_to_academic_program_response(db, p) for p in saved_programs],
         graduation_table_count=len(graduation_tables),
         official_categories_synced=(
@@ -437,71 +473,102 @@ def _table_rows_as_text(table: dict) -> list[list[str]]:
     return [[cell["text"] for cell in row["cells"]] for row in table["rows"]]
 
 
+# 균형/창의교양 세부영역을 붙일 대상 이수구분. 롤업된 세부영역명(사상과역사 등)도
+# 포함(_CATEGORY_ROLLUP이 category를 세부영역명으로 덮어쓴 과거 데이터 방어).
+_LIBERAL_CATEGORIES = frozenset(
+    {"교양선택", "효원균형교양", "효원창의교양"} | set(BALANCED_LIBERAL_AREAS)
+)
+
+
+def _norm_name(name: str | None) -> str:
+    return (name or "").replace(" ", "").strip()
+
+
+def _onestop_area_by_course(requirement_items: list[dict]) -> dict[str, str]:
+    """One-Stop general_education_area_completion 표 → {정규화 과목명: 세부영역명}.
+
+    실측상 부산대 졸업예정정보 페이지는 이 표의 학생이수정보 칸을 비워서 주는
+    경우가 대부분이라(레퍼런스 샘플로 확인) 보통 빈 dict가 나온다 — 그때는
+    카탈로그 폴백으로 넘어간다. 표가 채워져 오는 계정/연도에서는 이 값이 우선.
+    """
+    out: dict[str, str] = {}
+    for row in requirement_items:
+        if row.get("requirement_area") != "general_education_area_completion":
+            continue
+        raw = row.get("raw_record", {})
+        course = raw.get("학생이수정보_교과목명", "").strip()
+        if not course or raw.get("학생이수정보_이수여부", "").strip() != "이수":
+            continue
+        area_raw = row.get("required_category", "")
+        area = area_raw.split(":", 1)[-1].strip() if ":" in area_raw else area_raw.strip()
+        known = _match_known_liberal_area(area) if area else None
+        if known:
+            out[_norm_name(course)] = known
+    return out
+
+
+def _catalog_area_by_course(db: Session) -> dict[str, str]:
+    """수강편람 → {정규화 과목명: 세부영역명}. 졸업예정정보 표가 비어 있을 때의 폴백.
+
+    `courses.general_education_area`가 채워진 행만. 같은 과목명이 여러 영역으로
+    오면(개편 전후) 첫 값을 쓴다 — 어차피 학생이 '내 정보'에서 고칠 수 있다.
+    """
+    out: dict[str, str] = {}
+    rows = db.execute(
+        select(Course.course_name, Course.general_education_area).where(
+            Course.general_education_area.isnot(None),
+            Course.general_education_area != "",
+        )
+    ).all()
+    for name, area in rows:
+        known = _match_known_liberal_area(area or "")
+        if not known:
+            continue
+        out.setdefault(_norm_name(name), known)
+    return out
+
+
 def _refine_liberal_area_categories(
     db: Session,
     user_id: int,
     requirement_items: list[dict],
 ) -> int:
-    """One-Stop 졸업예정정보 general_education_area_completion 표에서 학생이 실제로 어느
-    세부영역(예: '사회와문화', '사상과역사')에 이수했는지 뽑아
-    student_course_records.liberal_area에 저장한다. 상위 이수구분 category='교양선택'은
-    그대로 유지해 졸업요건 학점 집계와 세부영역 판정을 분리한다.
+    """교양 이수기록마다 균형/창의교양 세부영역(사상과역사 등)을 다시 계산해
+    `student_course_records.liberal_area` / `liberal_area_source`에 저장한다.
+    상위 이수구분 `category`(교양선택)는 그대로 둬서 학점 집계와 세부영역 판정을 분리.
 
-    로드맵 챗이 균형교양 7개 세부영역별로 "너 사상과역사 3학점 이수했네" 같은 조언을
-    하려면 이 세부값이 이수기록에 있어야 한다. 학교 공식 판정 결과를 근거로 채우므로
-    학과 규칙 판별 로직 없이도 안전.
-
-    - 매칭: 학생이수정보_교과목명을 student_course_records.raw_course_name과 정규화(공백 제거) 후 비교
-    - 이수여부='이수'인 rows만 반영. '미이수'는 liberal_area를 채우지 않는다.
-    - '1영역 : 사상과역사' 형식에서 접두 '숫자영역 :' 제거해 순수 영역명만 저장.
+    우선순위: 학생 지정(`liberal_area_override`) > One-Stop 학교 판정 표 > 수강편람
+    카탈로그(`courses.general_education_area`). 어디서도 못 찾으면 None.
+    `map_grades`가 sync마다 `liberal_area`를 None으로 비우므로 매번 전부 다시 채운다.
     """
-    area_rows = [
-        r for r in requirement_items
-        if r.get("requirement_area") == "general_education_area_completion"
-    ]
-    if not area_rows:
-        return 0
-
-    records = _list_course_records(db, user_id)
-    def _norm(name: str | None) -> str:
-        return (name or "").replace(" ", "").strip()
-    records_by_name: dict[str, list[StudentCourseRecord]] = {}
-    for r in records:
-        key = _norm(r.raw_course_name)
-        if key:
-            records_by_name.setdefault(key, []).append(r)
+    onestop_map = _onestop_area_by_course(requirement_items)
+    catalog_map = _catalog_area_by_course(db)
+    generation = resolve_liberal_area_generation(_primary_curriculum_year(db, user_id))
 
     updated = 0
-    unknown_areas: set[str] = set()
-    for row in area_rows:
-        raw = row.get("raw_record", {})
-        student_course = raw.get("학생이수정보_교과목명", "").strip()
-        if not student_course or raw.get("학생이수정보_이수여부", "").strip() != "이수":
+    for rec in _list_course_records(db, user_id):
+        if rec.category not in _LIBERAL_CATEGORIES and not rec.liberal_area_override:
             continue
-        area_raw = row.get("required_category", "")
-        # "1영역 : 사상과역사" → "사상과역사"
-        area_name = area_raw.split(":", 1)[-1].strip() if ":" in area_raw else area_raw.strip()
-        if not area_name:
-            continue
+        key = _norm_name(rec.raw_course_name)
+        area: str | None = None
+        source: str | None = None
+        if rec.liberal_area_override:
+            area, source = rec.liberal_area_override, "override"
+        elif key in onestop_map:
+            area, source = onestop_map[key], "onestop"
+        elif key in catalog_map:
+            area, source = catalog_map[key], "catalog"
 
-        # **판정 엔진이 아는 영역명일 때만 저장한다.** 모르는 값을 추측해 넣으면 화면과
-        # LLM이 존재하지 않는 영역을 이수했다고 판단할 수 있다.
-        normalized_area = _match_known_liberal_area(area_name)
-        if normalized_area is None:
-            unknown_areas.add(area_name)
-            continue
+        # 카탈로그/One-Stop이 신체계 이름으로 줘도 학생 체계 표기로 맞춘다
+        # ("세계와 소통" → 구체계 학생에겐 "외국어"). 그 체계에 없는 영역이면 버린다.
+        area = liberal_area_in_generation(area, generation)
+        if area is None:
+            source = None
 
-        for rec in records_by_name.get(_norm(student_course), []):
-            if rec.liberal_area != normalized_area:
-                rec.liberal_area = normalized_area
-                updated += 1
-
-    if unknown_areas:
-        logging.getLogger(__name__).warning(
-            "One-Stop 균형교양 영역명을 판정 엔진이 모른다 (user_id=%s): %s. "
-            "liberal_area에 저장하지 않았다 — BALANCED_LIBERAL_AREAS 갱신이 필요한지 확인할 것.",
-            user_id, sorted(unknown_areas),
-        )
+        if rec.liberal_area != area or rec.liberal_area_source != source:
+            rec.liberal_area = area
+            rec.liberal_area_source = source
+            updated += 1
     return updated
 
 
@@ -535,7 +602,7 @@ def list_course_records(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """마지막 포털 동기화 및 사용자 편집 결과를 DB에서 다시 조회한다."""
-    return _course_record_responses(db, _list_course_records(db, current_user.id))
+    return _course_record_responses(db, _list_course_records(db, current_user.id), user_id=current_user.id)
 
 
 @router.put("/course-records", response_model=list[CourseRecordResponse])
@@ -598,7 +665,7 @@ def replace_course_records(
         record.grade = course.grade.strip() if course.grade else None
 
     db.commit()
-    return _course_record_responses(db, _list_course_records(db, current_user.id))
+    return _course_record_responses(db, _list_course_records(db, current_user.id), user_id=current_user.id)
 
 
 # 한 이수기록이 대체할 수 있는 과목 수 상한. 실제로는 교양 세부영역 9개 + 교양과목
@@ -658,7 +725,66 @@ def set_course_substitutions(
     set_substitutions(db, record.id, list(course_ids))
     db.commit()
     db.refresh(record)
-    return _course_record_responses(db, [record])[0]
+    return _course_record_responses(db, [record], user_id=current_user.id)[0]
+
+
+class LiberalAreaRequest(BaseModel):
+    """이 교양 이수기록이 어느 균형/창의교양 세부영역인지 학생이 직접 지정.
+
+    `liberal_area=None`이면 지정 해제(자동 매칭에 다시 맡김). 기본값을 두지 않아
+    필드 누락이 조용히 "해제"로 처리되지 않게 한다.
+    """
+
+    liberal_area: str | None = Field(...)
+
+
+@router.put("/course-records/{record_id}/liberal-area", response_model=CourseRecordResponse)
+def set_course_liberal_area(
+    record_id: int,
+    payload: LiberalAreaRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """교양선택 이수기록의 균형/창의교양 세부영역을 학생이 직접 고른다.
+
+    졸업예정정보 표가 세부영역을 안 주는 경우가 많고 수강편람 카탈로그 매칭도
+    빈틈이 있어(`_refine_liberal_area_categories`), 자동 매칭이 비거나 틀렸을 때
+    학생이 바로잡을 수 있게 한다. 편입 대체 지정(`.../substitutions`)과 같은 패턴:
+    치환이고 멱등이며 언제든 다시 부를 수 있다.
+
+    학점은 건드리지 않는다 — `category`(교양선택)는 그대로라 졸업요건 합계는 불변.
+    바뀌는 건 '효원균형교양 이수 현황' 영역별 표시와 로드맵/시간표의 영역 조언뿐.
+    """
+    record = db.get(StudentCourseRecord, record_id)
+    if record is None or record.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="이수 기록을 찾을 수 없습니다")
+    if record.category not in _LIBERAL_CATEGORIES:
+        raise HTTPException(
+            status_code=422,
+            detail="교양선택 과목에만 세부영역을 지정할 수 있습니다",
+        )
+
+    area = (payload.liberal_area or "").strip() or None
+    if area is not None:
+        options = _liberal_area_options_for_user(db, current_user.id)
+        if area not in options:
+            raise HTTPException(
+                status_code=422,
+                detail=f"이 학생의 교양 체계에 없는 세부영역입니다: {area}",
+            )
+
+    record.liberal_area_override = area
+    # 즉시 반영: override가 있으면 그게 곧 effective 값이고, 지웠으면 자동 매칭
+    # 결과는 다음 portal-sync에서 다시 계산되므로 지금은 일단 비운다.
+    if area is not None:
+        record.liberal_area = area
+        record.liberal_area_source = "override"
+    else:
+        record.liberal_area = None
+        record.liberal_area_source = None
+    db.commit()
+    db.refresh(record)
+    return _course_record_responses(db, [record], user_id=current_user.id)[0]
 
 
 @router.patch("/advisor-consulted")

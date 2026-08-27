@@ -114,6 +114,25 @@ LIBERAL_AREAS_BY_GENERATION: dict[str, tuple[str, ...]] = {
     "2026": LIBERAL_AREAS_2026,
 }
 
+# 개편 전후로 이름만 바뀐 같은 영역. 수강편람/One-Stop이 신체계 이름으로 주는데
+# 학생이 구체계면(그 반대도) 그대로 두면 화면·판정이 "다른 영역"으로 본다.
+_LIBERAL_AREA_ALIASES: dict[str, dict[str, str]] = {
+    "2021": {"세계와 소통": "외국어", "융합과 창의": "융복합"},
+    "2026": {"외국어": "세계와 소통", "융복합": "융합과 창의"},
+}
+
+
+def liberal_area_in_generation(area: str | None, generation: str) -> str | None:
+    """세부영역명을 해당 교양 체계의 표기로 정규화한다. 그 체계에 없으면 None.
+
+    예: "세계와 소통"을 2021 구체계 학생에게는 "외국어"로, 2026 신체계에서만 있는
+    "인성과 사회봉사"를 2021 학생에게는 None으로 돌려준다.
+    """
+    if not area:
+        return None
+    mapped = _LIBERAL_AREA_ALIASES.get(generation, {}).get(area, area)
+    return mapped if mapped in LIBERAL_AREAS_BY_GENERATION.get(generation, ()) else None
+
 # 매칭·집계(One-Stop 영역명 인식, category 필터, 롤업 대상 판별)는 세대를 몰라도 되므로
 # 두 세대의 합집합을 쓴다 — 순서는 두 튜플을 이어붙인 뒤 중복만 제거(첫 등장 순서 유지).
 BALANCED_LIBERAL_AREAS: tuple[str, ...] = tuple(
