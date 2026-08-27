@@ -24,8 +24,11 @@ from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
+    ProgramCourse,
     School,
     StudentCourseRecord,
+    StudentCourseSubstitution,
+    StudentGraduationCategory,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course  # noqa: F401 — SCR.course_id FK 해석용
@@ -35,6 +38,8 @@ _TABLES = [
     School.__table__, College.__table__, Department.__table__, Major.__table__,
     User.__table__, Course.__table__, UserAcademicProgram.__table__,
     GraduationRequirement.__table__, StudentCourseRecord.__table__,
+    ProgramCourse.__table__, StudentCourseSubstitution.__table__,
+    StudentGraduationCategory.__table__,
 ]
 
 

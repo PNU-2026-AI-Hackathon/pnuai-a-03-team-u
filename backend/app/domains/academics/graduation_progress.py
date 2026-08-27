@@ -1,8 +1,11 @@
 """flat graduation_requirements 테이블과 학생 이수내역(student_course_records)을
 카테고리별로 단순 대조해 졸업까지 남은 학점을 계산한다.
 
-택N/M·개별 필수과목 판정 같은 세부 규칙은 다루지 않고, 이수구분별 합계 학점만
-비교한다.
+주전공은 이수구분별 합계 학점만 비교한다(flat). **부전공/복수전공/연계전공**은
+`special_rules.groups`나 `program_courses`가 있으면 `program_evaluator.evaluate_program`
+(택N/M·그룹 학점 채점)으로 실판정하고(하이브리드, 2026-08-27), 그 데이터가 없으면
+총 이수학점 비교로 폴백하며 경고를 남긴다. 균형/창의교양 세부영역은 규칙 파서 없이
+학교 공식 판정 스냅샷·영역별 이수 현황을 경고로만 노출한다(satisfied 불변).
 """
 
 from __future__ import annotations
@@ -12,14 +15,19 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import Session
 
 from app.domains.academics.models import (
     GraduationRequirement,
+    ProgramCourse,
     StudentCourseRecord,
+    StudentCourseSubstitution,
     StudentGraduationCategory,
     UserAcademicProgram,
 )
+from app.domains.academics.course_substitution import liberal_area_completions
+from app.domains.academics.program_evaluator import evaluate_program
 from app.domains.academics.program_status import ACTIVE_PROGRAM_STATUSES
 from app.domains.academics.tracks import is_ai_track as _is_ai_track
 
@@ -430,6 +438,145 @@ def _official_onestop_fallback(
     )
 
 
+@dataclass
+class _RuleJudgment:
+    """비주전공 프로그램의 규칙 기반 판정 결과(하이브리드용)."""
+
+    satisfied: bool
+    earned_total: Decimal
+    remaining_total: Decimal | None
+    warnings: list[str]
+
+
+def _program_rule_judgment(
+    db: Session,
+    user_id: int,
+    program: UserAcademicProgram,
+    requirement: GraduationRequirement,
+) -> _RuleJudgment | None:
+    """부전공/복수전공/연계전공을 지정 과목·그룹 규칙으로 판정한다.
+
+    `special_rules.groups`나 `program_courses`가 있는 프로그램은
+    `program_evaluator.evaluate_program`(택N/M·그룹 학점 채점)으로 실판정한다.
+    그 데이터가 하나도 없으면 None을 돌려주고, 호출부는 총 이수학점 비교(flat)로
+    폴백하되 "총 학점만 대조됨" 경고를 붙인다.
+    """
+    # 일부 단위 테스트·미마이그레이션 DB에는 program_courses가 없다. 그 경우
+    # 하이브리드 판정을 건너뛰고 호출부가 flat로 폴백한다(_official_onestop_fallback과 동일 방침).
+    if not inspect(db.connection()).has_table(ProgramCourse.__tablename__):
+        return None
+
+    special = requirement.special_rules or {}
+    has_groups = bool(special.get("groups"))
+    # evaluate_program은 program_courses를 requirement 행의 curriculum_year로 필터한다
+    # (program_evaluator.py). 게이트도 같은 연도로 봐야 "하이브리드로 갔는데 인정과목이
+    # 0건이라 전부 미충족" 같은 어긋남이 안 생긴다. (evaluate_program이 학번 정확 매칭에
+    # 실패해 curriculum_year=NULL 요건으로 폴백하면 게이트와 연도가 갈릴 수 있으나,
+    # 시드 스크립트가 그런 연도 불일치를 만들지 않는다.)
+    has_program_courses = (
+        db.query(ProgramCourse.id)
+        .filter(
+            ProgramCourse.department_id == program.department_id,
+            ProgramCourse.major_id == program.major_id
+            if program.major_id is not None
+            else ProgramCourse.major_id.is_(None),
+            ProgramCourse.curriculum_year == requirement.curriculum_year,
+        )
+        .first()
+        is not None
+    )
+    if not has_groups and not has_program_courses:
+        return None
+
+    try:
+        result = evaluate_program(
+            db,
+            user_id,
+            program.department_id,
+            program.major_id,
+            program.program_type,
+            curriculum_year=program.curriculum_year,
+        )
+    except MultipleResultsFound:
+        # graduation_requirements에 unique 제약이 없어 같은 조건 행이 여럿일 수 있다
+        # (TC11 참고). flat 경로는 _find_in_scope가 .first()로 결정적으로 고르지만
+        # evaluate_program은 .scalar_one_or_none()이라 여기서 터진다. 프로그램 하나
+        # 때문에 전체 판정이 500나지 않게 flat로 폴백한다(중복 경고는 flat 쪽이 붙인다).
+        return None
+    if result is None:
+        # _find_requirement가 학과 단위로 폴백해 잡았는데 evaluate_program은
+        # major_id 정확 매칭이라 못 찾는 경우 등. flat로 폴백시킨다.
+        return None
+
+    earned = Decimal(str(result.total_credits_earned))
+    # satisfied(result.completed)가 실제로 대조하는 총량과 remaining을 맞춘다 —
+    # evaluate_program은 special_rules.total_credits > required_total_credits 순으로 본다.
+    required = (
+        result.total_credits_required
+        if result.total_credits_required is not None
+        else requirement.required_total_credits
+    )
+    remaining = (
+        max(Decimal(required) - earned, Decimal("0")) if required is not None else None
+    )
+    warnings = ["프로그램 지정 과목 기준으로 판정함"]
+    for ge in result.groups:
+        if ge.completed:
+            continue
+        detail = ge.shortage or f"{ge.rule_type} 조건 미충족"
+        warnings.append(f"{ge.label}: {detail}")
+    return _RuleJudgment(
+        satisfied=result.completed,
+        earned_total=earned,
+        remaining_total=remaining,
+        warnings=warnings,
+    )
+
+
+def _liberal_area_warnings(
+    db: Session, user_id: int, program: UserAcademicProgram
+) -> list[str]:
+    """주전공 결과에 얹을 균형/창의교양 세부영역 자문 경고.
+
+    `_CATEGORY_ROLLUP`이 세부영역을 '교양선택' 하나로 뭉쳐 판정에서 빠지므로,
+    (1) One-Stop 학교 공식 판정 스냅샷의 교양 관련 미이수 행,
+    (2) 세대별 세부영역 중 이수 0과목인 영역
+    을 경고로만 노출한다. `satisfied`는 건드리지 않는다(규칙 파서는 후속 과제).
+    """
+    warnings: list[str] = []
+    conn_inspect = inspect(db.connection())
+    # 미마이그레이션 DB·단위 테스트엔 이 테이블들이 없다. 자문용이므로 조용히 스킵.
+    if not (
+        conn_inspect.has_table(StudentGraduationCategory.__tablename__)
+        and conn_inspect.has_table(StudentCourseSubstitution.__tablename__)
+    ):
+        return warnings
+
+    official_rows = db.execute(
+        select(StudentGraduationCategory).where(
+            StudentGraduationCategory.user_id == user_id,
+            StudentGraduationCategory.program_type == "주전공",
+        )
+    ).scalars().all()
+    for row in official_rows:
+        cat = (row.category or "").strip()
+        if ("균형교양" in cat or "창의교양" in cat or "교양선택" in cat) and row.satisfied is False:
+            reason = f" ({row.failure_reason})" if row.failure_reason else ""
+            warnings.append(f"학교 공식 판정: {cat} 미이수{reason}")
+
+    areas = liberal_areas_for_generation(program.curriculum_year)
+    completions = liberal_area_completions(db, user_id, areas)
+    empty = [
+        area
+        for area in areas
+        if not completions[area].direct_records and not completions[area].substituted_records
+    ]
+    if empty and len(empty) < len(areas):
+        # 전부 비어 있으면(교양을 아예 안 들은 저학년) 굳이 나열하지 않는다.
+        warnings.append(f"균형/창의교양 이수 0과목인 세부영역: {', '.join(empty)}")
+    return warnings
+
+
 def compute_graduation_progress(
     db: Session, user_id: int, program_types: set[str] | None = None
 ) -> list[ProgramProgress]:
@@ -518,11 +665,29 @@ def compute_graduation_progress(
             )
 
         required_total = requirement.required_total_credits
+        # flat 기본값 — 학생 전체 이수학점 합 대 required_total.
+        earned_for_program = total_earned
         remaining_total = None
         satisfied_total = None
         if required_total is not None:
             remaining_total = max(Decimal(required_total) - total_earned, Decimal("0"))
             satisfied_total = total_earned >= Decimal(required_total)
+
+        if program.program_type == "primary":
+            # 균형/창의교양 세부영역 자문(경고만, satisfied 불변).
+            warnings.extend(_liberal_area_warnings(db, user_id, program))
+        else:
+            # 부전공/복수전공/연계전공: 지정 과목·그룹 규칙이 있으면 실판정.
+            judgment = _program_rule_judgment(db, user_id, program, requirement)
+            if judgment is not None:
+                satisfied_total = judgment.satisfied
+                earned_for_program = judgment.earned_total
+                remaining_total = judgment.remaining_total
+                warnings.extend(judgment.warnings)
+            else:
+                warnings.append(
+                    "총 이수학점만 대조됨 — 이 프로그램의 지정 과목 이수 여부는 확인하지 못함"
+                )
 
         results.append(
             ProgramProgress(
@@ -534,7 +699,7 @@ def compute_graduation_progress(
                 requirement_found=True,
                 is_ai_track=_is_ai_track(requirement),
                 required_total_credits=required_total,
-                earned_total_credits=total_earned,
+                earned_total_credits=earned_for_program,
                 remaining_total_credits=remaining_total,
                 satisfied=satisfied_total,
                 categories=categories,

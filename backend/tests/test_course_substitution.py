@@ -46,9 +46,11 @@ from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
+    ProgramCourse,
     School,
     StudentCourseRecord,
     StudentCourseSubstitution,
+    StudentGraduationCategory,
     UserAcademicProgram,
 )
 from app.domains.courses.models import Course
@@ -68,6 +70,7 @@ _TABLES = [
     User.__table__, Course.__table__, StudentCourseRecord.__table__,
     UserAcademicProgram.__table__, GraduationRequirement.__table__,
     StudentCourseSubstitution.__table__,
+    ProgramCourse.__table__, StudentGraduationCategory.__table__,
     CourseRoadmap.__table__, CourseRoadmapItem.__table__, PendingRoadmapChange.__table__,
 ]
 

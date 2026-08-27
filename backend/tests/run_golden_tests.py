@@ -15,10 +15,12 @@ from app.domains.academics.models import (
     Department,
     GraduationRequirement,
     Major,
+    ProgramCourse,
     School,
     StudentCourseRecord,
     UserAcademicProgram,
 )
+from app.domains.courses.models import Course
 from app.domains.academics.graduation_progress import compute_graduation_progress
 from tests.test_golden_data import GOLDEN_SCENARIOS
 
@@ -256,6 +258,67 @@ def _check_program_result(scenario_id, program_type, res, expected, failures):
             failures.append(f"{program_type}: warnings에 '{needle}' 포함된 항목이 없음 (실제: {res.warnings})")
 
 
+def _seed_hybrid_extras(db, user, scenario):
+    """special_rules.groups + program_courses가 필요한 시나리오(TC12)용 시드.
+
+    시나리오에 `minor_special_rules` / `program_course_pool` / `completed_from_pool`이
+    있으면: 부전공 요건 행 + Course + ProgramCourse + (이수한 것만) 실제 course_id가
+    달린 StudentCourseRecord를 만든다.
+    """
+    if "minor_special_rules" not in scenario:
+        return
+    program = scenario["programs"][0]
+    dept_id = DEPT_IDS[program["department"]]
+    db.add(
+        GraduationRequirement(
+            department_id=dept_id,
+            major_id=None,
+            program_type="minor",
+            curriculum_year=program["curriculum_year"],
+            required_total_credits=scenario.get("minor_required_total_credits"),
+            special_rules=scenario["minor_special_rules"],
+        )
+    )
+    db.commit()
+
+    by_name: dict[str, int] = {}
+    for spec in scenario.get("program_course_pool", []):
+        course = Course(
+            course_code=f"{scenario['scenario_id']}_{spec['name']}",
+            course_name=spec["name"],
+            department_id=dept_id,
+            category="전공필수",
+            credits=spec["credits"],
+        )
+        db.add(course)
+        db.flush()
+        by_name[spec["name"]] = course.id
+        db.add(
+            ProgramCourse(
+                department_id=dept_id,
+                major_id=None,
+                course_id=course.id,
+                requirement_group=spec["group"],
+                category="전공필수",
+                curriculum_year=program["curriculum_year"],
+            )
+        )
+    for name in scenario.get("completed_from_pool", []):
+        db.add(
+            StudentCourseRecord(
+                user_id=user.id,
+                course_id=by_name[name],
+                raw_course_name=name,
+                category="전공필수",
+                credits=next(
+                    s["credits"] for s in scenario["program_course_pool"] if s["name"] == name
+                ),
+                match_status="matched",
+            )
+        )
+    db.commit()
+
+
 def run_golden_tests():
     db = setup_db()
     setup_hierarchy(db)
@@ -301,6 +364,9 @@ def run_golden_tests():
                 )
             )
         db.commit()
+
+        # 하이브리드(규칙 기반) 판정 시나리오용 추가 시드 (TC12 등).
+        _seed_hybrid_extras(db, user, scenario)
 
         results = compute_graduation_progress(db, user.id)
         results_by_type = {res.program_type: res for res in results}

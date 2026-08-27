@@ -186,8 +186,11 @@ GOLDEN_SCENARIOS = [
                 "requirement_found": True,
                 "satisfied": True,
                 "categories": {"전공필수": True, "전공선택": True},
+                # 이 dual 요건엔 special_rules.groups도 program_courses도 없어
+                # 하이브리드 판정이 flat로 폴백한다(2026-08-27) — 그 경고를 고정한다.
+                "warning_contains": "총 이수학점만 대조됨",
             },
-            # primary/dual의 earned_total_credits가 정확히 같아야 함(공유 풀 검증).
+            # dual이 flat 폴백이므로 primary/dual의 earned_total_credits가 여전히 같다(공유 풀).
             "shared_earned_total_credits": True,
         },
     },
@@ -217,6 +220,9 @@ GOLDEN_SCENARIOS = [
                 "requirement_found": True,
                 "satisfied": True,
                 "is_ai_track": True,
+                # 이 골든 요건의 special_rules엔 groups가 없어(certification_type만) 하이브리드
+                # 판정이 flat로 폴백한다 — 실 DB의 AI융합트랙은 groups가 있어 실판정된다.
+                "warning_contains": "총 이수학점만 대조됨",
             },
         },
     },
@@ -267,6 +273,8 @@ GOLDEN_SCENARIOS = [
             "minor": {
                 "requirement_found": True,
                 "satisfied": True,
+                # 카테고리·groups·program_courses가 전혀 없는 minor 요건 → flat 폴백 경고.
+                "warning_contains": "총 이수학점만 대조됨",
             },
         },
     },
@@ -317,6 +325,40 @@ GOLDEN_SCENARIOS = [
                 # 두 번째 행(35학점)이 골라졌다면 이 값이 안 맞는다.
                 "category_required_credits": {"전공필수": 30},
                 "warning_contains": "같은 조건의 기준학점 행이",
+            },
+        },
+    },
+    {
+        "scenario_id": "TC12_MINOR_RULE_BASED_JUDGMENT",
+        "description": (
+            "special_rules.groups + program_courses가 있는 부전공은 하이브리드 판정으로 "
+            "지정 과목 이수 여부를 실제 확인한다(2026-08-27). 필수 지정 3과목 중 2과목만 "
+            "이수 → 총 학점(21)을 아무리 채워도 satisfied=False, 부족 그룹이 warnings에."
+        ),
+        "programs": [
+            {"type": "minor", "department": "테스트학과", "major": None, "curriculum_year": "2026"},
+        ],
+        # flat이면 통과할 만큼 총 학점은 넉넉히 — 하이브리드가 이걸 무시하고 그룹으로 판정하는지 본다.
+        "courses": [
+            {"category": "전공선택", "credits": 30.0},
+        ],
+        # 하이브리드용 추가 시드 (run_golden_tests.py가 처리).
+        "program_course_pool": [
+            {"name": "TC12_필수A", "credits": 3.0, "group": "필수 (3과목)"},
+            {"name": "TC12_필수B", "credits": 3.0, "group": "필수 (3과목)"},
+            {"name": "TC12_필수C", "credits": 3.0, "group": "필수 (3과목)"},
+        ],
+        "completed_from_pool": ["TC12_필수A", "TC12_필수B"],
+        "minor_special_rules": {
+            "total_credits": 9,
+            "groups": [{"type": "min_courses", "n": 3, "label": "필수 (3과목)"}],
+        },
+        "minor_required_total_credits": 9,
+        "expected": {
+            "minor": {
+                "requirement_found": True,
+                "satisfied": False,
+                "warning_contains": "필수 (3과목)",
             },
         },
     },
