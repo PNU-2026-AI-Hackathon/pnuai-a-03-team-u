@@ -14,6 +14,13 @@
   `docs/frontend/xxx.md`(프론트엔드) 갱신도 같이
 -->
 
+## 2026-08-28 (blackest21) — 내 정보 프로필에 담은 복수전공/연계·융합전공 표시
+
+- **증상**: "AI융합 가능" 패널에서 DX융합전공을 **복수전공**으로 담으면 `UserAcademicProgram(program_type='dual', source='fusion_plan')` 행은 정상 저장되고(졸업진행도·로드맵 챗·시간표 챗·"빠른 선택"·내 정보 "추가 이수과정 현황"은 이미 반영) 정작 내 정보 **프로필 헤더**에는 아무것도 안 떴다. 헤더가 `전`(주전공)과 `부`(program_type==='minor'의 major)만 렌더했기 때문. 복수전공·연계/융합전공 태그가 없었고, 학과 자체가 프로그램인 융합전공은 `major`가 비어 `부` 태그 조건도 못 탔다.
+- **frontend**: `InfoPage` 프로필 헤더가 주전공 외 학적 전체를 태그로 렌더한다(`부`/`복`/`융` + `major || department`). `profileMinorMajor`(minor·major만) → `secondaryPrograms`(비-primary 전부).
+- **backend**: `_load_user_response`의 `academic_programs`를 `is_active_program_status`로 필터 — 융합전공을 담았다 취소하면 `status='cancelled'` 행만 남는데 그대로 두면 프로필에 유령 복수전공이 뜬다. 빈 status/`휴학`/`재학`/`active`는 유지.
+- pytest 807 통과(신규: `test_academic_programs_response_includes_active_hides_cancelled`), 골든 TC01~TC12 통과, `npm run build`/`lint` 통과.
+
 ## 2026-08-28 (blackest21) — 시간표 추천 승인 카드에 후보 스위처 (PR #302, 프론트)
 
 - **증상**: 시간표 에이전트가 후보 조합을 2~3개 줘도(`build_timetable` → `_MAX_SCHEDULES_RETURNED = 3`) 승인 카드는 `schedules.find(s => s.offerings.length > 0)`로 첫 유효 후보 하나만 보여줬다. 나머지 후보는 채팅 텍스트("📋 후보 N")로만 존재하고 반영 불가.
